@@ -1,5 +1,0 @@
-app Bad {
-  state a = 0
-  state b = 0
-  Button("x") { a = b }
-}
