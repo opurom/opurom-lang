@@ -1,0 +1,12 @@
+app ElseDemo {
+  state dark = false
+  Column {
+    if (dark) {
+      Text("dark")
+      Card { Text("nested dark") }
+    } else {
+      Text("light")
+      Card { Text("nested light") }
+    }
+  }
+}

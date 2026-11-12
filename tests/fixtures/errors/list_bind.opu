@@ -1,0 +1,4 @@
+app Bad {
+  state items = ["a"]
+  Input(bind: items)
+}

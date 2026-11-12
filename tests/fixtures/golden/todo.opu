@@ -1,0 +1,26 @@
+// Full-stack Todo: UI, data model and HTTP API in one source file.
+app TodoApp {
+  model Todo {
+    id: int primary
+    title: string
+    done: bool = false
+  }
+
+  api "/todos" {
+    list Todo
+    create Todo
+  }
+
+  api "/todos/:id" {
+    get Todo
+    update Todo
+    delete Todo
+  }
+
+  state remaining = 0
+
+  Column(p: 16, gap: 8) {
+    Text("OPUROM Todo - remaining: {remaining}", size: 20)
+    Button("Refresh") { remaining += 1 }
+  }
+}

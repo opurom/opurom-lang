@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -31,6 +31,13 @@ pub struct EState {
 }
 
 #[derive(Clone)]
+pub struct Computed {
+    pub name: String,
+    pub ty: String,
+    pub expr: String,
+}
+
+#[derive(Clone)]
 pub struct ENode {
     pub id: u64,
     pub kind: String,
@@ -39,6 +46,8 @@ pub struct ENode {
     pub children: Vec<ENode>,
     /// Optional bool state that hides this node and its subtree.
     pub when: Option<String>,
+    /// Optional bool state whose false value shows this node and its subtree.
+    pub unless: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -199,6 +208,7 @@ fn read_node(v: &Json, ir_path: &str) -> DResult<ENode> {
         children.push(read_node(c, ir_path)?);
     }
     let when = o.get("when").and_then(Json::as_str).map(str::to_string);
+    let unless = o.get("unless").and_then(Json::as_str).map(str::to_string);
     Ok(ENode {
         id,
         kind,
@@ -206,6 +216,7 @@ fn read_node(v: &Json, ir_path: &str) -> DResult<ENode> {
         events,
         children,
         when,
+        unless,
     })
 }
 
@@ -252,6 +263,358 @@ fn prop_str(props: &JsonMap<String, Json>, key: &str, default: &str) -> String {
 
 fn js_lit(v: &Json) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| "null".to_string())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExprTy {
+    Int,
+    Bool,
+    Str,
+}
+
+impl ExprTy {
+    fn name(self) -> &'static str {
+        match self {
+            ExprTy::Int => "int",
+            ExprTy::Bool => "bool",
+            ExprTy::Str => "string",
+        }
+    }
+}
+
+struct ExprParser<'a, F> {
+    toks: Vec<&'a str>,
+    i: usize,
+    states: &'a [EState],
+    computed: &'a [Computed],
+    ir_path: &'a str,
+    rust: bool,
+    var: &'a mut F,
+}
+
+impl<'a, F> ExprParser<'a, F>
+where
+    F: FnMut(&EState) -> DResult<String>,
+{
+    fn peek(&self) -> Option<&'a str> {
+        self.toks.get(self.i).copied()
+    }
+
+    fn bump(&mut self) -> Option<&'a str> {
+        let token = self.peek()?;
+        self.i += 1;
+        Some(token)
+    }
+
+    fn invalid(&self, found: &str) -> Diagnostic {
+        bad_ir(
+            self.ir_path,
+            format!(
+                "computed expression supports only +, -, *, integer literals and declared state names, found '{found}'"
+            ),
+        )
+    }
+
+    fn state(&mut self, name: &str) -> DResult<(ExprTy, String)> {
+        if self.computed.iter().any(|c| c.name == name) {
+            return Err(bad_ir(
+                self.ir_path,
+                format!("computed expression cannot read computed value '{name}'"),
+            ));
+        }
+        let st = self.states.iter().find(|s| s.name == name).ok_or_else(|| {
+            bad_ir(
+                self.ir_path,
+                format!("unknown state '{name}' in computed expression"),
+            )
+        })?;
+        let ty = match st.ty.as_str() {
+            "int" => ExprTy::Int,
+            "bool" => ExprTy::Bool,
+            "string" => ExprTy::Str,
+            "list" => {
+                return Err(bad_ir(
+                    self.ir_path,
+                    format!("list state '{name}' is compile-time only"),
+                ));
+            }
+            other => {
+                return Err(bad_ir(
+                    self.ir_path,
+                    format!("IR state '{name}' has unsupported type '{other}'"),
+                ));
+            }
+        };
+        let code = (self.var)(st)?;
+        Ok((ty, code))
+    }
+
+    fn factor(&mut self) -> DResult<(ExprTy, String)> {
+        let token = self
+            .bump()
+            .ok_or_else(|| self.invalid("end of expression"))?;
+        if let Ok(n) = token.parse::<i64>() {
+            let code = if self.rust {
+                format!("{n}i64")
+            } else {
+                n.to_string()
+            };
+            return Ok((ExprTy::Int, code));
+        }
+        if !simple_ident(token) {
+            return Err(self.invalid(token));
+        }
+        self.state(token)
+    }
+
+    fn combine(
+        &self,
+        op: &str,
+        lhs: (ExprTy, String),
+        rhs: (ExprTy, String),
+    ) -> DResult<(ExprTy, String)> {
+        if lhs.0 != ExprTy::Int || rhs.0 != ExprTy::Int {
+            return Err(bad_ir(
+                self.ir_path,
+                format!("computed expression '{op}' requires int operands"),
+            ));
+        }
+        let code = if self.rust {
+            let method = match op {
+                "+" => "saturating_add",
+                "-" => "saturating_sub",
+                _ => "saturating_mul",
+            };
+            format!("({}).{}({})", lhs.1, method, rhs.1)
+        } else {
+            format!("({} {} {})", lhs.1, op, rhs.1)
+        };
+        Ok((ExprTy::Int, code))
+    }
+
+    fn term(&mut self) -> DResult<(ExprTy, String)> {
+        let mut lhs = self.factor()?;
+        while self.peek() == Some("*") {
+            self.i += 1;
+            let rhs = self.factor()?;
+            lhs = self.combine("*", lhs, rhs)?;
+        }
+        Ok(lhs)
+    }
+
+    fn sum(&mut self) -> DResult<(ExprTy, String)> {
+        let mut lhs = self.term()?;
+        loop {
+            let op = match self.peek() {
+                Some("+") => "+",
+                Some("-") => "-",
+                _ => break,
+            };
+            self.i += 1;
+            let rhs = self.term()?;
+            lhs = self.combine(op, lhs, rhs)?;
+        }
+        if self.i != self.toks.len() {
+            return Err(self.invalid(self.peek().unwrap_or("unexpected token")));
+        }
+        Ok(lhs)
+    }
+}
+
+pub fn computed_expr<F>(
+    expr: &str,
+    states: &[EState],
+    computed: &[Computed],
+    ir_path: &str,
+    rust: bool,
+    mut var: F,
+) -> DResult<(&'static str, String)>
+where
+    F: FnMut(&EState) -> DResult<String>,
+{
+    let toks: Vec<&str> = expr.split_whitespace().collect();
+    if toks.is_empty() {
+        return Err(bad_ir(ir_path, "IR computed expression is empty"));
+    }
+    let mut parser = ExprParser {
+        toks,
+        i: 0,
+        states,
+        computed,
+        ir_path,
+        rust,
+        var: &mut var,
+    };
+    let (ty, code) = parser.sum()?;
+    Ok((ty.name(), code))
+}
+
+fn read_computed(ir: &Json, states: &[EState], ir_path: &str) -> DResult<Vec<Computed>> {
+    let Some(raw) = ir.get("computed") else {
+        return Ok(Vec::new());
+    };
+    let arr = raw
+        .as_array()
+        .ok_or_else(|| bad_ir(ir_path, "IR 'computed' must be an array"))?;
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in arr {
+        let o = entry
+            .as_object()
+            .ok_or_else(|| bad_ir(ir_path, "IR computed entry must be an object"))?;
+        for key in o.keys() {
+            if !matches!(key.as_str(), "name" | "type" | "expr") {
+                return Err(bad_ir(
+                    ir_path,
+                    format!("unknown IR computed field '{key}'"),
+                ));
+            }
+        }
+        let name = o
+            .get("name")
+            .and_then(Json::as_str)
+            .ok_or_else(|| bad_ir(ir_path, "IR computed entry is missing a string 'name'"))?
+            .to_string();
+        if !simple_ident(&name) {
+            return Err(bad_ir(
+                ir_path,
+                format!("IR computed name '{name}' is not a valid state field"),
+            ));
+        }
+        if !seen.insert(name.clone()) {
+            return Err(bad_ir(
+                ir_path,
+                format!("duplicate IR computed value '{name}'"),
+            ));
+        }
+        let ty = o
+            .get("type")
+            .and_then(Json::as_str)
+            .ok_or_else(|| bad_ir(ir_path, "IR computed entry is missing a string 'type'"))?;
+        if !matches!(ty, "int" | "bool" | "string") {
+            return Err(bad_ir(
+                ir_path,
+                format!("unsupported IR computed type '{ty}'"),
+            ));
+        }
+        let expr = o
+            .get("expr")
+            .and_then(Json::as_str)
+            .ok_or_else(|| bad_ir(ir_path, "IR computed entry is missing a string 'expr'"))?;
+        let st = states.iter().find(|s| s.name == name).ok_or_else(|| {
+            bad_ir(
+                ir_path,
+                format!("computed value '{name}' is not declared in state"),
+            )
+        })?;
+        if st.ty.as_str() != ty {
+            return Err(bad_ir(
+                ir_path,
+                format!(
+                    "computed value '{name}' has type '{ty}' but its state has type '{}'",
+                    st.ty
+                ),
+            ));
+        }
+        out.push(Computed {
+            name,
+            ty: ty.to_string(),
+            expr: expr.to_string(),
+        });
+    }
+    for c in &out {
+        let (inferred, _) = computed_expr(&c.expr, states, &out, ir_path, false, |st| {
+            Ok(st.name.clone())
+        })?;
+        if inferred != c.ty.as_str() {
+            return Err(bad_ir(
+                ir_path,
+                format!(
+                    "IR computed value '{}' has type '{}' but its expression is {inferred}",
+                    c.name, c.ty
+                ),
+            ));
+        }
+    }
+    Ok(out)
+}
+
+fn ensure_mutable(
+    name: &str,
+    states: &[EState],
+    computed: &[Computed],
+    ir_path: &str,
+) -> DResult<()> {
+    if computed.iter().any(|c| c.name == name) {
+        return Err(bad_ir(
+            ir_path,
+            format!("computed value '{name}' is read-only"),
+        ));
+    }
+    let st = states
+        .iter()
+        .find(|s| s.name == name)
+        .ok_or_else(|| bad_ir(ir_path, format!("state '{name}' is not declared")))?;
+    if st.ty == "list" {
+        return Err(bad_ir(
+            ir_path,
+            format!("list state '{name}' is compile-time only"),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_condition(name: &str, states: &[EState], ir_path: &str) -> DResult<()> {
+    let st = states.iter().find(|s| s.name == name).ok_or_else(|| {
+        bad_ir(
+            ir_path,
+            format!("conditional state '{name}' is not declared"),
+        )
+    })?;
+    if st.ty != "bool" {
+        return Err(bad_ir(
+            ir_path,
+            format!(
+                "IR conditional requires a bool state, found '{}' state '{name}'",
+                st.ty
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_actions(
+    states: &[EState],
+    computed: &[Computed],
+    tree: &ENode,
+    ir_path: &str,
+) -> DResult<()> {
+    let mut nodes = Vec::new();
+    collect(tree, &mut nodes);
+    for node in nodes {
+        if let Some(Json::String(name)) = node.props.get("bind") {
+            ensure_mutable(name, states, computed, ir_path)?;
+        }
+        if let Some(name) = &node.when {
+            ensure_condition(name, states, ir_path)?;
+        }
+        if let Some(name) = &node.unless {
+            ensure_condition(name, states, ir_path)?;
+        }
+        for event in node.events.values() {
+            for effect in event_effects(event, ir_path)? {
+                if let Effect::Fetch { into, .. } = effect {
+                    ensure_mutable(&into, states, computed, ir_path)?;
+                }
+            }
+            for action in event_actions(event) {
+                if let Some(target) = action.get("target").and_then(Json::as_str) {
+                    ensure_mutable(target, states, computed, ir_path)?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn rust_str(s: &str) -> String {
@@ -483,6 +846,8 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
         .ok_or_else(|| bad_ir(ir_path, "IR is missing the 'tree' field"))?;
     let states = read_state(&state_values, ir_path)?;
     let tree = read_node(tree_value, ir_path)?;
+    let computed = read_computed(&ir, &states, ir_path)?;
+    validate_actions(&states, &computed, &tree, ir_path)?;
     let has_effects = tree_has_effects(&states, &tree, ir_path)?;
     fs::create_dir_all(out).map_err(|e| {
         Diagnostic::file(
@@ -492,10 +857,12 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
         )
     })?;
     match target {
-        "native" => emit_native(&app, &states, &tree, out, ir_path, has_effects),
-        "web" => emit_web(&ir, &app, &states, &tree, out, ir_path),
-        "wasm" => crate::wasm::emit_wasm(&app, &states, &tree, out, ir_path, has_effects),
-        _ => emit_mini(target, &app, &states, &tree, out, ir_path),
+        "native" => emit_native(&app, &states, &computed, &tree, out, ir_path, has_effects),
+        "web" => emit_web(&ir, &app, &states, &computed, &tree, out, ir_path),
+        "wasm" => {
+            crate::wasm::emit_wasm(&app, &states, &computed, &tree, out, ir_path, has_effects)
+        }
+        _ => emit_mini(target, &app, &states, &computed, &tree, out, ir_path),
     }
 }
 
@@ -517,6 +884,7 @@ fn rust_ty(ty: &str) -> &'static str {
     match ty {
         "int" => "i64",
         "bool" => "bool",
+        "list" => "Vec<String>",
         _ => "String",
     }
 }
@@ -525,6 +893,19 @@ fn rust_init(st: &EState) -> String {
     match st.ty.as_str() {
         "int" => format!("{}i64", st.init.as_i64().unwrap_or(0)),
         "bool" => st.init.as_bool().unwrap_or(false).to_string(),
+        "list" => {
+            let values = st
+                .init
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|v| format!("{}.to_string()", rust_str(v.as_str().unwrap_or(""))))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            format!("vec![{values}]")
+        }
         _ => format!("{}.to_string()", rust_str(st.init.as_str().unwrap_or(""))),
     }
 }
@@ -538,10 +919,10 @@ fn state_ty<'a>(states: &'a [EState], name: &str) -> &'a str {
 }
 
 fn patch_value(states: &[EState], target: &str) -> String {
-    if state_ty(states, target) == "string" {
-        format!("_state.{target}.clone()")
-    } else {
-        format!("_state.{target}.to_string()")
+    match state_ty(states, target) {
+        "string" => format!("_state.{target}.clone()"),
+        "list" => format!("format!(\"{{:?}}\", _state.{target})"),
+        _ => format!("_state.{target}.to_string()"),
     }
 }
 
@@ -752,9 +1133,40 @@ fn native_effects(effects: &[Effect], ir_path: &str) -> DResult<String> {
     Ok(out)
 }
 
+fn native_computed(states: &[EState], computed: &[Computed], ir_path: &str) -> DResult<String> {
+    if computed.is_empty() {
+        return Ok(String::new());
+    }
+    let mut s = String::from(
+        "#[allow(dead_code)]\nfn apply_computed(_state: &mut State) -> Vec<Patch> {\n",
+    );
+    for c in computed {
+        let (_, expr) = computed_expr(&c.expr, states, computed, ir_path, true, |st| {
+            Ok(format!("_state.{}", st.name))
+        })?;
+        let expr = if c.ty == "string" {
+            format!("{expr}.clone()")
+        } else {
+            expr
+        };
+        s.push_str(&format!("    _state.{} = {expr};\n", c.name));
+    }
+    s.push_str("    vec![\n");
+    for c in computed {
+        s.push_str(&format!(
+            "        Patch {{ name: {}, value: {} }},\n",
+            rust_str(&c.name),
+            patch_value(states, &c.name)
+        ));
+    }
+    s.push_str("    ]\n}\n\n");
+    Ok(s)
+}
+
 fn native_source(
     app: &str,
     states: &[EState],
+    computed: &[Computed],
     tree: &ENode,
     ir_path: &str,
     has_effects: bool,
@@ -776,6 +1188,7 @@ fn native_source(
         s.push_str(&format!("    {}: {},\n", st.name, rust_ty(&st.ty)));
     }
     s.push_str("}\n\nstruct Patch {\n    name: &'static str,\n    value: String,\n}\n\n");
+    s.push_str(&native_computed(states, computed, ir_path)?);
     s.push_str(
         "fn apply(_state: &mut State, event_node_id: u32, _input: Option<&str>) -> Vec<Patch> {\n",
     );
@@ -798,10 +1211,17 @@ fn native_source(
                 } else {
                     format!("vec![{}]", patches.join(", "))
                 };
-                s.push_str(&format!(
-                    "        ({}, {}) => {{\n{effect_code}{body}            {patch_expr}\n        }}\n",
-                    n.id, is_input
-                ));
+                if computed.is_empty() {
+                    s.push_str(&format!(
+                        "        ({}, {}) => {{\n{effect_code}{body}            {patch_expr}\n        }}\n",
+                        n.id, is_input
+                    ));
+                } else {
+                    s.push_str(&format!(
+                        "        ({}, {}) => {{\n{effect_code}{body}            let mut patches = {patch_expr};\n            patches.extend(apply_computed(_state));\n            patches\n        }}\n",
+                        n.id, is_input
+                    ));
+                }
             }
         }
     }
@@ -816,7 +1236,13 @@ fn native_source(
             .join(" ");
         let args = states
             .iter()
-            .map(|st| format!("state.{}", st.name))
+            .map(|st| {
+                if st.ty == "list" {
+                    format!("format!(\"{{:?}}\", state.{})", st.name)
+                } else {
+                    format!("state.{}", st.name)
+                }
+            })
             .collect::<Vec<_>>()
             .join(", ");
         s.push_str(&format!(
@@ -867,13 +1293,14 @@ fn native_source(
 fn emit_native(
     app: &str,
     states: &[EState],
+    computed: &[Computed],
     tree: &ENode,
     out: &Path,
     ir_path: &str,
     has_effects: bool,
 ) -> DResult<()> {
     write(out, "Cargo.toml", &native_manifest(), ir_path)?;
-    let src = native_source(app, states, tree, ir_path, has_effects)?;
+    let src = native_source(app, states, computed, tree, ir_path, has_effects)?;
     write(out, "src/main.rs", &src, ir_path)
 }
 
@@ -980,6 +1407,9 @@ fn draw_node(
 ) -> DResult<()> {
     if let Some(cond) = &n.when {
         out.push_str(&format!("  if (state.{cond}) {{\n"));
+    }
+    if let Some(cond) = &n.unless {
+        out.push_str(&format!("  if (!state.{cond}) {{\n"));
     }
     let zero = Box2 {
         x: 0.0,
@@ -1088,6 +1518,9 @@ fn draw_node(
     for child in &n.children {
         draw_node(child, boxes, out, ir_path)?;
     }
+    if n.unless.is_some() {
+        out.push_str("  }\n");
+    }
     if n.when.is_some() {
         out.push_str("  }\n");
     }
@@ -1180,10 +1613,26 @@ fn web_effects(effects: &[Effect], ir_path: &str) -> DResult<String> {
     Ok(code)
 }
 
+fn web_computed(states: &[EState], computed: &[Computed], ir_path: &str) -> DResult<String> {
+    if computed.is_empty() {
+        return Ok(String::new());
+    }
+    let mut s = String::from("function applyComputed() {\n");
+    for c in computed {
+        let (_, expr) = computed_expr(&c.expr, states, computed, ir_path, false, |st| {
+            Ok(format!("state.{}", st.name))
+        })?;
+        s.push_str(&format!("  state.{} = {};\n", c.name, expr));
+    }
+    s.push_str("}\n\n");
+    Ok(s)
+}
+
 fn emit_web(
     ir: &Json,
     app: &str,
     states: &[EState],
+    computed: &[Computed],
     tree: &ENode,
     out: &Path,
     ir_path: &str,
@@ -1197,6 +1646,12 @@ fn emit_web(
         state_map.insert(st.name.clone(), st.init.clone());
     }
     let state_js = js_lit(&Json::Object(state_map));
+    let computed_fn = web_computed(states, computed, ir_path)?;
+    let computed_call = if computed.is_empty() {
+        ""
+    } else {
+        "applyComputed(); "
+    };
     let mut boxes = HashMap::new();
     layout(tree, 16.0, 16.0, &mut boxes);
     let mut nodes = Vec::new();
@@ -1215,7 +1670,7 @@ fn emit_web(
             let effect_code = web_effects(&event_effects(action, ir_path)?, ir_path)?;
             let code = js_action_chain(action, ir_path)?;
             tap_arms.push_str(&format!(
-                "  if (id === {}) {{ {effect_code}{code}  render(); return; }}\n",
+                "  if (id === {}) {{ {effect_code}{code}  {computed_call}render(); return; }}\n",
                 n.id
             ));
             if n.kind == "Button" {
@@ -1238,7 +1693,7 @@ fn emit_web(
         if let Some(action) = n.events.get("input") {
             let target = action_str(action, "target", ir_path)?;
             input_arms.push_str(&format!(
-                "  if (id === {}) {{ state.{} = String(text); render(); return; }}\n",
+                "  if (id === {}) {{ state.{} = String(text); {computed_call}render(); return; }}\n",
                 n.id, target
             ));
         }
@@ -1263,6 +1718,7 @@ fn emit_web(
     app_js.push_str("const canvas = document.getElementById(\"app\");\n");
     app_js.push_str("const ctx = canvas.getContext(\"2d\");\n");
     app_js.push_str(&format!("const state = {state_js};\n\n"));
+    app_js.push_str(&computed_fn);
     app_js.push_str("function render() {\n");
     app_js.push_str("  ctx.clearRect(0, 0, canvas.width, canvas.height);\n");
     app_js.push_str("  ctx.textBaseline = \"top\";\n");
@@ -1283,7 +1739,11 @@ fn emit_web(
         app_js.push_str("});\n\n");
     }
     app_js.push_str(&input_listeners);
-    app_js.push_str("render();\n");
+    if computed.is_empty() {
+        app_js.push_str("render();\n");
+    } else {
+        app_js.push_str("applyComputed();\nrender();\n");
+    }
     write(out, "app.js", &app_js, ir_path)?;
 
     let title = html_attr(app);
@@ -1357,9 +1817,16 @@ fn markup_node(
     } else {
         format!(" style=\"{}\"", html_attr(&style))
     };
-    let cond_attr = match &n.when {
-        Some(name) => format!(" {}=\"{{{{{name}}}}}\"", p.cond_attr),
-        None => String::new(),
+    let condition = match (&n.when, &n.unless) {
+        (Some(w), Some(u)) => format!("{w} && !{u}"),
+        (Some(w), None) => w.clone(),
+        (None, Some(u)) => format!("!{u}"),
+        (None, None) => String::new(),
+    };
+    let cond_attr = if condition.is_empty() {
+        String::new()
+    } else {
+        format!(" {}=\"{}{}{}\"", p.cond_attr, p.open, condition, p.close)
     };
     match n.kind.as_str() {
         "Text" => {
@@ -1524,10 +1991,38 @@ fn mini_effects(effects: &[Effect], p: &Platform, ir_path: &str) -> DResult<Stri
     Ok(code)
 }
 
+fn mini_computed(
+    p: &Platform,
+    states: &[EState],
+    computed: &[Computed],
+    ir_path: &str,
+) -> DResult<String> {
+    if computed.is_empty() {
+        return Ok(String::new());
+    }
+    let mut entries = Vec::new();
+    for c in computed {
+        let (_, expr) = computed_expr(&c.expr, states, computed, ir_path, false, |st| {
+            Ok(format!("this.data.{}", st.name))
+        })?;
+        entries.push(format!(
+            "{}: {}",
+            js_lit(&Json::String(c.name.clone())),
+            expr
+        ));
+    }
+    Ok(format!(
+        "  applyComputed: function () {{\n    this.{}({{{}}});\n  }},\n",
+        p.state_set,
+        entries.join(", ")
+    ))
+}
+
 fn emit_mini(
     target: &str,
     app: &str,
     states: &[EState],
+    computed: &[Computed],
     tree: &ENode,
     out: &Path,
     ir_path: &str,
@@ -1580,21 +2075,26 @@ fn emit_mini(
     let keys_arr: Vec<Json> = states.iter().map(|s| json!(s.name)).collect();
     data.insert("__stateKeys".to_string(), Json::Array(keys_arr));
     let data_js = js_lit(&Json::Object(data));
-    let mut methods = String::new();
+    let mut methods = mini_computed(p, states, computed, ir_path)?;
+    let computed_call = if computed.is_empty() {
+        ""
+    } else {
+        " this.applyComputed();"
+    };
     for n in &nodes {
         if let Some(action) = n.events.get("tap") {
             let effect_code = mini_effects(&event_effects(action, ir_path)?, p, ir_path)?;
             let code = mini_action_chain(action, p, ir_path)?;
             methods.push_str(&format!(
-                "  onTap{}: async function () {{ {effect_code}{code} }},\n",
+                "  onTap{}: async function () {{ {effect_code}{code}{computed_call} }},\n",
                 n.id
             ));
         }
         if let Some(action) = n.events.get("input") {
             let target_name = action_str(action, "target", ir_path)?;
             methods.push_str(&format!(
-                "  onInput{}: function (e) {{ this.{}({{\"{}\": e.detail.value}}); }},\n",
-                n.id, p.state_set, target_name
+                "  onInput{}: function (e) {{ this.{}({{\"{}\": e.detail.value}});{} }},\n",
+                n.id, p.state_set, target_name, computed_call
             ));
         }
     }

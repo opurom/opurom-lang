@@ -1,0 +1,5 @@
+app Bad {
+  state flag = true
+  computed bad = flag + 1
+  Text("x")
+}

@@ -1,0 +1,5 @@
+app Bad {
+  state count = 0
+  computed bad = count + "x"
+  Text("x")
+}

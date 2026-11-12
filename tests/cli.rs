@@ -206,10 +206,7 @@ fn each_error_class_is_a_friendly_diagnostic() {
         ("api_unknown_model.opu", "unknown model 'Missing'"),
         ("api_unknown_verb.opu", "unknown handler verb 'fetch'"),
         ("api_missing_path_param.opu", "needs a path parameter"),
-        (
-            "unsupported_else.opu",
-            "'else' is not yet supported in v0.2",
-        ),
+        ("else_without_if.opu", "'else' must follow an 'if' block"),
         ("for_count_too_large.opu", "'for' count must be at most 64"),
         ("bad_color.opu", "invalid color '4F46E5'"),
         (
@@ -1099,12 +1096,26 @@ fn optimizer_rejects_bad_ir() {
     state_field["state"] = json!([{"name": "a", "bogus": 1}]);
     let mut missing_tree = base.clone();
     missing_tree.as_object_mut().unwrap().remove("tree");
+    let mut computed_shape = base.clone();
+    computed_shape["computed"] = json!("bad");
+    let mut computed_entry = base.clone();
+    computed_entry["computed"] = json!([{"name": "x", "type": "int", "expr": "1", "bogus": 1}]);
 
     let cases: &[(&str, Json, &str)] = &[
         ("version", version, "unsupported IR version '9.9'"),
         ("field", field, "unknown IR field 'stat'"),
         ("node-field", node_field, "unknown IR node field 'bogus'"),
         ("state-field", state_field, "unknown IR state field 'bogus'"),
+        (
+            "computed-shape",
+            computed_shape,
+            "IR 'computed' must be an array",
+        ),
+        (
+            "computed-entry",
+            computed_entry,
+            "unknown IR computed field 'bogus'",
+        ),
         (
             "missing-tree",
             missing_tree,
@@ -1501,4 +1512,515 @@ fn native_effects_build_and_run_locally() {
         "{stdout}"
     );
     assert!(stdout.contains("patch count=1"), "{stdout}");
+}
+
+// ------------------------------------------------------------------ R5 ----
+
+#[test]
+fn plain_todo_ir_is_byte_identical() {
+    let out = out_dir("r5-golden-todo").join("todo.opuir.json");
+    let r = compile(&fixture("golden/todo.opu"), &out);
+    assert!(
+        r.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let got = fs::read(&out).expect("read compiled todo IR");
+    let expected = fs::read(fixture("golden/todo.opuir.json")).expect("read R4 todo golden IR");
+    assert_eq!(got, expected, "plain todo IR changed its R4 bytes");
+    let ir: Json = serde_json::from_slice(&got).unwrap();
+    assert!(ir.get("computed").is_none());
+    assert!(ir.get("imports").is_none());
+    for node in nodes_of(&ir) {
+        assert!(node.get("unless").is_none());
+    }
+}
+
+#[test]
+fn r5_else_lowers_when_and_unless() {
+    let ir = compile_ok(&fixture("r5_else.opu"));
+    let nodes = nodes_of(&ir);
+    let find = |value: &str| {
+        nodes
+            .iter()
+            .find(|n| (**n)["props"]["value"].as_str() == Some(value))
+            .copied()
+            .unwrap()
+    };
+    assert_eq!(find("dark")["when"], "dark");
+    assert_eq!(find("nested dark")["when"], "dark");
+    assert_eq!(find("light")["unless"], "dark");
+    assert_eq!(find("nested light")["unless"], "dark");
+    assert!(find("dark").get("unless").is_none());
+    assert!(find("light").get("when").is_none());
+    assert!(ir["tree"].get("unless").is_none());
+    let when_count = nodes.iter().filter(|n| (**n).get("when").is_some()).count();
+    let unless_count = nodes
+        .iter()
+        .filter(|n| (**n).get("unless").is_some())
+        .count();
+    assert_eq!(when_count, 3, "the if subtree keeps its when fields");
+    assert_eq!(unless_count, 3, "the else subtree gains unless fields");
+}
+
+#[test]
+fn r5_computed_and_list_lower_to_documented_ir() {
+    let ir = compile_ok(&fixture("r5_features.opu"));
+    assert_eq!(ir["computed"][0]["name"], "doubled");
+    assert_eq!(ir["computed"][0]["type"], "int");
+    assert_eq!(ir["computed"][0]["expr"], "count * 2");
+    assert_eq!(
+        ir["state"][3],
+        json!({"name": "items", "type": "list", "init": ["a", "b"]})
+    );
+    let nodes = nodes_of(&ir);
+    let find = |value: &str| {
+        nodes
+            .iter()
+            .find(|n| (**n)["props"]["value"].as_str() == Some(value))
+            .copied()
+            .unwrap()
+    };
+    assert_eq!(find("dark")["when"], "dark");
+    assert_eq!(find("light")["unless"], "dark");
+    assert!(find("light").get("when").is_none());
+    assert_eq!(find("visible")["when"], "visible");
+    assert_eq!(find("hidden")["unless"], "visible");
+    let unrolled: Vec<&str> = nodes
+        .iter()
+        .filter_map(|n| (**n)["props"]["value"].as_str())
+        .filter(|v| *v == "a" || *v == "b")
+        .collect();
+    assert_eq!(unrolled, vec!["a", "b"]);
+
+    let computed_ir = compile_ok(&fixture("r5_computed.opu"));
+    assert_eq!(
+        computed_ir["computed"],
+        json!([
+            {"name": "doubled", "type": "int", "expr": "count * 2"},
+            {"name": "total", "type": "int", "expr": "count * 2 + step - 1"},
+            {"name": "flagValue", "type": "bool", "expr": "flag"},
+            {"name": "label", "type": "string", "expr": "name"},
+        ])
+    );
+    assert_eq!(
+        computed_ir["state"][4],
+        json!({"name": "doubled", "type": "int", "init": 4})
+    );
+    assert_eq!(
+        computed_ir["state"][5],
+        json!({"name": "total", "type": "int", "init": 6})
+    );
+    assert_eq!(
+        computed_ir["state"][6],
+        json!({"name": "flagValue", "type": "bool", "init": true})
+    );
+    assert_eq!(
+        computed_ir["state"][7],
+        json!({"name": "label", "type": "string", "init": "Ada"})
+    );
+
+    let list_ir = compile_ok(&fixture("r5_list.opu"));
+    assert_eq!(
+        list_ir["state"][0],
+        json!({"name": "items", "type": "list", "init": ["a", "b", "c"]})
+    );
+    let values: Vec<&str> = nodes_of(&list_ir)
+        .into_iter()
+        .filter_map(|n| n["props"]["value"].as_str())
+        .collect();
+    assert_eq!(values, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn r5_diagnostics_are_friendly() {
+    let dir = out_dir("r5-diag");
+    let fixture_cases: &[(&str, &str)] = &[
+        ("else_without_if.opu", "'else' must follow an 'if' block"),
+        ("duplicate_else.opu", "duplicate 'else' block"),
+        ("else_non_bool.opu", "'if' requires a bool state"),
+        ("else_if.opu", "'else if' is not supported in R5"),
+        (
+            "nested_else_in_else.opu",
+            "nested 'else' inside an 'else' block is not supported in R5",
+        ),
+        (
+            "computed_bad_expr.opu",
+            "computed expression supports only +, -, *, integer literals and declared state names",
+        ),
+        (
+            "computed_unknown_state.opu",
+            "unknown state 'missing' in computed expression",
+        ),
+        ("computed_duplicate_name.opu", "duplicate name 'doubled'"),
+        (
+            "computed_readonly.opu",
+            "computed value 'doubled' is read-only",
+        ),
+        (
+            "computed_non_int_operand.opu",
+            "computed expression '+' requires int operands",
+        ),
+        (
+            "computed_top_level.opu",
+            "computed declarations belong at the top level of the app",
+        ),
+        (
+            "list_bad_initializer.opu",
+            "list initializers accept string literals only",
+        ),
+        (
+            "list_runtime_mutation.opu",
+            "list state 'items' is compile-time only",
+        ),
+        (
+            "list_interpolation.opu",
+            "list state 'items' is compile-time only",
+        ),
+        ("list_bind.opu", "list state 'items' is compile-time only"),
+        (
+            "list_braces.opu",
+            "list values may not contain braces in R5",
+        ),
+        ("for_non_list.opu", "'for' requires a list state"),
+        (
+            "for_unknown_list.opu",
+            "unknown list state 'items' in 'for'",
+        ),
+    ];
+    let mut cases: Vec<(String, PathBuf, &str)> = Vec::new();
+    for &(file, expected) in fixture_cases {
+        cases.push((file.to_string(), error_fixture(file), expected));
+    }
+    let too_many_items = vec!["\"a\""; 65].join(", ");
+    let too_many = format!(
+        "app Bad {{\n  state items = [{}]\n  for (item in items) {{ Text(\"{{item}}\") }}\n}}\n",
+        too_many_items
+    );
+    let dynamic: Vec<(String, String, &str)> = vec![
+        (
+            "computed_division".to_string(),
+            r#"app Bad {
+  state count = 0
+  computed bad = count / 2
+  Text("x")
+}
+"#
+            .to_string(),
+            "unexpected character '/'",
+        ),
+        (
+            "computed_parentheses".to_string(),
+            r#"app Bad {
+  state count = 0
+  computed bad = (count + 1) * 2
+  Text("x")
+}
+"#
+            .to_string(),
+            "computed expression supports only +, -, *, integer literals and declared state names",
+        ),
+        (
+            "computed_float".to_string(),
+            r#"app Bad {
+  computed bad = 1.5
+  Text("x")
+}
+"#
+            .to_string(),
+            "computed expression supports only +, -, *, integer literals and declared state names",
+        ),
+        (
+            "computed_bool".to_string(),
+            r#"app Bad {
+  computed bad = true
+  Text("x")
+}
+"#
+            .to_string(),
+            "computed expression supports only +, -, *, integer literals and declared state names",
+        ),
+        (
+            "computed_trailing_token".to_string(),
+            r#"app Bad {
+  state count = 0
+  computed bad = count * 2 3
+  Text("x")
+}
+"#
+            .to_string(),
+            "computed expression supports only +, -, *, integer literals and declared state names",
+        ),
+        (
+            "computed_self_reference".to_string(),
+            r#"app Bad {
+  state count = 0
+  computed first = count * 2
+  computed second = first + 1
+  Text("x")
+}
+"#
+            .to_string(),
+            "computed expression cannot read computed value 'first'",
+        ),
+        (
+            "computed_list_reference".to_string(),
+            r#"app Bad {
+  state items = ["a"]
+  computed bad = items + 1
+  Text("x")
+}
+"#
+            .to_string(),
+            "list state 'items' is compile-time only",
+        ),
+        (
+            "computed_bind".to_string(),
+            r#"app Bad {
+  state name = "Ada"
+  computed label = name
+  Input(bind: label)
+}
+"#
+            .to_string(),
+            "computed value 'label' is read-only",
+        ),
+        (
+            "computed_fetch_target".to_string(),
+            r#"app Bad {
+  state payload = "idle"
+  computed label = payload
+  Button("go") async {
+    await fetch("/x", label)
+  }
+}
+"#
+            .to_string(),
+            "computed value 'label' is read-only",
+        ),
+        (
+            "computed_missing_operand".to_string(),
+            r#"app Bad {
+  state count = 0
+  computed bad = count +
+  Text("x")
+}
+"#
+            .to_string(),
+            "computed expression supports only +, -, *, integer literals and declared state names",
+        ),
+        (
+            "list_too_long".to_string(),
+            too_many,
+            "list 'items' has more than 64 values",
+        ),
+    ];
+    for (name, source, expected) in dynamic {
+        let path = dir.join(format!("{name}.opu"));
+        fs::write(&path, source.as_bytes()).unwrap();
+        cases.push((name, path, expected));
+    }
+    let module = dir.join("computed_module.opu");
+    fs::write(&module, b"state name = \"Ada\"\ncomputed label = name\n").unwrap();
+    let main = dir.join("computed_module_main.opu");
+    fs::write(
+        &main,
+        b"import \"computed_module.opu\"\napp Bad { Text(\"x\") }\n",
+    )
+    .unwrap();
+    cases.push((
+        "computed_in_module".to_string(),
+        main,
+        "imported module may declare only state, model, api, theme and imports",
+    ));
+
+    for (label, path, expected) in &cases {
+        let r = bin().arg("check").arg(path).output().expect("run check");
+        assert_eq!(r.status.code(), Some(1), "{label} must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            err.contains(expected),
+            "{label}: unexpected diagnostic: {err}"
+        );
+        assert_error_shape(&err);
+        let out = out_dir("r5-reject").join(format!("{label}.opuir.json"));
+        let r2 = compile(path, &out);
+        assert_eq!(r2.status.code(), Some(1), "{label}: compile must fail");
+        assert!(!out.exists(), "{label}: no IR may be written on error");
+    }
+}
+
+#[test]
+fn optimizer_preserves_computed_conditions_and_list_state() {
+    let dir = out_dir("r5-opt");
+    let ir_path = dir.join("features.opuir.json");
+    let out = dir.join("optimized.opuir.json");
+    let r = compile(&fixture("r5_features.opu"), &ir_path);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let original: Json = serde_json::from_slice(&fs::read(&ir_path).unwrap()).unwrap();
+    let r = optimize(&ir_path, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let got: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(got["computed"], original["computed"]);
+    assert_eq!(state_names(&got), state_names(&original));
+    assert_eq!(node_ids(&got), node_ids(&original));
+    assert!(
+        got["state"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["type"] == "list"),
+        "list state must survive dead-state elimination"
+    );
+    let unless_count = nodes_of(&got)
+        .into_iter()
+        .filter(|n| n.get("unless").is_some())
+        .count();
+    assert_eq!(unless_count, 2, "unless fields must survive optimization");
+}
+
+#[test]
+fn r5_emitters_apply_computed_values_and_honor_unless() {
+    let ir = out_dir("r5-emit-ir").join("features.opuir.json");
+    let r = compile(&fixture("r5_features.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let native = out_dir("r5-emit-native");
+    let r = emit(&ir, "native", &native);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let native_rs = fs::read_to_string(native.join("src/main.rs")).unwrap();
+    for marker in [
+        "Vec<String>",
+        "fn apply_computed",
+        "_state.doubled = (_state.count).saturating_mul(2i64);",
+        "_state.label = _state.name.clone();",
+        "patches.extend(apply_computed(_state));",
+    ] {
+        assert!(native_rs.contains(marker), "native source missing {marker}");
+    }
+
+    let web = out_dir("r5-emit-web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let app_js = fs::read_to_string(web.join("app.js")).unwrap();
+    for marker in [
+        "\"items\":[\"a\",\"b\"]",
+        "\"doubled\":2",
+        "\"visible\":false",
+        "function applyComputed()",
+        "state.doubled =",
+        "state.label = state.name;",
+        "if (!state.dark)",
+        "if (!state.visible)",
+        "applyComputed(); render(); return;",
+        "applyComputed();\nrender();",
+    ] {
+        assert!(app_js.contains(marker), "web app.js missing {marker}");
+    }
+    node_check(&web.join("app.js"));
+
+    let mini_cases: &[(&str, &str)] = &[
+        ("wechat", "index.wxml"),
+        ("alipay", "index.axml"),
+        ("qq", "index.qml"),
+        ("douyin", "index.ttml"),
+        ("baidu", "index.swan"),
+        ("kuaishou", "index.ksml"),
+    ];
+    for &(target, markup_name) in mini_cases {
+        let dir = out_dir(&format!("r5-emit-{target}"));
+        let r = emit(&ir, target, &dir);
+        assert!(
+            r.status.success(),
+            "{target} emit failed: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let index_js = fs::read_to_string(dir.join("index.js")).unwrap();
+        for marker in [
+            "applyComputed: function ()",
+            "this.applyComputed();",
+            "this.setData({\"doubled\":",
+            "this.data.count",
+        ] {
+            assert!(
+                index_js.contains(marker),
+                "{target} index.js missing {marker}"
+            );
+        }
+        let markup = fs::read_to_string(dir.join(markup_name)).unwrap();
+        assert!(
+            markup.contains("!dark"),
+            "{target}: missing unless condition"
+        );
+        assert!(
+            markup.contains("!visible"),
+            "{target}: missing computed unless condition"
+        );
+        node_check(&dir.join("index.js"));
+    }
+
+    let wasm = out_dir("r5-emit-wasm");
+    let r = emit(&ir, "wasm", &wasm);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let host_js = fs::read_to_string(wasm.join("host.js")).unwrap();
+    for marker in [
+        "function applyComputed()",
+        "mirror[\"visible\"] = mirror[\"dark\"];",
+        "if (node.unless && mirror[node.unless])",
+        "applyComputed();\n  render();",
+    ] {
+        assert!(host_js.contains(marker), "wasm host.js missing {marker}");
+    }
+    let lib_rs = fs::read_to_string(wasm.join("src/lib.rs")).unwrap();
+    for marker in [
+        "fn apply_computed()",
+        "set_state(1, (state(0)).saturating_mul(2i64));",
+        "count += apply_computed();",
+    ] {
+        assert!(lib_rs.contains(marker), "wasm lib.rs missing {marker}");
+    }
+    let readme = fs::read_to_string(wasm.join("README.md")).unwrap();
+    assert!(readme.contains("R5 computed values"));
+    node_check(&wasm.join("host.js"));
+}
+
+#[test]
+fn r5_native_emitter_builds_and_applies_computed_values() {
+    let ir = out_dir("r5-native-ir").join("features.opuir.json");
+    let r = compile(&fixture("r5_features.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let ir_json: Json = serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap();
+    let tap_id = nodes_of(&ir_json)
+        .into_iter()
+        .find(|n| n["events"].get("tap").is_some())
+        .and_then(|n| n["id"].as_u64())
+        .expect("tap node id");
+    let dir = out_dir("r5-native-run");
+    let r = emit(&ir, "native", &dir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let (built, stderr) = build_native(&dir);
+    assert!(built, "cargo build --release failed:\n{stderr}");
+    assert!(
+        !stderr.contains("warning:"),
+        "generated Rust must be warning-free:\n{stderr}"
+    );
+    let (ran, stdout) = run_native(
+        &dir.join("target/release/opurom_native"),
+        &format!("state\ntap {tap_id}\nstate\nquit\n"),
+    );
+    assert!(ran, "native binary exited nonzero");
+    assert!(
+        stdout.contains(
+            "state count=1 dark=false name=Ada items=[\"a\", \"b\"] doubled=2 label=Ada visible=false"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "state count=2 dark=true name=Ada items=[\"a\", \"b\"] doubled=4 label=Ada visible=true"
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains("patch doubled=4"), "{stdout}");
+    assert!(stdout.contains("patch visible=true"), "{stdout}");
 }

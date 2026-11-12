@@ -149,6 +149,9 @@ impl Merge {
         for state in &main.states {
             names.insert(state.name.clone());
         }
+        for computed in &main.computed {
+            names.insert(computed.name.clone());
+        }
         for model in &main.models {
             names.insert(model.name.clone());
         }
@@ -204,6 +207,7 @@ impl Merge {
             app,
             imports,
             states,
+            computed,
             nodes,
             theme,
             models,
@@ -216,6 +220,7 @@ impl Merge {
             app,
             imports,
             states: self.states,
+            computed,
             nodes,
             theme: self.theme.or(theme),
             models: self.models,

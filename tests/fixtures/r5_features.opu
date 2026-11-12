@@ -1,0 +1,33 @@
+app R5Features {
+  state count = 1
+  state dark = false
+  state name = "Ada"
+  state items = ["a", "b"]
+
+  computed doubled = count * 2
+  computed label = name
+  computed visible = dark
+
+  Column(gap: 8) {
+    Text("Count: {count}", size: 18)
+    Text("Double: {doubled}")
+    Text("Label: {label}")
+    if (dark) {
+      Text("dark")
+    } else {
+      Text("light")
+    }
+    if (visible) {
+      Text("visible")
+    } else {
+      Text("hidden")
+    }
+    for (item in items) {
+      Text("{item}")
+    }
+    Button("go") {
+      count += 1
+      dark.toggle()
+    }
+  }
+}

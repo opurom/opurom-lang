@@ -1,0 +1,4 @@
+app Bad {
+  state items = ["a"]
+  Button("go") { items = "b" }
+}

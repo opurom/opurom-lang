@@ -1,0 +1,7 @@
+app Bad {
+  state count = 0
+  Column {
+    computed bad = count * 2
+    Text("x")
+  }
+}

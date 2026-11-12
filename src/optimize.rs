@@ -9,9 +9,10 @@ use crate::emit::bad_ir;
 use crate::lower::{interp_parts, Part};
 
 const IR_FIELDS: &[&str] = &[
-    "ir", "app", "state", "tree", "theme", "models", "api", "imports",
+    "ir", "app", "state", "tree", "theme", "models", "api", "imports", "computed",
 ];
 const STATE_FIELDS: &[&str] = &["name", "type", "init"];
+const COMPUTED_FIELDS: &[&str] = &["name", "type", "expr"];
 const NODE_FIELDS: &[&str] = &[
     "id",
     "kind",
@@ -19,6 +20,7 @@ const NODE_FIELDS: &[&str] = &[
     "children",
     "events",
     "when",
+    "unless",
     "component",
 ];
 
@@ -73,6 +75,34 @@ fn validate(ir: &Json, path: &str) -> DResult<()> {
         for entry in arr {
             if !entry.is_string() {
                 return Err(bad_ir(path, "IR 'imports' entries must be strings"));
+            }
+        }
+    }
+    if let Some(computed) = o.get("computed") {
+        let arr = computed
+            .as_array()
+            .ok_or_else(|| bad_ir(path, "IR 'computed' must be an array"))?;
+        for entry in arr {
+            let fields = entry
+                .as_object()
+                .ok_or_else(|| bad_ir(path, "IR computed entry must be an object"))?;
+            for key in fields.keys() {
+                if !COMPUTED_FIELDS.contains(&key.as_str()) {
+                    return Err(bad_ir(path, format!("unknown IR computed field '{key}'")));
+                }
+            }
+            if fields.get("name").and_then(Json::as_str).is_none() {
+                return Err(bad_ir(path, "IR computed entry is missing a string 'name'"));
+            }
+            let ty = fields
+                .get("type")
+                .and_then(Json::as_str)
+                .ok_or_else(|| bad_ir(path, "IR computed entry is missing a string 'type'"))?;
+            if !matches!(ty, "int" | "bool" | "string") {
+                return Err(bad_ir(path, format!("unsupported IR computed type '{ty}'")));
+            }
+            if fields.get("expr").and_then(Json::as_str).is_none() {
+                return Err(bad_ir(path, "IR computed entry is missing a string 'expr'"));
             }
         }
     }
@@ -136,7 +166,7 @@ fn collect_refs(v: &Json, states: &[String], refs: &mut HashSet<String>) {
             for (key, value) in o {
                 if matches!(
                     key.as_str(),
-                    "bind" | "when" | "target" | "valueFrom" | "into"
+                    "bind" | "when" | "unless" | "target" | "valueFrom" | "into"
                 ) {
                     if let Some(name) = value.as_str() {
                         refs.insert(name.to_string());
@@ -160,7 +190,13 @@ fn drop_null_props(node: &mut Json) {
     }
 }
 
-/// Dead-state elimination only: nodes, ids, `when`, `component` and state order survive.
+fn simple_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Dead-state elimination only: nodes, ids, conditionals, component and state order survive.
 fn optimize(ir: &mut Json) {
     let states: Vec<String> = ir
         .get("state")
@@ -173,11 +209,29 @@ fn optimize(ir: &mut Json) {
         .unwrap_or_default();
     let mut refs = HashSet::new();
     collect_refs(&ir["tree"], &states, &mut refs);
+    let mut computed_names = HashSet::new();
+    if let Some(list) = ir.get("computed").and_then(Json::as_array) {
+        for entry in list {
+            if let Some(name) = entry.get("name").and_then(Json::as_str) {
+                computed_names.insert(name.to_string());
+                refs.insert(name.to_string());
+            }
+            if let Some(expr) = entry.get("expr").and_then(Json::as_str) {
+                for token in expr.split_whitespace() {
+                    if simple_ident(token) {
+                        refs.insert(token.to_string());
+                    }
+                }
+            }
+        }
+    }
     if let Some(list) = ir.get_mut("state").and_then(Json::as_array_mut) {
         list.retain(|s| {
-            s.get("name")
-                .and_then(Json::as_str)
-                .is_some_and(|name| refs.contains(name))
+            let Some(name) = s.get("name").and_then(Json::as_str) else {
+                return false;
+            };
+            let is_list = s.get("type").and_then(Json::as_str) == Some("list");
+            is_list || computed_names.contains(name) || refs.contains(name)
         });
     }
     drop_null_props(&mut ir["tree"]);

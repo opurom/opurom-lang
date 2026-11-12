@@ -13,12 +13,40 @@ pub enum Lit {
     Float(f64),
     Str(String),
     Bool(bool),
+    List(Vec<String>),
 }
 
 #[derive(Clone, Debug)]
 pub enum Value {
     Lit(Lit),
     Ident(String),
+}
+
+#[derive(Clone, Debug)]
+pub enum ExprKind {
+    Int(i64),
+    State(String),
+    Add(Box<Expr>, Box<Expr>),
+    Sub(Box<Expr>, Box<Expr>),
+    Mul(Box<Expr>, Box<Expr>),
+}
+
+#[derive(Clone, Debug)]
+pub struct Expr {
+    pub kind: ExprKind,
+    pub pos: Pos,
+}
+
+impl Expr {
+    pub fn text(&self) -> String {
+        match &self.kind {
+            ExprKind::Int(n) => n.to_string(),
+            ExprKind::State(name) => name.clone(),
+            ExprKind::Add(lhs, rhs) => format!("{} + {}", lhs.text(), rhs.text()),
+            ExprKind::Sub(lhs, rhs) => format!("{} - {}", lhs.text(), rhs.text()),
+            ExprKind::Mul(lhs, rhs) => format!("{} * {}", lhs.text(), rhs.text()),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +93,12 @@ impl Effect {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum ForIter {
+    Count { count: usize, pos: Pos },
+    List { name: String, pos: Pos },
+}
+
 /// A node in the UI tree. `If` and `For` are compile-time forms that are unrolled before lowering.
 #[derive(Clone, Debug)]
 pub enum NodeKind {
@@ -72,11 +106,11 @@ pub enum NodeKind {
     If {
         cond: String,
         cond_pos: Pos,
+        else_block: Option<Block>,
     },
     For {
         var: String,
-        count: usize,
-        count_pos: Pos,
+        iter: ForIter,
     },
 }
 
@@ -107,6 +141,13 @@ pub struct ImportDecl {
 pub struct StateDecl {
     pub name: String,
     pub init: Lit,
+    pub pos: Pos,
+}
+
+#[derive(Clone, Debug)]
+pub struct ComputedDecl {
+    pub name: String,
+    pub expr: Expr,
     pub pos: Pos,
 }
 
@@ -153,6 +194,7 @@ pub struct Program {
     pub app: String,
     pub imports: Vec<ImportDecl>,
     pub states: Vec<StateDecl>,
+    pub computed: Vec<ComputedDecl>,
     pub nodes: Vec<Node>,
     pub theme: Option<ThemeDecl>,
     pub models: Vec<ModelDecl>,
@@ -161,6 +203,31 @@ pub struct Program {
 
 fn is_kind(t: &Token) -> bool {
     matches!(&t.tok, Tok::Ident(s) if s.chars().next().is_some_and(|c| c.is_ascii_uppercase()))
+}
+
+fn is_decl_start(t: &Token) -> bool {
+    if is_kind(t) {
+        return true;
+    }
+    match &t.tok {
+        Tok::Ident(s) => matches!(
+            s.as_str(),
+            "state"
+                | "computed"
+                | "model"
+                | "api"
+                | "theme"
+                | "import"
+                | "if"
+                | "for"
+                | "else"
+                | "async"
+                | "await"
+        ),
+        Tok::Sym(s) => s == ";" || s == "}",
+        Tok::Eof => true,
+        _ => false,
+    }
 }
 
 struct Parser<'a> {
@@ -329,6 +396,138 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn computed_expr_error(&self, token: &Token) -> Diagnostic {
+        Diagnostic::new(
+            self.path,
+            token.line,
+            token.col,
+            format!(
+                "computed expression supports only +, -, *, integer literals and declared state names, found {}",
+                token.describe()
+            ),
+            "write an expression such as 'count * 2 + step' with declared state names",
+        )
+    }
+
+    fn expr_factor(&mut self) -> DResult<Expr> {
+        let start = self.pos();
+        let negative = self.eat_sym("-");
+        let t = self.peek().clone();
+        match t.tok {
+            Tok::Int(n) => {
+                self.bump();
+                Ok(Expr {
+                    kind: ExprKind::Int(if negative { -n } else { n }),
+                    pos: start,
+                })
+            }
+            Tok::Ident(s) if !negative => {
+                self.bump();
+                Ok(Expr {
+                    kind: ExprKind::State(s),
+                    pos: start,
+                })
+            }
+            _ => Err(self.computed_expr_error(&t)),
+        }
+    }
+
+    fn expr_term(&mut self) -> DResult<Expr> {
+        let start = self.pos();
+        let mut lhs = self.expr_factor()?;
+        while self.eat_sym("*") {
+            let rhs = self.expr_factor()?;
+            lhs = Expr {
+                kind: ExprKind::Mul(Box::new(lhs), Box::new(rhs)),
+                pos: start,
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn expr_sum(&mut self) -> DResult<Expr> {
+        let start = self.pos();
+        let mut lhs = self.expr_term()?;
+        loop {
+            let op = if self.eat_sym("+") {
+                Some(true)
+            } else if self.eat_sym("-") {
+                Some(false)
+            } else {
+                None
+            };
+            let Some(is_add) = op else { break };
+            let rhs = self.expr_term()?;
+            lhs = Expr {
+                kind: if is_add {
+                    ExprKind::Add(Box::new(lhs), Box::new(rhs))
+                } else {
+                    ExprKind::Sub(Box::new(lhs), Box::new(rhs))
+                },
+                pos: start,
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn computed_decl(&mut self) -> DResult<ComputedDecl> {
+        let pos = self.pos();
+        self.bump();
+        let (name, _) = self.expect_ident("a computed value name")?;
+        self.expect_sym("=", "a computed declaration needs '=' and an expression")?;
+        let expr = self.expr_sum()?;
+        self.eat_sym(";");
+        if !is_decl_start(self.peek()) {
+            let t = self.peek().clone();
+            return Err(self.computed_expr_error(&t));
+        }
+        Ok(ComputedDecl { name, expr, pos })
+    }
+
+    fn list_lit(&mut self) -> DResult<Lit> {
+        self.expect_sym("[", "a list initializer starts with '['")?;
+        let mut values = Vec::new();
+        if !self.sym("]") {
+            loop {
+                let t = self.peek().clone();
+                let value = match t.tok {
+                    Tok::Str(s) => {
+                        self.bump();
+                        s
+                    }
+                    _ => {
+                        return Err(Diagnostic::new(
+                            self.path,
+                            t.line,
+                            t.col,
+                            "list initializers accept string literals only",
+                            "write a list such as 'state items = [\"a\", \"b\"]'",
+                        ))
+                    }
+                };
+                if value.contains('{') || value.contains('}') {
+                    return Err(Diagnostic::new(
+                        self.path,
+                        t.line,
+                        t.col,
+                        "list values may not contain braces in R5",
+                        "use plain strings; interpolation in list values is R6+",
+                    ));
+                }
+                values.push(value);
+                if self.eat_sym(",") {
+                    if self.sym("]") {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+        }
+        self.expect_sym("]", "close the list initializer with ']'")?;
+        Ok(Lit::List(values))
+    }
+
     fn statement(&mut self) -> DResult<Stmt> {
         let start = self.pos();
         let (target, _) = self.expect_ident("a state name")?;
@@ -486,6 +685,30 @@ impl<'a> Parser<'a> {
                     "close every '{' with a matching '}'",
                 ));
             }
+            if self.word("computed") {
+                if !self.allow_nodes {
+                    return Err(self.err(
+                        "imported module may declare only state, model, api, theme and imports",
+                        "move UI nodes, async handlers and statements into the importing app",
+                    ));
+                }
+                return Err(self.err(
+                    "computed declarations belong at the top level of the app",
+                    "move 'computed name = expr' directly inside 'app Name { ... }'",
+                ));
+            }
+            if self.word("else") {
+                if !self.allow_nodes {
+                    return Err(self.err(
+                        "imported module may declare only state, model, api, theme and imports",
+                        "move UI nodes, async handlers and statements into the importing app",
+                    ));
+                }
+                return Err(self.err(
+                    "'else' must follow an 'if' block",
+                    "write 'if (dark) { ... } else { ... }'",
+                ));
+            }
             if self.word("state") || self.word("app") {
                 return Err(self.err(
                     "state declarations belong at the top level of the app",
@@ -607,7 +830,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// `if (cond) { ... }` and `for (i in N) { ... }` share one shape.
+    /// `if (cond) { ... } [else { ... }]` and `for (i in N | list) { ... }` share one shape.
     fn conditional(&mut self) -> DResult<Node> {
         let start = self.pos();
         if self.word("if") {
@@ -616,8 +839,43 @@ impl<'a> Parser<'a> {
             let (cond, cond_pos) = self.expect_ident("a bool state name")?;
             self.expect_sym(")", "'if' needs a closing ')'")?;
             let block = self.block(false)?;
+            self.eat_sym(";");
+            let else_block = if self.word("else") {
+                let else_pos = self.pos();
+                self.bump();
+                if self.word("if") {
+                    return Err(Diagnostic::new(
+                        self.path,
+                        else_pos.line,
+                        else_pos.col,
+                        "'else if' is not supported in R5",
+                        "write a single 'else { ... }' block after the 'if' block",
+                    ));
+                }
+                if !self.sym("{") {
+                    return Err(self.err(
+                        "expected '{' after 'else'",
+                        "write 'else { ... }' immediately after the 'if' block",
+                    ));
+                }
+                let block = self.block(false)?;
+                self.eat_sym(";");
+                if self.word("else") {
+                    return Err(self.err(
+                        "duplicate 'else' block",
+                        "one 'if' block accepts exactly one 'else' block",
+                    ));
+                }
+                Some(block)
+            } else {
+                None
+            };
             return Ok(Node {
-                kind: NodeKind::If { cond, cond_pos },
+                kind: NodeKind::If {
+                    cond,
+                    cond_pos,
+                    else_block,
+                },
                 pos: start,
                 args: Vec::new(),
                 block: Some(block),
@@ -632,15 +890,21 @@ impl<'a> Parser<'a> {
                     "expected 'in' after '{var}', found {}",
                     self.peek().describe()
                 ),
-                "write 'for (i in 3)' with an integer count",
+                "write 'for (i in 3)' or 'for (item in items)'",
             ));
         }
         self.bump();
         let t = self.peek().clone();
-        let count = match t.tok {
+        let iter = match t.tok {
             Tok::Int(n) if n >= 0 => {
                 self.bump();
-                n as usize
+                ForIter::Count {
+                    count: n as usize,
+                    pos: Pos {
+                        line: t.line,
+                        col: t.col,
+                    },
+                }
             }
             Tok::Int(n) => {
                 return Err(Diagnostic::new(
@@ -651,27 +915,33 @@ impl<'a> Parser<'a> {
                     "write a count between 0 and 64",
                 ))
             }
+            Tok::Ident(name) => {
+                self.bump();
+                ForIter::List {
+                    name,
+                    pos: Pos {
+                        line: t.line,
+                        col: t.col,
+                    },
+                }
+            }
             _ => {
                 return Err(Diagnostic::new(
                     self.path,
                     t.line,
                     t.col,
-                    format!("'for' count must be an integer, found {}", t.describe()),
-                    "write 'for (i in 3)' with an integer count between 0 and 64",
+                    format!(
+                        "'for' requires an integer count or a list state, found {}",
+                        t.describe()
+                    ),
+                    "write 'for (i in 3)' or 'for (item in items)'",
                 ))
             }
         };
         self.expect_sym(")", "'for' needs a closing ')'")?;
         let block = self.block(false)?;
         Ok(Node {
-            kind: NodeKind::For {
-                var,
-                count,
-                count_pos: Pos {
-                    line: t.line,
-                    col: t.col,
-                },
-            },
+            kind: NodeKind::For { var, iter },
             pos: start,
             args: Vec::new(),
             block: Some(block),
@@ -682,17 +952,21 @@ impl<'a> Parser<'a> {
         self.bump();
         let (name, pos) = self.expect_ident("a state name")?;
         self.expect_sym("=", "a state declaration needs '=' and an initializer")?;
-        let (v, vp) = self.value()?;
-        let init = match v {
-            Value::Lit(l) => l,
-            Value::Ident(s) => {
-                return Err(Diagnostic::new(
-                    self.path,
-                    vp.line,
-                    vp.col,
-                    format!("state initializer must be a literal, found '{s}'"),
-                    "write a number, a string or true/false",
-                ));
+        let init = if self.sym("[") {
+            self.list_lit()?
+        } else {
+            let (v, vp) = self.value()?;
+            match v {
+                Value::Lit(l) => l,
+                Value::Ident(s) => {
+                    return Err(Diagnostic::new(
+                        self.path,
+                        vp.line,
+                        vp.col,
+                        format!("state initializer must be a literal, found '{s}'"),
+                        "write a number, a string, true/false or a string list",
+                    ));
+                }
             }
         };
         self.eat_sym(";");
@@ -975,6 +1249,7 @@ fn parse_with_options(
     let (app, _) = p.expect_ident("an app name")?;
     p.expect_sym("{", "an app body starts with '{'")?;
     let mut states = Vec::new();
+    let mut computed = Vec::new();
     let mut nodes = Vec::new();
     let mut theme = None;
     let mut models = Vec::new();
@@ -993,6 +1268,28 @@ fn parse_with_options(
         if p.word("state") {
             states.push(p.state_decl()?);
             continue;
+        }
+        if p.word("computed") {
+            if !p.allow_nodes {
+                return Err(p.err(
+                    "imported module may declare only state, model, api, theme and imports",
+                    "move UI nodes, async handlers and statements into the importing app",
+                ));
+            }
+            computed.push(p.computed_decl()?);
+            continue;
+        }
+        if p.word("else") {
+            if !p.allow_nodes {
+                return Err(p.err(
+                    "imported module may declare only state, model, api, theme and imports",
+                    "move UI nodes, async handlers and statements into the importing app",
+                ));
+            }
+            return Err(p.err(
+                "'else' must follow an 'if' block",
+                "write 'if (dark) { ... } else { ... }'",
+            ));
         }
         if p.word("theme") {
             if theme.is_some() {
@@ -1055,10 +1352,10 @@ fn parse_with_options(
         }
         return Err(p.err(
             format!(
-                "expected 'state' or a node kind, found {}",
+                "expected 'state', 'computed' or a node kind, found {}",
                 p.peek().describe()
             ),
-            "write 'state name = literal' or a node such as Column(gap: 8) { Text(\"hi\") }",
+            "write 'state name = literal', 'computed name = expr' or a node such as Column { ... }",
         ));
     }
     if !matches!(p.peek().tok, Tok::Eof) {
@@ -1074,6 +1371,7 @@ fn parse_with_options(
         app,
         imports,
         states,
+        computed,
         nodes,
         theme,
         models,

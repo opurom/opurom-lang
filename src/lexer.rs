@@ -1,18 +1,10 @@
 use crate::diag::{DResult, Diagnostic};
 
-// R4 promotes `async`, `await` and `import` to real syntax; `fn` stays reserved.
-// Other R3 constructs are rejected at lex time so they can never be silently miscompiled.
+// R4 promotes `async`, `await` and `import` to real syntax; R5 promotes `else`.
+// `fn` stays reserved. Other R3 constructs are rejected at lex time so they can
+// never be silently miscompiled.
 const RESERVED_V01: &[&str] = &["fn"];
-const RESERVED_V02: &[&str] = &[
-    "else",
-    "component",
-    "module",
-    "units",
-    "dp",
-    "rem",
-    "let",
-    "var",
-];
+const RESERVED_V02: &[&str] = &["component", "module", "units", "dp", "rem", "let", "var"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
@@ -245,7 +237,7 @@ pub fn lex(src: &str, path: &str) -> DResult<Vec<Token>> {
                 continue;
             }
         }
-        if "{}():,=.;+-[]".contains(c) {
+        if "{}():,=.;+-[]*".contains(c) {
             bump(&cs, &mut i, &mut line, &mut col);
             out.push(Token {
                 tok: Tok::Sym(c.to_string()),

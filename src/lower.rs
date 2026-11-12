@@ -7,7 +7,8 @@ use crate::diag::{DResult, Diagnostic};
 use crate::lexer::lex;
 use crate::modules;
 use crate::parser::{
-    self, Arg, Effect, Lit, Node, NodeKind, Pos, Program, Stmt, StmtKind, Value as AstValue,
+    self, Arg, Effect, Expr, ExprKind, ForIter, Lit, Node, NodeKind, Pos, Program, Stmt, StmtKind,
+    Value as AstValue,
 };
 
 pub const KINDS: &[&str] = &[
@@ -83,6 +84,7 @@ pub enum Ty {
     Int,
     Bool,
     Str,
+    List,
 }
 
 impl Ty {
@@ -91,6 +93,7 @@ impl Ty {
             Ty::Int => "int",
             Ty::Bool => "bool",
             Ty::Str => "string",
+            Ty::List => "list",
         }
     }
 }
@@ -448,13 +451,37 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
     Some(info)
 }
 
+#[derive(Clone, Debug)]
+enum LoopValue {
+    Int(i64),
+    Str(String),
+}
+
+impl LoopValue {
+    fn text(&self) -> String {
+        match self {
+            LoopValue::Int(n) => n.to_string(),
+            LoopValue::Str(s) => s.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct Cond<'a> {
+    when: Option<&'a str>,
+    unless: Option<&'a str>,
+}
+
 struct Ctx<'a> {
     path: &'a str,
     types: HashMap<String, Ty>,
     order: Vec<String>,
     next_id: u64,
+    computed: HashSet<String>,
+    inits: HashMap<String, Json>,
+    lists: HashMap<String, Vec<String>>,
     /// Loop variables of enclosing `for` blocks, innermost last.
-    loops: Vec<(String, i64)>,
+    loops: Vec<(String, LoopValue)>,
 }
 
 impl<'a> Ctx<'a> {
@@ -476,12 +503,12 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn loop_value(&self, name: &str) -> Option<i64> {
+    fn loop_value(&self, name: &str) -> Option<String> {
         self.loops
             .iter()
             .rev()
             .find(|(v, _)| v == name)
-            .map(|(_, n)| *n)
+            .map(|(_, value)| value.text())
     }
 }
 
@@ -491,6 +518,7 @@ fn json_lit(l: &Lit) -> Json {
         Lit::Float(n) => json!(*n),
         Lit::Bool(b) => json!(*b),
         Lit::Str(s) => json!(s),
+        Lit::List(values) => json!(values),
     }
 }
 
@@ -500,6 +528,7 @@ fn value_desc(v: &AstValue) -> &'static str {
         AstValue::Lit(Lit::Float(_)) => "number",
         AstValue::Lit(Lit::Bool(_)) => "bool",
         AstValue::Lit(Lit::Str(_)) => "string",
+        AstValue::Lit(Lit::List(_)) => "list",
         AstValue::Ident(_) => "identifier",
     }
 }
@@ -527,7 +556,7 @@ fn substitute_loops(ctx: &Ctx, s: &str) -> String {
             if j < cs.len() && cs[j] == '}' {
                 let name: String = cs[i + 1..j].iter().collect();
                 if let Some(v) = ctx.loop_value(&name) {
-                    out.push_str(&v.to_string());
+                    out.push_str(&v);
                     i = j + 1;
                     continue;
                 }
@@ -574,6 +603,20 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
                         ),
                     )
                 })?;
+                if ctx.computed.contains(name) {
+                    return Err(ctx.err(
+                        arg.pos,
+                        format!("computed value '{name}' is read-only"),
+                        "bind a declared mutable state; computed values are recalculated from state",
+                    ));
+                }
+                if ty == Ty::List {
+                    return Err(ctx.err(
+                        arg.pos,
+                        format!("list state '{name}' is compile-time only"),
+                        "use 'for (item in items)' to unroll a list at compile time; runtime binding is R6+",
+                    ));
+                }
                 if ty != expected {
                     return Err(ctx.err(
                         arg.pos,
@@ -761,6 +804,20 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
             ),
         )
     })?;
+    if ctx.computed.contains(&stmt.target) {
+        return Err(ctx.err(
+            stmt.pos,
+            format!("computed value '{}' is read-only", stmt.target),
+            "change a declared state instead; computed values are recalculated from state",
+        ));
+    }
+    if ty == Ty::List {
+        return Err(ctx.err(
+            stmt.pos,
+            format!("list state '{}' is compile-time only", stmt.target),
+            "use 'for (item in items)' to unroll a list at compile time; runtime mutation is R6+",
+        ));
+    }
     match &stmt.kind {
         StmtKind::Add(v, p) | StmtKind::Sub(v, p) => {
             if ty != Ty::Int {
@@ -927,6 +984,13 @@ fn lower_effects(ctx: &Ctx, effects: &[Effect]) -> DResult<Vec<Json>> {
                         ),
                     )
                 })?;
+                if ctx.computed.contains(into) {
+                    return Err(ctx.err(
+                        *pos,
+                        format!("computed value '{into}' is read-only"),
+                        "fetch into a declared string state; computed values are recalculated from state",
+                    ));
+                }
                 if ty != Ty::Str {
                     return Err(ctx.err(
                         *pos,
@@ -944,7 +1008,7 @@ fn lower_effects(ctx: &Ctx, effects: &[Effect]) -> DResult<Vec<Json>> {
     Ok(out)
 }
 
-fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
+fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
     let id = ctx.take_id();
     let source_kind = match &node.kind {
         NodeKind::Widget(k) => k.as_str(),
@@ -1058,16 +1122,27 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
         })?;
         for part in parts {
             if let Part::Var(name, off) = part {
-                if !ctx.types.contains_key(&name) {
-                    let p = offset_pos(base, s, off);
-                    return Err(ctx.err(
-                        p,
-                        format!("unknown state '{name}' in Text interpolation"),
-                        format!(
-                            "declare it with 'state {name} = 0' or use one of: {}",
-                            ctx.state_list()
-                        ),
-                    ));
+                match ctx.types.get(&name) {
+                    None => {
+                        let p = offset_pos(base, s, off);
+                        return Err(ctx.err(
+                            p,
+                            format!("unknown state '{name}' in Text interpolation"),
+                            format!(
+                                "declare it with 'state {name} = 0' or use one of: {}",
+                                ctx.state_list()
+                            ),
+                        ));
+                    }
+                    Some(Ty::List) => {
+                        let p = offset_pos(base, s, off);
+                        return Err(ctx.err(
+                            p,
+                            format!("list state '{name}' is compile-time only"),
+                            "use 'for (item in items)' to unroll list values; interpolation is R6+",
+                        ));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1124,7 +1199,7 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
                     "put effects inside an async tap-handler block".to_string(),
                 ));
             }
-            children = lower_node_list(ctx, &block.nodes, when)?;
+            children = lower_node_list(ctx, &block.nodes, cond)?;
         } else {
             return Err(ctx.err(
                 block.pos,
@@ -1187,46 +1262,108 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
     node_json.insert("props".to_string(), Json::Object(props));
     node_json.insert("children".to_string(), Json::Array(children));
     node_json.insert("events".to_string(), Json::Object(events));
-    if let Some(w) = when {
+    if let Some(w) = cond.when {
         node_json.insert("when".to_string(), json!(w));
+    }
+    if let Some(u) = cond.unless {
+        node_json.insert("unless".to_string(), json!(u));
     }
     Ok(Json::Object(node_json))
 }
 
 /// Number of tree nodes produced by a node list after `if`/`for` expansion.
-fn count_expanded(nodes: &[Node]) -> usize {
-    nodes
-        .iter()
-        .map(|n| match &n.kind {
+fn count_expanded(nodes: &[Node], ctx: &Ctx) -> DResult<usize> {
+    let mut total = 0usize;
+    for n in nodes {
+        let count = match &n.kind {
             NodeKind::Widget(_) => 1,
-            NodeKind::If { .. } => n
-                .block
-                .as_ref()
-                .map(|b| count_expanded(&b.nodes))
-                .unwrap_or(0),
-            NodeKind::For { count, .. } => {
-                *count
-                    * n.block
-                        .as_ref()
-                        .map(|b| count_expanded(&b.nodes))
-                        .unwrap_or(0)
+            NodeKind::If { else_block, .. } => {
+                let block = n.block.as_ref().ok_or_else(|| {
+                    ctx.err(n.pos, "'if' needs a block", "write 'if (dark) { ... }'")
+                })?;
+                let mut count = count_expanded(&block.nodes, ctx)?;
+                if let Some(else_block) = else_block {
+                    count = count.saturating_add(count_expanded(&else_block.nodes, ctx)?);
+                }
+                count
             }
-        })
-        .sum()
+            NodeKind::For { iter, .. } => {
+                let block = n.block.as_ref().ok_or_else(|| {
+                    ctx.err(n.pos, "'for' needs a block", "write 'for (i in 3) { ... }'")
+                })?;
+                let repeats = match iter {
+                    ForIter::Count { count, pos } => {
+                        if *count > 64 {
+                            return Err(ctx.err(
+                                *pos,
+                                format!("'for' count must be at most 64, found {count}"),
+                                "unroll at most 64 copies; split the work into two blocks",
+                            ));
+                        }
+                        *count
+                    }
+                    ForIter::List { name, pos } => {
+                        match (ctx.types.get(name), ctx.lists.get(name)) {
+                            (Some(&Ty::List), Some(values)) => {
+                                if values.len() > 64 {
+                                    return Err(ctx.err(
+                                        *pos,
+                                        format!(
+                                            "list '{name}' has more than 64 values, found {}",
+                                            values.len()
+                                        ),
+                                        "split the list or use an integer count loop",
+                                    ));
+                                }
+                                values.len()
+                            }
+                            (Some(ty), _) => {
+                                return Err(ctx.err(
+                                    *pos,
+                                    format!(
+                                        "'for' requires a list state, found {} state '{name}'",
+                                        ty.name()
+                                    ),
+                                    "declare the state with a string list or use an integer count",
+                                ));
+                            }
+                            (None, _) => {
+                                return Err(ctx.err(
+                                    *pos,
+                                    format!("unknown list state '{name}' in 'for'"),
+                                    format!(
+                                        "declare it with 'state {name} = [\"a\", \"b\"]' or use one of: {}",
+                                        ctx.state_list()
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                };
+                repeats.saturating_mul(count_expanded(&block.nodes, ctx)?)
+            }
+        };
+        total = total.saturating_add(count);
+    }
+    Ok(total)
 }
 
-/// Expand `if`/`for` blocks and lower every resulting node.
-fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], when: Option<&str>) -> DResult<Vec<Json>> {
+/// Expand `if`/`else`/`for` blocks and lower every resulting node.
+fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], cond: Cond) -> DResult<Vec<Json>> {
     let mut out = Vec::new();
     for node in nodes {
         match &node.kind {
-            NodeKind::If { cond, cond_pos } => {
-                let ty = ctx.types.get(cond).copied().ok_or_else(|| {
+            NodeKind::If {
+                cond: name,
+                cond_pos,
+                else_block,
+            } => {
+                let ty = ctx.types.get(name).copied().ok_or_else(|| {
                     ctx.err(
                         *cond_pos,
-                        format!("unknown state '{cond}' in 'if'"),
+                        format!("unknown state '{name}' in 'if'"),
                         format!(
-                            "declare it with 'state {cond} = false' or use one of: {}",
+                            "declare it with 'state {name} = false' or use one of: {}",
                             ctx.state_list()
                         ),
                     )
@@ -1235,7 +1372,7 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], when: Option<&str>) -> DResult
                     return Err(ctx.err(
                         *cond_pos,
                         format!(
-                            "'if' requires a bool state, found {} state '{cond}'",
+                            "'if' requires a bool state, found {} state '{name}'",
                             ty.name()
                         ),
                         "use a bool state for the condition".to_string(),
@@ -1258,20 +1395,43 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], when: Option<&str>) -> DResult
                         "put effects inside an async tap-handler block".to_string(),
                     ));
                 }
-                out.extend(lower_node_list(ctx, &block.nodes, Some(cond))?);
-            }
-            NodeKind::For {
-                var,
-                count,
-                count_pos,
-            } => {
-                if *count > 64 {
-                    return Err(ctx.err(
-                        *count_pos,
-                        format!("'for' count must be at most 64, found {count}"),
-                        "unroll at most 64 copies; split the work into two blocks".to_string(),
-                    ));
+                if let Some(else_block) = else_block {
+                    if let Some(stmt) = else_block.stmts.first() {
+                        return Err(ctx.err(
+                            stmt.pos,
+                            "an 'else' block cannot contain statements".to_string(),
+                            "put state changes inside a Button { ... } tap handler".to_string(),
+                        ));
+                    }
+                    if let Some(effect) = else_block.effects.first() {
+                        return Err(ctx.err(
+                            effect.pos(),
+                            "an 'else' block cannot contain effects".to_string(),
+                            "put effects inside an async tap-handler block".to_string(),
+                        ));
+                    }
+                    if cond.unless.is_some() {
+                        return Err(ctx.err(
+                            node.pos,
+                            "nested 'else' inside an 'else' block is not supported in R5",
+                            "flatten the conditional or move it outside the else block",
+                        ));
+                    }
                 }
+                let branch = Cond {
+                    when: Some(name),
+                    unless: cond.unless,
+                };
+                out.extend(lower_node_list(ctx, &block.nodes, branch)?);
+                if let Some(else_block) = else_block {
+                    let branch = Cond {
+                        when: cond.when,
+                        unless: Some(name),
+                    };
+                    out.extend(lower_node_list(ctx, &else_block.nodes, branch)?);
+                }
+            }
+            NodeKind::For { var, iter } => {
                 let block = node.block.as_ref().ok_or_else(|| {
                     ctx.err(
                         node.pos,
@@ -1293,14 +1453,68 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], when: Option<&str>) -> DResult
                         "put effects inside an async tap-handler block".to_string(),
                     ));
                 }
-                for i in 0..*count {
-                    ctx.loops.push((var.clone(), i as i64));
-                    let lowered = lower_node_list(ctx, &block.nodes, when);
+                let values: Vec<LoopValue> = match iter {
+                    ForIter::Count { count, pos } => {
+                        if *count > 64 {
+                            return Err(ctx.err(
+                                *pos,
+                                format!("'for' count must be at most 64, found {count}"),
+                                "unroll at most 64 copies; split the work into two blocks"
+                                    .to_string(),
+                            ));
+                        }
+                        (0..*count).map(|i| LoopValue::Int(i as i64)).collect()
+                    }
+                    ForIter::List { name, pos } => {
+                        let ty = ctx.types.get(name).copied().ok_or_else(|| {
+                            ctx.err(
+                                *pos,
+                                format!("unknown list state '{name}' in 'for'"),
+                                format!(
+                                    "declare it with 'state {name} = [\"a\", \"b\"]' or use one of: {}",
+                                    ctx.state_list()
+                                ),
+                            )
+                        })?;
+                        if ty != Ty::List {
+                            return Err(ctx.err(
+                                *pos,
+                                format!(
+                                    "'for' requires a list state, found {} state '{name}'",
+                                    ty.name()
+                                ),
+                                "declare the state with a string list or use an integer count"
+                                    .to_string(),
+                            ));
+                        }
+                        let values = ctx.lists.get(name).cloned().ok_or_else(|| {
+                            ctx.err(
+                                *pos,
+                                format!("list state '{name}' has no initializer"),
+                                "declare it with 'state items = [\"a\", \"b\"]'",
+                            )
+                        })?;
+                        if values.len() > 64 {
+                            return Err(ctx.err(
+                                *pos,
+                                format!(
+                                    "list '{name}' has more than 64 values, found {}",
+                                    values.len()
+                                ),
+                                "split the list or use an integer count loop".to_string(),
+                            ));
+                        }
+                        values.into_iter().map(LoopValue::Str).collect()
+                    }
+                };
+                for value in values {
+                    ctx.loops.push((var.clone(), value));
+                    let lowered = lower_node_list(ctx, &block.nodes, cond);
                     ctx.loops.pop();
                     out.extend(lowered?);
                 }
             }
-            NodeKind::Widget(_) => out.push(lower_node(ctx, node, when)?),
+            NodeKind::Widget(_) => out.push(lower_node(ctx, node, cond)?),
         }
     }
     Ok(out)
@@ -1363,6 +1577,7 @@ fn lower_models(program: &Program, ctx: &Ctx) -> DResult<Vec<Json>> {
                     Lit::Float(_) => "number",
                     Lit::Bool(_) => "bool",
                     Lit::Str(_) => "string",
+                    Lit::List(_) => "list",
                 };
                 if given != ty {
                     return Err(ctx.err(
@@ -1458,12 +1673,78 @@ fn lower_apis(program: &Program, ctx: &Ctx) -> DResult<Vec<Json>> {
     Ok(out)
 }
 
+fn eval_computed_expr(
+    ctx: &Ctx,
+    expr: &Expr,
+    computed_names: &HashSet<String>,
+) -> DResult<(Ty, Json)> {
+    match &expr.kind {
+        ExprKind::Int(n) => Ok((Ty::Int, json!(*n))),
+        ExprKind::State(name) => {
+            if computed_names.contains(name) {
+                return Err(ctx.err(
+                    expr.pos,
+                    format!("computed expression cannot read computed value '{name}'"),
+                    "read a declared state; computed-to-computed references are R6+",
+                ));
+            }
+            let ty = ctx.types.get(name).copied().ok_or_else(|| {
+                ctx.err(
+                    expr.pos,
+                    format!("unknown state '{name}' in computed expression"),
+                    format!(
+                        "declare it with 'state {name} = 0' or use one of: {}",
+                        ctx.state_list()
+                    ),
+                )
+            })?;
+            if ty == Ty::List {
+                return Err(ctx.err(
+                    expr.pos,
+                    format!("list state '{name}' is compile-time only"),
+                    "use a declared int, bool or string state in a computed expression",
+                ));
+            }
+            Ok((ty, ctx.inits.get(name).cloned().unwrap_or(Json::Null)))
+        }
+        ExprKind::Add(lhs, rhs) | ExprKind::Sub(lhs, rhs) | ExprKind::Mul(lhs, rhs) => {
+            let op = match &expr.kind {
+                ExprKind::Add(..) => "+",
+                ExprKind::Sub(..) => "-",
+                ExprKind::Mul(..) => "*",
+                _ => unreachable!("binary expression variant"),
+            };
+            let (lhs_ty, lhs_value) = eval_computed_expr(ctx, lhs, computed_names)?;
+            let (rhs_ty, rhs_value) = eval_computed_expr(ctx, rhs, computed_names)?;
+            if lhs_ty != Ty::Int || rhs_ty != Ty::Int {
+                return Err(ctx.err(
+                    expr.pos,
+                    format!("computed expression '{op}' requires int operands"),
+                    "use only int states and integer literals with +, - and *",
+                ));
+            }
+            let a = lhs_value.as_i64().unwrap_or(0);
+            let b = rhs_value.as_i64().unwrap_or(0);
+            let value = match &expr.kind {
+                ExprKind::Add(..) => a.saturating_add(b),
+                ExprKind::Sub(..) => a.saturating_sub(b),
+                ExprKind::Mul(..) => a.saturating_mul(b),
+                _ => unreachable!("binary expression variant"),
+            };
+            Ok((Ty::Int, json!(value)))
+        }
+    }
+}
+
 fn lower(program: &Program, path: &str) -> DResult<Json> {
     let mut ctx = Ctx {
         path,
         types: HashMap::new(),
         order: Vec::new(),
         next_id: 0,
+        computed: HashSet::new(),
+        inits: HashMap::new(),
+        lists: HashMap::new(),
         loops: Vec::new(),
     };
     let mut state_json = Vec::new();
@@ -1482,6 +1763,10 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             Lit::Int(n) => (Ty::Int, json!(*n)),
             Lit::Bool(b) => (Ty::Bool, json!(*b)),
             Lit::Str(v) => (Ty::Str, json!(v)),
+            Lit::List(values) => {
+                ctx.lists.insert(s.name.clone(), values.clone());
+                (Ty::List, json!(values))
+            }
             Lit::Float(_) => {
                 return Err(ctx.err(
                     s.pos,
@@ -1492,11 +1777,39 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         };
         ctx.types.insert(s.name.clone(), ty);
         ctx.order.push(s.name.clone());
+        ctx.inits.insert(s.name.clone(), init.clone());
         state_json.push(json!({"name": s.name, "type": ty.name(), "init": init}));
+    }
+    let computed_names: HashSet<String> = program.computed.iter().map(|c| c.name.clone()).collect();
+    let model_names = model_types(program);
+    let mut computed_seen = HashSet::new();
+    let mut computed_json = Vec::new();
+    for c in &program.computed {
+        if ctx.types.contains_key(&c.name)
+            || model_names.contains(&c.name)
+            || !computed_seen.insert(c.name.clone())
+        {
+            return Err(ctx.err(
+                c.pos,
+                format!("duplicate name '{}'", c.name),
+                "rename the computed value or the conflicting declaration",
+            ));
+        }
+        let (ty, init) = eval_computed_expr(&ctx, &c.expr, &computed_names)?;
+        computed_json.push(json!({
+            "name": c.name,
+            "type": ty.name(),
+            "expr": c.expr.text(),
+        }));
+        state_json.push(json!({"name": c.name, "type": ty.name(), "init": init.clone()}));
+        ctx.types.insert(c.name.clone(), ty);
+        ctx.order.push(c.name.clone());
+        ctx.inits.insert(c.name.clone(), init);
+        ctx.computed.insert(c.name.clone());
     }
     let models = lower_models(program, &ctx)?;
     let apis = lower_apis(program, &ctx)?;
-    let total = count_expanded(&program.nodes);
+    let total = count_expanded(&program.nodes, &ctx)?;
     if total == 0 {
         return Err(Diagnostic::new(
             path,
@@ -1507,11 +1820,11 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         ));
     }
     let tree = if total == 1 {
-        let mut nodes = lower_node_list(&mut ctx, &program.nodes, None)?;
+        let mut nodes = lower_node_list(&mut ctx, &program.nodes, Cond::default())?;
         nodes.remove(0)
     } else {
         let root_id = ctx.take_id();
-        let nodes = lower_node_list(&mut ctx, &program.nodes, None)?;
+        let nodes = lower_node_list(&mut ctx, &program.nodes, Cond::default())?;
         json!({
             "id": root_id,
             "kind": "Column",
@@ -1556,6 +1869,9 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             .map(|i| json!(i.path))
             .collect::<Vec<Json>>();
         out.insert("imports".to_string(), Json::Array(imports));
+    }
+    if !computed_json.is_empty() {
+        out.insert("computed".to_string(), Json::Array(computed_json));
     }
     Ok(Json::Object(out))
 }

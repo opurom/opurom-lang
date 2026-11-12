@@ -404,4 +404,115 @@ console.log(JSON.stringify({
     assert_eq!(got["after"], 1, "{text}");
 }
 
+/// R5 int computed values are recomputed inside the wasm module after every tap.
+#[test]
+fn wasm_emitter_recomputes_int_computed_values() {
+    let dir = out_dir("wasm-r5");
+    let src = workspace().join("tests/fixtures/r5_features.opu");
+    let ir = dir.join("r5.opuir.json");
+    let r = bin()
+        .arg("compile")
+        .arg(&src)
+        .arg("-o")
+        .arg(&ir)
+        .output()
+        .expect("run opuromc compile");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let ir_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&ir).unwrap()).expect("parse R5 IR");
+    let tap_id = ir_json["tree"]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["events"].get("tap").is_some())
+        .and_then(|n| n["id"].as_u64())
+        .expect("tap node id");
+
+    let out = dir.join("wasm");
+    let r = bin()
+        .arg("target")
+        .arg(&ir)
+        .arg("--target")
+        .arg("wasm")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("run opuromc target wasm");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let host_js = fs::read_to_string(out.join("host.js")).unwrap();
+    assert!(host_js.contains("function applyComputed()"));
+    let check = Command::new("node")
+        .arg("--check")
+        .arg(out.join("host.js"))
+        .output()
+        .expect("run node --check");
+    assert!(
+        check.status.success(),
+        "node --check failed: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let build = Command::new(cargo_path())
+        .arg("build")
+        .arg("--release")
+        .arg("--target")
+        .arg("wasm32-unknown-unknown")
+        .current_dir(&out)
+        .env("CARGO_TARGET_DIR", out.join("target"))
+        .env("PATH", cargo_env())
+        .output()
+        .expect("run cargo build --release --target wasm32-unknown-unknown");
+    assert!(
+        build.status.success(),
+        "wasm build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&build.stderr).contains("warning:"),
+        "generated wasm Rust must be warning-free"
+    );
+    let wasm = out.join("target/wasm32-unknown-unknown/release/opurom_wasm.wasm");
+
+    let script = dir.join("computed.mjs");
+    fs::write(
+        &script,
+        r#"import { readFile } from "node:fs/promises";
+const bytes = await readFile(process.argv[2]);
+const id = Number(process.argv[3]);
+const module = await WebAssembly.instantiate(bytes, {});
+const e = module.instance.exports;
+console.log(JSON.stringify({
+  version: e.opu_version(),
+  state_len: e.opu_state_len(),
+  state0: e.opu_state(0),
+  state1: e.opu_state(1),
+  tap: e.opu_tap(id),
+  state0_after: e.opu_state(0),
+  state1_after: e.opu_state(1),
+}));
+"#,
+    )
+    .expect("write conformance script");
+    let run = Command::new("node")
+        .arg(&script)
+        .arg(&wasm)
+        .arg(tap_id.to_string())
+        .output()
+        .expect("run node conformance");
+    assert!(
+        run.status.success(),
+        "node conformance failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let text = String::from_utf8_lossy(&run.stdout);
+    let got: serde_json::Value = serde_json::from_str(text.trim()).expect("parse conformance JSON");
+    assert_eq!(got["version"], 1, "{text}");
+    assert_eq!(got["state_len"], 2, "{text}");
+    assert_eq!(got["state0"], 1, "{text}");
+    assert_eq!(got["state1"], 2, "{text}");
+    assert_eq!(got["tap"], 2, "{text}");
+    assert_eq!(got["state0_after"], 2, "{text}");
+    assert_eq!(got["state1_after"], 4, "{text}");
+}
+
 fn _unused(_: &Path) {}
