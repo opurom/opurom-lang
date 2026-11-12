@@ -1,0 +1,17 @@
+component Inner(text: string) {
+  Text(text)
+}
+
+component Outer(title) {
+  Column {
+    Text("{title}!")
+    Inner("{title}")
+    for (i in 2) {
+      Inner("{title} {i}")
+    }
+  }
+}
+
+app R6Nested {
+  Outer("Hi")
+}

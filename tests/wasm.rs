@@ -516,3 +516,93 @@ console.log(JSON.stringify({
 }
 
 fn _unused(_: &Path) {}
+
+/// R6 custom components expand before emission: the wasm ABI sees ordinary nodes.
+#[test]
+fn wasm_abi_works_on_expanded_component_ir() {
+    let dir = out_dir("wasm-r6");
+    let src = workspace().join("tests/fixtures/r6_component_wasm.opu");
+    let ir = dir.join("r6.opuir.json");
+    let r = bin()
+        .arg("compile")
+        .arg(&src)
+        .arg("-o")
+        .arg(&ir)
+        .output()
+        .expect("run opuromc compile");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let ir_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&ir).unwrap()).expect("parse IR");
+    assert_eq!(ir_json["tree"]["children"][1]["kind"], "Button");
+    assert_eq!(ir_json["tree"]["children"][1]["props"]["label"], "+");
+    assert!(ir_json.get("components").is_none());
+
+    let out = dir.join("wasm");
+    let r = bin()
+        .arg("target")
+        .arg(&ir)
+        .arg("--target")
+        .arg("wasm")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("run opuromc target wasm");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let host = fs::read_to_string(out.join("host.js")).unwrap();
+    assert!(
+        host.contains("\"+\""),
+        "expanded button label missing in host.js"
+    );
+
+    let build = Command::new(cargo_path())
+        .arg("build")
+        .arg("--release")
+        .arg("--target")
+        .arg("wasm32-unknown-unknown")
+        .current_dir(&out)
+        .env("CARGO_TARGET_DIR", out.join("target"))
+        .env("PATH", cargo_env())
+        .output()
+        .expect("run cargo build --release --target wasm32-unknown-unknown");
+    assert!(
+        build.status.success(),
+        "wasm build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let wasm = out.join("target/wasm32-unknown-unknown/release/opurom_wasm.wasm");
+
+    let script = dir.join("r6.mjs");
+    fs::write(
+        &script,
+        r#"import { readFile } from "node:fs/promises";
+const bytes = await readFile(process.argv[2]);
+const module = await WebAssembly.instantiate(bytes, {});
+const e = module.instance.exports;
+console.log(JSON.stringify({
+  version: e.opu_version(),
+  state_len: e.opu_state_len(),
+  state0: e.opu_state(0),
+  patches: e.opu_tap(2),
+  state0_after: e.opu_state(0),
+}));
+"#,
+    )
+    .expect("write conformance script");
+    let run = Command::new("node")
+        .arg(&script)
+        .arg(&wasm)
+        .output()
+        .expect("run node conformance");
+    assert!(
+        run.status.success(),
+        "node conformance failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let text = String::from_utf8_lossy(&run.stdout);
+    let got: serde_json::Value = serde_json::from_str(text.trim()).expect("parse conformance JSON");
+    assert_eq!(got["version"], 1, "{text}");
+    assert_eq!(got["state_len"], 1, "{text}");
+    assert_eq!(got["state0"], 0, "{text}");
+    assert_eq!(got["patches"], 1, "{text}");
+    assert_eq!(got["state0_after"], 1, "{text}");
+}

@@ -1,0 +1,8 @@
+component Card(step) {
+  Button("b") { step += 1 }
+}
+
+app Bad {
+  state count = 0
+  Card(1)
+}

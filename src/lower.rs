@@ -7,8 +7,8 @@ use crate::diag::{DResult, Diagnostic};
 use crate::lexer::lex;
 use crate::modules;
 use crate::parser::{
-    self, Arg, Effect, Expr, ExprKind, ForIter, Lit, Node, NodeKind, Pos, Program, Stmt, StmtKind,
-    Value as AstValue,
+    self, Arg, ComponentDecl, Effect, Expr, ExprKind, ForIter, Lit, Node, NodeKind, Pos, Program,
+    Stmt, StmtKind, Value as AstValue,
 };
 
 pub const KINDS: &[&str] = &[
@@ -1520,6 +1520,389 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], cond: Cond) -> DResult<Vec<Jso
     Ok(out)
 }
 
+// ---------------------------------------------------------- components ------
+
+fn param_ty(name: &str) -> Ty {
+    match name {
+        "int" => Ty::Int,
+        "bool" => Ty::Bool,
+        "string" => Ty::Str,
+        _ => unreachable!("the parser validates parameter types"),
+    }
+}
+
+fn component_lit(value: &AstValue, pos: Pos, path: &str, param: &str) -> DResult<Lit> {
+    match value {
+        AstValue::Lit(l @ (Lit::Int(_) | Lit::Bool(_) | Lit::Str(_))) => Ok(l.clone()),
+        other => Err(Diagnostic::new(
+            path,
+            pos.line,
+            pos.col,
+            format!(
+                "component argument for '{param}' must be an int, bool or string literal, found {}",
+                value_desc(other)
+            ),
+            "pass a literal such as Card(\"Hi\"), Card(3) or Card(true)",
+        )),
+    }
+}
+
+fn component_lit_ty(l: &Lit) -> Ty {
+    match l {
+        Lit::Int(_) => Ty::Int,
+        Lit::Bool(_) => Ty::Bool,
+        Lit::Str(_) => Ty::Str,
+        _ => unreachable!("component arguments are int, bool or string literals"),
+    }
+}
+
+fn component_lit_text(l: &Lit) -> String {
+    match l {
+        Lit::Int(n) => n.to_string(),
+        Lit::Bool(b) => b.to_string(),
+        Lit::Str(s) => s.clone(),
+        _ => unreachable!("component arguments are int, bool or string literals"),
+    }
+}
+
+/// Substitute `{param}` inside string props; unknown braces stay for loop/state lowering.
+fn substitute_params(s: &str, bindings: &HashMap<String, Lit>) -> String {
+    let cs: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0usize;
+    while i < cs.len() {
+        if cs[i] == '{' && i + 1 < cs.len() && cs[i + 1] == '{' {
+            out.push_str("{{");
+            i += 2;
+            continue;
+        }
+        if cs[i] == '}' && i + 1 < cs.len() && cs[i + 1] == '}' {
+            out.push_str("}}");
+            i += 2;
+            continue;
+        }
+        if cs[i] == '{' {
+            let mut j = i + 1;
+            while j < cs.len() && cs[j] != '}' && cs[j] != '{' {
+                j += 1;
+            }
+            if j < cs.len() && cs[j] == '}' {
+                let name: String = cs[i + 1..j].iter().collect();
+                if let Some(v) = bindings.get(&name) {
+                    out.push_str(&component_lit_text(v));
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(cs[i]);
+        i += 1;
+    }
+    out
+}
+
+fn substitute_arg(arg: &Arg, bindings: &HashMap<String, Lit>) -> Arg {
+    Arg {
+        value: substitute_value(&arg.value, bindings),
+        ..arg.clone()
+    }
+}
+
+fn substitute_value(value: &AstValue, bindings: &HashMap<String, Lit>) -> AstValue {
+    match value {
+        AstValue::Ident(name) => match bindings.get(name) {
+            Some(lit) => AstValue::Lit(lit.clone()),
+            None => value.clone(),
+        },
+        AstValue::Lit(Lit::Str(s)) => AstValue::Lit(Lit::Str(substitute_params(s, bindings))),
+        _ => value.clone(),
+    }
+}
+
+/// Statements keep their state targets; only the right-hand side takes parameter literals.
+fn substitute_stmt(path: &str, stmt: &Stmt, bindings: &HashMap<String, Lit>) -> DResult<Stmt> {
+    if bindings.is_empty() {
+        return Ok(stmt.clone());
+    }
+    if bindings.contains_key(&stmt.target) {
+        return Err(Diagnostic::new(
+            path,
+            stmt.pos.line,
+            stmt.pos.col,
+            format!(
+                "component parameter '{}' is read-only in event statements",
+                stmt.target
+            ),
+            "write to a declared state; parameters only supply node props",
+        ));
+    }
+    let kind = match &stmt.kind {
+        StmtKind::Add(v, p) => StmtKind::Add(substitute_value(v, bindings), *p),
+        StmtKind::Sub(v, p) => StmtKind::Sub(substitute_value(v, bindings), *p),
+        StmtKind::Set(v, p) => StmtKind::Set(substitute_value(v, bindings), *p),
+        StmtKind::Toggle => StmtKind::Toggle,
+    };
+    Ok(Stmt {
+        target: stmt.target.clone(),
+        pos: stmt.pos,
+        kind,
+    })
+}
+
+fn component_uses(nodes: &[Node], out: &mut Vec<(String, Pos)>) {
+    for node in nodes {
+        if let NodeKind::Widget(name) = &node.kind {
+            out.push((name.clone(), node.pos));
+        }
+        if let Some(block) = &node.block {
+            component_uses(&block.nodes, out);
+        }
+        if let NodeKind::If {
+            else_block: Some(else_block),
+            ..
+        } = &node.kind
+        {
+            component_uses(&else_block.nodes, out);
+        }
+    }
+}
+
+fn find_cycle(
+    name: &str,
+    graph: &HashMap<String, Vec<String>>,
+    stack: &mut Vec<String>,
+    done: &mut HashSet<String>,
+) -> Option<String> {
+    if done.contains(name) {
+        return None;
+    }
+    if let Some(start) = stack.iter().position(|s| s == name) {
+        let mut chain: Vec<String> = stack[start..].to_vec();
+        chain.push(name.to_string());
+        return Some(chain.join(" -> "));
+    }
+    stack.push(name.to_string());
+    for next in graph.get(name).into_iter().flatten() {
+        if let Some(chain) = find_cycle(next, graph, stack, done) {
+            return Some(chain);
+        }
+    }
+    stack.pop();
+    done.insert(name.to_string());
+    None
+}
+
+/// Validate every declared body, including unused components, before expansion.
+fn check_components(path: &str, components: &[ComponentDecl]) -> DResult<()> {
+    let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+    for decl in components {
+        let mut uses = Vec::new();
+        component_uses(&decl.body, &mut uses);
+        let mut edges = Vec::new();
+        for (name, pos) in uses {
+            if !components.iter().any(|c| c.name == name)
+                && !KINDS.contains(&name.as_str())
+                && catalog::catalog()?.get(&name).is_none()
+            {
+                return Err(Diagnostic::new(
+                    path,
+                    pos.line,
+                    pos.col,
+                    format!("unknown component '{name}' in component '{}'", decl.name),
+                    format!(
+                        "declare it with 'component {name}(...) {{ ... }}' or use a built-in kind"
+                    ),
+                ));
+            }
+            edges.push(name);
+        }
+        graph.insert(decl.name.clone(), edges);
+    }
+    let mut done = HashSet::new();
+    for decl in components {
+        let mut stack = Vec::new();
+        if let Some(chain) = find_cycle(&decl.name, &graph, &mut stack, &mut done) {
+            return Err(Diagnostic::new(
+                path,
+                decl.pos.line,
+                decl.pos.col,
+                format!("component cycle detected: {chain}"),
+                "remove the component use that closes the cycle; components expand at compile time",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Replace component use sites with ordinary nodes; `types` infers untyped parameters
+/// from their first use. Nothing about components survives into the IR.
+fn expand_nodes(
+    path: &str,
+    nodes: &[Node],
+    comps: &HashMap<&str, &ComponentDecl>,
+    types: &mut HashMap<String, Vec<Option<Ty>>>,
+    stack: &mut Vec<String>,
+    bindings: &HashMap<String, Lit>,
+) -> DResult<Vec<Node>> {
+    let mut out = Vec::new();
+    for node in nodes {
+        let args: Vec<Arg> = node
+            .args
+            .iter()
+            .map(|a| substitute_arg(a, bindings))
+            .collect();
+        if let NodeKind::Widget(name) = &node.kind {
+            if let Some(decl) = comps.get(name.as_str()).copied() {
+                if args.len() != decl.params.len() {
+                    let plural = if decl.params.len() == 1 {
+                        "argument"
+                    } else {
+                        "arguments"
+                    };
+                    return Err(Diagnostic::new(
+                        path,
+                        node.pos.line,
+                        node.pos.col,
+                        format!(
+                            "component '{name}' expects {} {plural}, found {}",
+                            decl.params.len(),
+                            args.len()
+                        ),
+                        "pass one literal per declared parameter",
+                    ));
+                }
+                for arg in &args {
+                    if arg.name.is_some() {
+                        return Err(Diagnostic::new(
+                            path,
+                            arg.pos.line,
+                            arg.pos.col,
+                            format!("component '{name}' arguments must be positional"),
+                            "write 'Card(\"Hi\")' instead of 'Card(title: \"Hi\")'",
+                        ));
+                    }
+                }
+                let mut inner = HashMap::new();
+                {
+                    let declared = types
+                        .get_mut(name)
+                        .expect("component types are initialized");
+                    for (idx, (arg, param)) in args.iter().zip(&decl.params).enumerate() {
+                        let lit = component_lit(&arg.value, arg.pos, path, &param.name)?;
+                        let got = component_lit_ty(&lit);
+                        let expected = match declared[idx] {
+                            Some(ty) => ty,
+                            None => {
+                                declared[idx] = Some(got);
+                                got
+                            }
+                        };
+                        if got != expected {
+                            return Err(Diagnostic::new(
+                                path,
+                                arg.pos.line,
+                                arg.pos.col,
+                                format!(
+                                    "parameter '{}' of component '{name}' expects {}, found {}",
+                                    param.name,
+                                    expected.name(),
+                                    got.name()
+                                ),
+                                format!("pass a {} literal to '{name}'", expected.name()),
+                            ));
+                        }
+                        inner.insert(param.name.clone(), lit);
+                    }
+                }
+                if let Some(start) = stack.iter().position(|s| s == name) {
+                    let mut chain: Vec<&str> = stack[start..].iter().map(String::as_str).collect();
+                    chain.push(name.as_str());
+                    return Err(Diagnostic::new(
+                        path,
+                        node.pos.line,
+                        node.pos.col,
+                        format!("component cycle detected: {}", chain.join(" -> ")),
+                        "remove the component use that closes the cycle; components expand at compile time",
+                    ));
+                }
+                stack.push(name.clone());
+                let expanded = expand_nodes(path, &decl.body, comps, types, stack, &inner);
+                stack.pop();
+                out.extend(expanded?);
+                continue;
+            }
+            if !comps.is_empty()
+                && !KINDS.contains(&name.as_str())
+                && catalog::catalog()?.get(name).is_none()
+            {
+                return Err(Diagnostic::new(
+                    path,
+                    node.pos.line,
+                    node.pos.col,
+                    format!("unknown component '{name}'"),
+                    format!(
+                        "declare it with 'component {name}(...) {{ ... }}' or use a built-in kind"
+                    ),
+                ));
+            }
+        }
+        // Parameters supply literals only: conditions and loop iterables read state.
+        if let NodeKind::If { cond, cond_pos, .. } = &node.kind {
+            if let Some(p) = bindings.get(cond) {
+                let text = component_lit_text(p);
+                return Err(Diagnostic::new(
+                    path,
+                    cond_pos.line,
+                    cond_pos.col,
+                    format!("component parameter '{cond}' cannot be used as an 'if' condition"),
+                    format!(
+                        "read a bool state instead; the parameter expands to the literal '{text}'"
+                    ),
+                ));
+            }
+        }
+        if let NodeKind::For {
+            iter: ForIter::List { name, pos },
+            ..
+        } = &node.kind
+        {
+            if bindings.contains_key(name) {
+                return Err(Diagnostic::new(
+                    path,
+                    pos.line,
+                    pos.col,
+                    format!("component parameter '{name}' cannot be used as a 'for' iterable"),
+                    "loop over a declared list state; parameters are int, bool or string",
+                ));
+            }
+        }
+        let mut node = Node {
+            args,
+            ..node.clone()
+        };
+        if let Some(block) = node.block.as_mut() {
+            let inner_stmts = std::mem::take(&mut block.stmts);
+            let mut stmts = Vec::with_capacity(inner_stmts.len());
+            for stmt in &inner_stmts {
+                stmts.push(substitute_stmt(path, stmt, bindings)?);
+            }
+            block.stmts = stmts;
+            let inner = std::mem::take(&mut block.nodes);
+            block.nodes = expand_nodes(path, &inner, comps, types, stack, bindings)?;
+        }
+        if let NodeKind::If {
+            else_block: Some(else_block),
+            ..
+        } = &mut node.kind
+        {
+            let inner = std::mem::take(&mut else_block.nodes);
+            else_block.nodes = expand_nodes(path, &inner, comps, types, stack, bindings)?;
+        }
+        out.push(node);
+    }
+    Ok(out)
+}
+
 // ---------------------------------------------------------- full-stack ------
 
 fn model_types(program: &Program) -> Vec<String> {
@@ -1809,7 +2192,28 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
     }
     let models = lower_models(program, &ctx)?;
     let apis = lower_apis(program, &ctx)?;
-    let total = count_expanded(&program.nodes, &ctx)?;
+    let mut comps: HashMap<&str, &ComponentDecl> = HashMap::new();
+    let mut component_types: HashMap<String, Vec<Option<Ty>>> = HashMap::new();
+    for decl in &program.components {
+        comps.insert(decl.name.as_str(), decl);
+        component_types.insert(
+            decl.name.clone(),
+            decl.params
+                .iter()
+                .map(|p| p.ty.as_deref().map(param_ty))
+                .collect(),
+        );
+    }
+    check_components(path, &program.components)?;
+    let expanded = expand_nodes(
+        path,
+        &program.nodes,
+        &comps,
+        &mut component_types,
+        &mut Vec::new(),
+        &HashMap::new(),
+    )?;
+    let total = count_expanded(&expanded, &ctx)?;
     if total == 0 {
         return Err(Diagnostic::new(
             path,
@@ -1820,11 +2224,11 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         ));
     }
     let tree = if total == 1 {
-        let mut nodes = lower_node_list(&mut ctx, &program.nodes, Cond::default())?;
+        let mut nodes = lower_node_list(&mut ctx, &expanded, Cond::default())?;
         nodes.remove(0)
     } else {
         let root_id = ctx.take_id();
-        let nodes = lower_node_list(&mut ctx, &program.nodes, Cond::default())?;
+        let nodes = lower_node_list(&mut ctx, &expanded, Cond::default())?;
         json!({
             "id": root_id,
             "kind": "Column",

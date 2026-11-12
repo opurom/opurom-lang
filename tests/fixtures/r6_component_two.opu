@@ -1,0 +1,14 @@
+component Metric(label: string, value: int, active: bool) {
+  Row {
+    Text(label)
+    Progress(value: value)
+    Text("on: {active}")
+  }
+}
+
+app R6Two {
+  Column {
+    Metric("CPU", 42, true)
+    Metric("RAM", 8, false)
+  }
+}

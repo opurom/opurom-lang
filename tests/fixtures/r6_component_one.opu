@@ -1,0 +1,11 @@
+component Card(title: string) {
+  Column(padding: 8) {
+    Text(title)
+    Text("Hello {title}")
+    Badge(label: title)
+  }
+}
+
+app R6One {
+  Card("Hi")
+}

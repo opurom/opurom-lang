@@ -1,0 +1,7 @@
+component Card(title) {
+  Card(title)
+}
+
+app Bad {
+  Card("Hi")
+}

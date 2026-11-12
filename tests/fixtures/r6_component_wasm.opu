@@ -1,0 +1,11 @@
+component AddButton(label: string) {
+  Button(label) { count += 1 }
+}
+
+app R6Wasm {
+  state count = 0
+  Column {
+    Text("{count}")
+    AddButton("+")
+  }
+}

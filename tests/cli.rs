@@ -2024,3 +2024,235 @@ fn r5_native_emitter_builds_and_applies_computed_values() {
     assert!(stdout.contains("patch doubled=4"), "{stdout}");
     assert!(stdout.contains("patch visible=true"), "{stdout}");
 }
+
+// ------------------------------------------------------------------ R6 ----
+
+#[test]
+fn r6_components_expand_to_ordinary_ir() {
+    let one = compile_ok(&fixture("r6_component_one.opu"));
+    assert_shape(&one["tree"]);
+    assert_eq!(one["tree"]["kind"], "Column");
+    assert_eq!(one["tree"]["props"]["padding"], 8);
+    let children = one["tree"]["children"].as_array().unwrap();
+    assert_eq!(children.len(), 3);
+    assert_eq!(children[0]["kind"], "Text");
+    assert_eq!(children[0]["props"]["value"], "Hi");
+    assert_eq!(children[1]["props"]["value"], "Hello Hi");
+    assert_eq!(children[2]["kind"], "Badge");
+    assert_eq!(children[2]["props"]["label"], "Hi");
+    assert!(
+        one.get("components").is_none(),
+        "no component registry in IR"
+    );
+    for node in nodes_of(&one) {
+        assert!(
+            node.get("component").is_none(),
+            "expansion must not add a catalog-style component key"
+        );
+        assert_ne!(node["kind"], "Card", "no component node survives");
+    }
+
+    let two = compile_ok(&fixture("r6_component_two.opu"));
+    assert_shape(&two["tree"]);
+    assert_eq!(node_ids(&two), vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    let rows = two["tree"]["children"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["kind"], "Row");
+    assert_eq!(rows[0]["children"][0]["props"]["value"], "CPU");
+    assert_eq!(rows[0]["children"][1]["props"]["value"], 42);
+    assert_eq!(rows[0]["children"][2]["props"]["value"], "on: true");
+    assert_eq!(rows[1]["children"][0]["props"]["value"], "RAM");
+    assert_eq!(rows[1]["children"][1]["props"]["value"], 8);
+    assert_eq!(rows[1]["children"][2]["props"]["value"], "on: false");
+    assert!(two.get("components").is_none());
+
+    let nested = compile_ok(&fixture("r6_component_nested.opu"));
+    let values: Vec<&str> = nodes_of(&nested)
+        .iter()
+        .filter_map(|n| n["props"]["value"].as_str())
+        .collect();
+    assert_eq!(
+        values,
+        vec!["Hi!", "Hi", "Hi 0", "Hi 1"],
+        "nested expansion plus loop unrolling"
+    );
+
+    // The declaration may also sit inside the app body, and `Card` shadows the primitive.
+    let in_app = compile_ok(&fixture("r6_component_in_app.opu"));
+    assert_eq!(in_app["tree"]["kind"], "Column");
+    assert_eq!(in_app["tree"]["children"][0]["kind"], "Text");
+    assert_eq!(in_app["tree"]["children"][0]["props"]["value"], "Hi");
+    assert!(
+        !nodes_of(&in_app).iter().any(|n| n["kind"] == "Card"),
+        "the custom Card expands; no Card primitive remains"
+    );
+
+    // Parameters also substitute into tap-handler statement values.
+    let stmt = compile_ok(&fixture("r6_component_stmt.opu"));
+    assert_eq!(stmt["tree"]["kind"], "Button");
+    assert_eq!(
+        stmt["tree"]["events"]["tap"],
+        json!({"op": "add", "target": "count", "value": 2}),
+        "parameter literal must reach the event action"
+    );
+}
+
+#[test]
+fn r6_component_diagnostics_are_friendly() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "r6_component_recursive.opu",
+            "component cycle detected: Card -> Card",
+        ),
+        (
+            "r6_component_cycle.opu",
+            "component cycle detected: Alpha -> Beta -> Alpha",
+        ),
+        (
+            "r6_component_arity.opu",
+            "component 'Card' expects 2 arguments, found 1",
+        ),
+        ("r6_component_unknown.opu", "unknown component 'Missing'"),
+        (
+            "r6_component_param_type.opu",
+            "parameter 'title' of component 'Card' expects string, found int",
+        ),
+        (
+            "r6_component_duplicate_name.opu",
+            "duplicate component 'Card'",
+        ),
+        (
+            "r6_component_duplicate_param.opu",
+            "duplicate parameter 'title' in component 'Card'",
+        ),
+        (
+            "r6_component_top_level_app.opu",
+            "component 'Card' cannot be used as a top-level app",
+        ),
+        (
+            "r6_component_bad_param_type.opu",
+            "unknown parameter type 'text'",
+        ),
+        ("r6_component_named_arg.opu", "arguments must be positional"),
+        (
+            "r6_component_inferred_type_mismatch.opu",
+            "expects string, found int",
+        ),
+        (
+            "r6_component_unknown_in_body.opu",
+            "unknown component 'Missing' in component 'Card'",
+        ),
+        (
+            "r6_component_if_condition.opu",
+            "component parameter 'flag' cannot be used as an 'if' condition",
+        ),
+        (
+            "r6_component_for_iterable.opu",
+            "component parameter 'items' cannot be used as a 'for' iterable",
+        ),
+        (
+            "r6_component_write_param.opu",
+            "component parameter 'step' is read-only in event statements",
+        ),
+    ];
+    for &(file, message) in cases {
+        let path = error_fixture(file);
+        let r = bin().arg("check").arg(&path).output().expect("run check");
+        assert_eq!(r.status.code(), Some(1), "{file} must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            err.contains(message),
+            "{file}: unexpected diagnostic: {err}"
+        );
+        assert_diag(&err, &path);
+        let out = out_dir("r6-reject").join(format!("{file}.opuir.json"));
+        let r2 = compile(&path, &out);
+        assert_eq!(r2.status.code(), Some(1), "{file}: compile must fail");
+        assert!(!out.exists(), "{file}: no IR may be written on error");
+    }
+}
+
+#[test]
+fn r6_expanded_ir_keeps_emitters_catalog_and_optimizer() {
+    let ir_path = out_dir("r6-emit-ir").join("two.opuir.json");
+    let r = compile(&fixture("r6_component_two.opu"), &ir_path);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let original: Json = serde_json::from_slice(&fs::read(&ir_path).unwrap()).unwrap();
+
+    let targets: &[(&str, &str)] = &[
+        ("native", "src/main.rs"),
+        ("web", "app.js"),
+        ("wechat", "index.js"),
+        ("alipay", "index.js"),
+        ("qq", "index.js"),
+        ("douyin", "index.js"),
+        ("baidu", "index.js"),
+        ("kuaishou", "index.js"),
+        ("wasm", "host.js"),
+    ];
+    let mut web_dir = PathBuf::new();
+    for &(target, artifact) in targets {
+        let dir = out_dir(&format!("r6-emit-{target}"));
+        if target == "web" {
+            web_dir = dir.clone();
+        }
+        let r = emit(&ir_path, target, &dir);
+        assert!(
+            r.status.success(),
+            "{target} emit failed: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        assert!(dir.join(artifact).is_file(), "{target}: missing {artifact}");
+        if artifact.ends_with(".js") {
+            node_check(&dir.join(artifact));
+        }
+    }
+    let app_js = fs::read_to_string(web_dir.join("app.js")).unwrap();
+    for marker in ["CPU", "RAM", "on: true", "on: false"] {
+        assert!(app_js.contains(marker), "web JS missing {marker}");
+    }
+
+    let optimized = out_dir("r6-opt").join("two.opuir.json");
+    let r = optimize(&ir_path, &optimized);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let got: Json = serde_json::from_slice(&fs::read(&optimized).unwrap()).unwrap();
+    assert_eq!(got, original, "expanded IR has no dead state to remove");
+
+    let r = bin().arg("components").output().expect("run components");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&r.stdout).lines().last().unwrap(),
+        "116 components",
+        "the built-in catalog is unchanged"
+    );
+}
+
+#[test]
+fn r6_plain_ir_stays_byte_identical() {
+    let cases = [
+        (spec("counter.opu"), fixture("golden/counter.opuir.json")),
+        (
+            fixture("golden/profile.opu"),
+            fixture("golden/profile.opuir.json"),
+        ),
+        (
+            fixture("golden/todo.opu"),
+            fixture("golden/todo.opuir.json"),
+        ),
+    ];
+    for (index, (src, golden)) in cases.iter().enumerate() {
+        let out = out_dir("r6-golden").join(format!("plain-{index}.opuir.json"));
+        let r = compile(src, &out);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        assert_eq!(
+            fs::read(&out).unwrap(),
+            fs::read(golden).unwrap(),
+            "plain program changed its IR bytes: {}",
+            src.display()
+        );
+        let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+        assert!(ir.get("components").is_none());
+        assert!(ir.get("computed").is_none());
+        assert!(ir.get("imports").is_none());
+    }
+}

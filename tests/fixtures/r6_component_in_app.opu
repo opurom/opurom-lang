@@ -1,0 +1,6 @@
+app R6 {
+  component Card(title) { Text("{title}") }
+  Column {
+    Card("Hi")
+  }
+}

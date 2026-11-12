@@ -152,6 +152,21 @@ pub struct ComputedDecl {
 }
 
 #[derive(Clone, Debug)]
+pub struct ParamDecl {
+    pub name: String,
+    /// Absent types are inferred from the first literal passed at a use site.
+    pub ty: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ComponentDecl {
+    pub name: String,
+    pub params: Vec<ParamDecl>,
+    pub body: Vec<Node>,
+    pub pos: Pos,
+}
+
+#[derive(Clone, Debug)]
 pub struct ThemeDecl {
     pub mode: Option<String>,
     pub accent: Option<String>,
@@ -195,6 +210,7 @@ pub struct Program {
     pub imports: Vec<ImportDecl>,
     pub states: Vec<StateDecl>,
     pub computed: Vec<ComputedDecl>,
+    pub components: Vec<ComponentDecl>,
     pub nodes: Vec<Node>,
     pub theme: Option<ThemeDecl>,
     pub models: Vec<ModelDecl>,
@@ -203,6 +219,19 @@ pub struct Program {
 
 fn is_kind(t: &Token) -> bool {
     matches!(&t.tok, Tok::Ident(s) if s.chars().next().is_some_and(|c| c.is_ascii_uppercase()))
+}
+
+fn duplicate_component(path: &str, decl: &ComponentDecl, names: &[String]) -> Diagnostic {
+    Diagnostic::new(
+        path,
+        decl.pos.line,
+        decl.pos.col,
+        format!("duplicate component '{}'", decl.name),
+        format!(
+            "declare every component once; declared components are: {}",
+            names.join(", ")
+        ),
+    )
 }
 
 fn is_decl_start(t: &Token) -> bool {
@@ -214,6 +243,7 @@ fn is_decl_start(t: &Token) -> bool {
             s.as_str(),
             "state"
                 | "computed"
+                | "component"
                 | "model"
                 | "api"
                 | "theme"
@@ -484,6 +514,93 @@ impl<'a> Parser<'a> {
         Ok(ComputedDecl { name, expr, pos })
     }
 
+    /// `component Card(title: string) { Text("{title}") }`; the type annotation is optional.
+    fn component_decl(&mut self) -> DResult<ComponentDecl> {
+        let start = self.pos();
+        self.bump();
+        let (name, np) = self.expect_ident("a component name")?;
+        if !name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+            return Err(Diagnostic::new(
+                self.path,
+                np.line,
+                np.col,
+                format!("component name '{name}' must start with an uppercase letter"),
+                "write a name such as 'Card'; use sites look like Card(\"Hi\")",
+            ));
+        }
+        self.expect_sym("(", "a component declaration needs '(' after its name")?;
+        let mut params = Vec::new();
+        if !self.sym(")") {
+            loop {
+                let (pname, ppos) = self.expect_ident("a parameter name")?;
+                if params.iter().any(|p: &ParamDecl| p.name == pname) {
+                    return Err(Diagnostic::new(
+                        self.path,
+                        ppos.line,
+                        ppos.col,
+                        format!("duplicate parameter '{pname}' in component '{name}'"),
+                        "declare every parameter once per component",
+                    ));
+                }
+                let ty = if self.eat_sym(":") {
+                    let (t, tp) = self.expect_ident("a parameter type")?;
+                    if !matches!(t.as_str(), "int" | "bool" | "string") {
+                        return Err(Diagnostic::new(
+                            self.path,
+                            tp.line,
+                            tp.col,
+                            format!("unknown parameter type '{t}'"),
+                            "parameter types are int, bool or string",
+                        ));
+                    }
+                    Some(t)
+                } else {
+                    None
+                };
+                params.push(ParamDecl { name: pname, ty });
+                if self.eat_sym(",") {
+                    if self.sym(")") {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+        }
+        self.expect_sym(")", "close the parameter list with ')'")?;
+        if !self.sym("{") {
+            return Err(self.err(
+                "expected '{' before the component body",
+                "write 'component Card(title) { Text(\"{title}\") }'",
+            ));
+        }
+        let body = self.block(false)?;
+        if let Some(stmt) = body.stmts.first() {
+            return Err(Diagnostic::new(
+                self.path,
+                stmt.pos.line,
+                stmt.pos.col,
+                format!("component '{name}' body may contain only nodes"),
+                "put state changes inside a Button { ... } tap handler",
+            ));
+        }
+        if let Some(effect) = body.effects.first() {
+            return Err(Diagnostic::new(
+                self.path,
+                effect.pos().line,
+                effect.pos().col,
+                format!("component '{name}' body may contain only nodes"),
+                "move async effects into the app",
+            ));
+        }
+        Ok(ComponentDecl {
+            name,
+            params,
+            body: body.nodes,
+            pos: start,
+        })
+    }
+
     fn list_lit(&mut self) -> DResult<Lit> {
         self.expect_sym("[", "a list initializer starts with '['")?;
         let mut values = Vec::new();
@@ -713,6 +830,12 @@ impl<'a> Parser<'a> {
                 return Err(self.err(
                     "state declarations belong at the top level of the app",
                     "move the declaration directly inside 'app Name { ... }'",
+                ));
+            }
+            if self.word("component") {
+                return Err(self.err(
+                    "component declarations belong before the 'app' block or at its top level",
+                    "move 'component Name(...) { ... }' out of the node block",
                 ));
             }
             if self.word("import") {
@@ -1220,9 +1343,42 @@ fn parse_with_options(
         allow_imports_in_body,
     };
     let mut imports = Vec::new();
-    while p.word("import") {
-        imports.push(p.import_decl()?);
+    let mut components = Vec::new();
+    let mut component_names: Vec<String> = Vec::new();
+    loop {
         p.eat_sym(";");
+        if p.word("import") {
+            imports.push(p.import_decl()?);
+            continue;
+        }
+        if p.word("component") {
+            if !p.allow_nodes {
+                return Err(p.err(
+                    "imported module may declare only state, model, api, theme and imports",
+                    "move component declarations into the importing app",
+                ));
+            }
+            let decl = p.component_decl()?;
+            if component_names.contains(&decl.name) {
+                return Err(duplicate_component(path, &decl, &component_names));
+            }
+            component_names.push(decl.name.clone());
+            components.push(decl);
+            continue;
+        }
+        break;
+    }
+    if let Tok::Ident(name) = p.peek().tok.clone() {
+        if component_names.contains(&name) && is_kind(p.peek()) {
+            let pos = p.pos();
+            return Err(Diagnostic::new(
+                path,
+                pos.line,
+                pos.col,
+                format!("component '{name}' cannot be used as a top-level app"),
+                format!("write 'app Name {{ {name}(...) }}' with a use site inside the app body"),
+            ));
+        }
     }
     if p.word("async") {
         return Err(p.err(
@@ -1246,7 +1402,16 @@ fn parse_with_options(
             "an OPUROM program starts with 'app Name { ... }'",
         ));
     }
-    let (app, _) = p.expect_ident("an app name")?;
+    let (app, ap) = p.expect_ident("an app name")?;
+    if component_names.contains(&app) {
+        return Err(Diagnostic::new(
+            path,
+            ap.line,
+            ap.col,
+            format!("app name '{app}' conflicts with component '{app}'"),
+            "rename the app or the component",
+        ));
+    }
     p.expect_sym("{", "an app body starts with '{'")?;
     let mut states = Vec::new();
     let mut computed = Vec::new();
@@ -1277,6 +1442,21 @@ fn parse_with_options(
                 ));
             }
             computed.push(p.computed_decl()?);
+            continue;
+        }
+        if p.word("component") {
+            if !p.allow_nodes {
+                return Err(p.err(
+                    "imported module may declare only state, model, api, theme and imports",
+                    "move component declarations into the importing app",
+                ));
+            }
+            let decl = p.component_decl()?;
+            if component_names.contains(&decl.name) {
+                return Err(duplicate_component(path, &decl, &component_names));
+            }
+            component_names.push(decl.name.clone());
+            components.push(decl);
             continue;
         }
         if p.word("else") {
@@ -1372,6 +1552,7 @@ fn parse_with_options(
         imports,
         states,
         computed,
+        components,
         nodes,
         theme,
         models,

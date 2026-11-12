@@ -5,12 +5,17 @@ The language/compiler workstream of OPUROM. An independent Rust 1.99.1 crate (st
 [IR v0.1](../opurom-spec/IR_SCHEMA.md); the backend lowers IR into target-native source.
 **No target ships a runtime IR interpreter**: every emitter writes straight-line code from the
 tree. R5 is additive: a program without R4/R5 features produces byte-identical R1-R3 IR, and
-`counter.opu`, `profile.opu` and `todo.opu` keep byte-identical R4 IR.
+`counter.opu`, `profile.opu` and `todo.opu` keep byte-identical R4 IR. R6 is additive too:
+custom components are expanded at compile time, so a program without them produces
+byte-identical R5 IR and gains no new IR fields.
 
-## Grammar summary (LANG_SPEC v0.1 + R2 + R4 + R5)
+## Grammar summary (LANG_SPEC v0.1 + R2 + R4 + R5 + R6)
 
 ```ebnf
-program       = { import_decl } "app" IDENT "{" { state_decl | computed_decl | model_decl | api_decl | theme_decl | node } "}" ;
+program       = { import_decl | component_decl } "app" IDENT "{" { state_decl | computed_decl | component_decl | model_decl | api_decl | theme_decl | node } "}" ;
+component_decl = "component" IDENT "(" [ params ] ")" "{" { node } "}" ;
+params        = param { "," param } [ "," ] ;
+param         = IDENT [ ":" ( "int" | "bool" | "string" ) ] ;
 import_decl   = "import" STRING [";"] ;
 state_decl    = "state" IDENT "=" ( literal | string_list ) [";"] ;
 computed_decl = "computed" IDENT "=" computed_expr [";"] ;
@@ -49,9 +54,10 @@ computed_factor = [ "-" ] INT | IDENT ;
   literal `}`). Computed names are readable in interpolation; list states are not.
 - `Input(bind: name)` lowers to an `input` event whose `set` action omits `value`; the runtime
   supplies the string.
-- `fn`, `component`, `module`, `units`, `dp`, `rem`, `let` and `var` remain rejected with a
+- `fn`, `module`, `units`, `dp`, `rem`, `let` and `var` remain rejected with a
   "not yet supported" diagnostic. `async`, `await` and `import` are R4 syntax with strict
-  validation; `else`, `computed` and list-valued state are R5 syntax.
+  validation; `else`, `computed` and list-valued state are R5 syntax; `component` is R6 syntax
+  with compile-time expansion only.
 
 ### R2 language features
 
@@ -164,7 +170,7 @@ app R5Demo {
   initializer; list values may not contain braces in R5, and a list loop is limited to 64
   values. Binding a list, interpolating a list, mutating a list, using it in a computed
   expression or looping over a non-list state is a friendly diagnostic. Runtime list mutation
-  is R6+.
+  is R7+.
 
   ```json
   {"name": "items", "type": "list", "init": ["a", "b"]}
@@ -172,6 +178,61 @@ app R5Demo {
 
 Plain programs gain no `computed` array, no `unless` fields and no `list` state entries. Byte-level
 golden IR fixtures cover `counter.opu`, `profile.opu` and `todo.opu`.
+
+### R6 custom components (compile-time expansion)
+
+```opu
+component Metric(label: string, value: int, active: bool) {
+  Row {
+    Text(label)
+    Progress(value: value)
+    Text("on: {active}")
+  }
+}
+
+app R6Demo {
+  Column {
+    Metric("CPU", 42, true)
+    Metric("RAM", 8, false)
+  }
+}
+```
+
+Declarations may appear before the `app` block or at the top level of its body. A component name
+starts with an uppercase letter and a use site is `Name(arg, ...)`, with one literal per parameter.
+`Name` also shadows a built-in primitive or catalog name of the same spelling: declaring
+`component Card(title)` means `Card("Hi")` is the custom component, not the R2 `Card` primitive.
+`int`, `bool` and `string` are the parameter types; omitting the annotation infers the type from
+the first use site and checks later use sites against it.
+
+Expansion happens in the compiler frontend: every use site is replaced by a copy of the component
+body with parameter identifiers and `{param}` inside string props replaced by the literal
+argument, and the same literals reach tap-handler statement values (`count += step` with
+`step: int`). Bodies may contain ordinary nodes, `if`/`else`, `for`, nested component uses and
+tap handlers. Copies are then lowered exactly like hand-written nodes, with pre-order ids, ordinary
+`kind`/`props`/`children`/`events` and no `component` key. For the example above the first `Row`
+becomes:
+
+```json
+{"id": 1, "kind": "Row", "props": {}, "children": [
+  {"id": 2, "kind": "Text", "props": {"value": "CPU"}, "children": [], "events": {}},
+  {"id": 3, "kind": "Progress", "props": {"value": 42}, "children": [], "events": {}},
+  {"id": 4, "kind": "Text", "props": {"value": "on: true"}, "children": [], "events": {}}
+], "events": {}}
+```
+
+There is **no runtime component registry and no IR interpreter**: the IR contains no component
+declarations, no component nodes and no new top-level field, so all nine emitters, the optimizer
+and the wasm ABI consume it unchanged. `opuromc components` still lists only the 116 built-in
+catalog names.
+
+Friendly diagnostics cover recursive and mutually cyclic components (including unused ones),
+arity mismatch, unknown components (in the app and in bodies), parameter type mismatch, duplicate
+component names, duplicate parameter names, unknown parameter types, named use-site arguments,
+non-literal arguments, a parameter used where the language needs state (`if` conditions, `for`
+iterables, statement targets), component declarations inside node blocks or imported modules, an
+app name that collides with a component, and a component used as the top-level app instead of an
+`app Name { ... }` block. Every diagnostic has a negative fixture and a test.
 
 ### Full-stack syntax (FULLSTACK_SPEC)
 
@@ -299,7 +360,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 cd /Users/mac/work/opurom/opurom-lang
 cargo fmt --all
 cargo fmt --all -- --check
-cargo test --offline                 # 48 tests: 4 unit + 39 CLI + 5 wasm
+cargo test --offline                 # 53 tests: 4 unit + 43 CLI + 6 wasm
 RUSTFLAGS="-D warnings" cargo test --offline   # zero compiler warnings
 ```
 
@@ -309,19 +370,24 @@ plus the wasm `host.js`, runs `cargo build --release --offline` inside generated
 followed by piped-stdin sessions, and builds generated wasm crates for
 `wasm32-unknown-unknown` before instantiating them in Node's `WebAssembly` runtime with an empty
 import object. R5 tests cover `else`/`unless`, computed values, list unroll, every new diagnostic,
-all nine emitters, computed native runtime patches and computed wasm ABI state.
+all nine emitters, computed native runtime patches and computed wasm ABI state. R6 tests cover
+one, two, nested and in-app component uses, the exact expanded IR, all fifteen negative classes,
+all nine emitters and the optimizer on expanded IR, byte-identical plain IR, and the wasm ABI on
+a component-expanded tree.
 
 ## Honest status
 
 **Verified in this round**
 
-- `cargo test --offline`: 48/48 tests pass (4 unit + 39 CLI + 5 wasm); `RUSTFLAGS="-D warnings"`
+- `cargo test --offline`: 53/53 tests pass (4 unit + 43 CLI + 6 wasm); `RUSTFLAGS="-D warnings"`
   is clean and `cargo fmt --all -- --check` passes.
 - UI-only programs (`counter.opu`, `profile.opu`, `todo.opu`) compile to **byte-identical** IR
-  compared with R4; no `imports`, `async`, `effects`, `computed` or `unless` keys are added to
-  plain IR. The 116/32 vendored catalog is byte-identical to the spec catalog.
-- Negative fixtures cover the v0.1 classes, R2 classes, R4 async/import classes and R5
-  `else`/computed/list classes. No panics, no stack traces.
+  compared with R4; no `imports`, `async`, `effects`, `computed`, `unless` or component keys are
+  added to plain IR. The 116/32 vendored catalog is byte-identical to the spec catalog.
+- Negative fixtures cover the v0.1 classes, R2 classes, R4 async/import classes, R5
+  `else`/computed/list classes and fifteen R6 component classes. No panics, no stack traces.
+- R6 components expand in the frontend: one, two, nested and in-app uses produce ordinary IR
+  with pre-order ids, and all 9 emitters, the optimizer and the wasm ABI accept that IR.
 - The wasm target builds with `cargo build --release --target wasm32-unknown-unknown` and the
   `.wasm` instantiates in Node with an empty import object; `opu_version() == 1`, int computed
   state is recomputed after a tap, and R4 effects remain host-side callbacks without wasm
@@ -335,23 +401,30 @@ all nine emitters, computed native runtime patches and computed wasm ABI state.
 ### Scope and limits
 
 - **116 named components map onto 32 primitives.** There are no distinct renderer
-  implementations per component and no user-defined custom components in this crate.
+  implementations per catalog component. R6 custom components are compile-time macros, not
+  renderer components: no runtime registry and no component node in the IR.
+- **R6 components take literal arguments only.** Parameters are `int`, `bool` or `string`;
+  substituting into `text` props and literal attribute values is the whole feature. Passing a
+  state name, an expression, a list or a node is rejected. Components are not generic and have
+  no conditional/loop parameters: conditional UI still comes from `if`/`else` and `for`.
+  Component expansion is not size-capped beyond the existing 64-iteration `for` limit.
 - **The optimizer is dead-state elimination only.** It does not prune nodes, fold conditionals,
   remove events or reorder anything; R5 merely adds `computed`, `unless` and `list` preservation.
 - **Effects run before actions.** The IR has separate `effects` and `actions` arrays; source-level
   interleaving after an `await` is intentionally not represented. Wasm has no OS async IO.
 - **Modules are compile-time declaration merges.** There is no runtime module registry, no remote
-  resolver, no code execution during import resolution and no computed declarations in imported
-  modules.
+  resolver, no code execution during import resolution and no computed or component declarations
+  in imported modules.
 - **R5 lists are compile-time constants.** A `for` loop unrolls against the initializer, list
   values may not contain braces, list loops are capped at 64 values and runtime list mutation is
   not emitted.
 
-**Still R6+**
+**Still R7+**
 
-- User-defined custom components, OS async IO in wasm, runtime list mutation, nested `else if`
-  chains, Vulkan/ANGLE/D3D backends, full GPU UI rasterization, Windows/Linux/Harmony native
-  windows, real device conformance and fps claims, TLS, SCRAM, MySQL, remote marketplace, an
-  IntelliJ runtime plugin, OS screen-reader integration and competitive benchmark claims.
+- OS async IO in wasm, runtime list mutation, generic or conditional components, component
+  libraries shared through imports, nested `else if` chains, Vulkan/ANGLE/D3D backends, full GPU
+  UI rasterization, Windows/Linux/Harmony native windows, real device conformance and fps claims,
+  TLS, SCRAM, MySQL, remote marketplace, an IntelliJ runtime plugin, OS screen-reader integration
+  and competitive benchmark claims.
 - LSP, plugin sandboxing and a perf harness remain later work. No browser/DOM automation, no
   simulator or device conformance, no pixel golden hash and no invented numbers are claimed here.
