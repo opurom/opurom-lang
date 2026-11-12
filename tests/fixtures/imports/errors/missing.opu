@@ -1,0 +1,5 @@
+import "absent.opu"
+
+app Missing {
+  Text("x")
+}

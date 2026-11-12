@@ -298,4 +298,110 @@ fn web_emitter_keeps_the_cli_state_shape() {
     );
 }
 
+/// R4 effects stay in host.js: the wasm module still instantiates with an empty import object.
+#[test]
+fn wasm_effects_use_host_callbacks_without_wasm_imports() {
+    let dir = out_dir("wasm-effects");
+    let src = workspace().join("tests/fixtures/async.opu");
+    let ir = dir.join("async.opuir.json");
+    let r = bin()
+        .arg("compile")
+        .arg(&src)
+        .arg("-o")
+        .arg(&ir)
+        .output()
+        .expect("run opuromc compile");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let out = dir.join("wasm");
+    let r = bin()
+        .arg("target")
+        .arg(&ir)
+        .arg("--target")
+        .arg("wasm")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("run opuromc target wasm");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let host = fs::read_to_string(out.join("host.js")).unwrap();
+    for marker in [
+        "const HOST_CALLBACKS =",
+        "const EFFECTS =",
+        "async function runEffects(id)",
+        "await runEffects(id)",
+        "await fetch(base + path)",
+    ] {
+        assert!(host.contains(marker), "host.js missing {marker}");
+    }
+    let readme = fs::read_to_string(out.join("README.md")).unwrap();
+    assert!(
+        readme.contains("host callbacks"),
+        "README missing honest status"
+    );
+    let check = Command::new("node")
+        .arg("--check")
+        .arg(out.join("host.js"))
+        .output()
+        .expect("run node --check");
+    assert!(
+        check.status.success(),
+        "node --check failed: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let build = Command::new(cargo_path())
+        .arg("build")
+        .arg("--release")
+        .arg("--target")
+        .arg("wasm32-unknown-unknown")
+        .current_dir(&out)
+        .env("CARGO_TARGET_DIR", out.join("target"))
+        .env("PATH", cargo_env())
+        .output()
+        .expect("run cargo build --release --target wasm32-unknown-unknown");
+    assert!(
+        build.status.success(),
+        "wasm build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let wasm = out.join("target/wasm32-unknown-unknown/release/opurom_wasm.wasm");
+
+    let script = dir.join("conformance.mjs");
+    fs::write(
+        &script,
+        r#"import { readFile } from "node:fs/promises";
+const bytes = await readFile(process.argv[2]);
+const module = await WebAssembly.instantiate(bytes, {});
+const e = module.instance.exports;
+console.log(JSON.stringify({
+  version: e.opu_version(),
+  state_len: e.opu_state_len(),
+  before: e.opu_state(0),
+  patches: e.opu_tap(0),
+  after: e.opu_state(0),
+}));
+"#,
+    )
+    .expect("write conformance script");
+    let run = Command::new("node")
+        .arg(&script)
+        .arg(&wasm)
+        .output()
+        .expect("run node conformance");
+    assert!(
+        run.status.success(),
+        "node conformance failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let text = String::from_utf8_lossy(&run.stdout);
+    let got: serde_json::Value = serde_json::from_str(text.trim()).expect("parse conformance JSON");
+    assert_eq!(got["version"], 1, "{text}");
+    assert_eq!(got["state_len"], 1, "{text}");
+    assert_eq!(got["before"], 0, "{text}");
+    assert_eq!(got["patches"], 1, "{text}");
+    assert_eq!(got["after"], 1, "{text}");
+}
+
 fn _unused(_: &Path) {}

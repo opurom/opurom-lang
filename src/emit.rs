@@ -59,6 +59,7 @@ struct Platform {
     tap_attr: &'static str,
     input_attr: &'static str,
     state_set: &'static str,
+    request_api: &'static str,
     title_key: &'static str,
     open: &'static str,
     close: &'static str,
@@ -75,6 +76,7 @@ const PLATFORMS: &[Platform] = &[
         tap_attr: "bindtap",
         input_attr: "bindinput",
         state_set: "setData",
+        request_api: "wx.request",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -89,6 +91,7 @@ const PLATFORMS: &[Platform] = &[
         tap_attr: "onTap",
         input_attr: "onInput",
         state_set: "setData",
+        request_api: "my.request",
         title_key: "defaultTitle",
         open: "{{",
         close: "}}",
@@ -103,6 +106,7 @@ const PLATFORMS: &[Platform] = &[
         tap_attr: "bindtap",
         input_attr: "bindinput",
         state_set: "setData",
+        request_api: "qq.request",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -117,6 +121,7 @@ const PLATFORMS: &[Platform] = &[
         tap_attr: "bindtap",
         input_attr: "bindinput",
         state_set: "setData",
+        request_api: "tt.request",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -131,6 +136,7 @@ const PLATFORMS: &[Platform] = &[
         tap_attr: "bindtap",
         input_attr: "bindinput",
         state_set: "setData",
+        request_api: "swan.request",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -145,6 +151,7 @@ const PLATFORMS: &[Platform] = &[
         tap_attr: "bindtap",
         input_attr: "bindinput",
         state_set: "setData",
+        request_api: "ks.request",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -251,6 +258,12 @@ fn rust_str(s: &str) -> String {
     format!("{s:?}")
 }
 
+fn simple_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 fn html_attr(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('"', "&quot;")
@@ -295,11 +308,112 @@ fn action_str<'a>(action: &'a Json, key: &str, ir_path: &str) -> DResult<&'a str
         .ok_or_else(|| bad_ir(ir_path, format!("event action is missing string '{key}'")))
 }
 
-/// An event is either one action object (v0.1) or `{"actions":[...]}` (R2).
+/// A compile-time-lowered effect that emitters turn into target-native async code.
+#[derive(Clone, Debug)]
+pub enum Effect {
+    Delay { ms: u64 },
+    Fetch { path: String, into: String },
+}
+
+pub fn event_effects(event: &Json, ir_path: &str) -> DResult<Vec<Effect>> {
+    if let Some(value) = event.get("async") {
+        if !value.is_boolean() {
+            return Err(bad_ir(ir_path, "IR event 'async' must be a boolean"));
+        }
+    }
+    let Some(raw) = event.get("effects") else {
+        return Ok(Vec::new());
+    };
+    if event.get("async").and_then(Json::as_bool) != Some(true) {
+        return Err(bad_ir(
+            ir_path,
+            "IR event 'effects' requires \"async\": true",
+        ));
+    }
+    let list = raw
+        .as_array()
+        .ok_or_else(|| bad_ir(ir_path, "IR event 'effects' must be an array"))?;
+    let mut out = Vec::with_capacity(list.len());
+    for one in list {
+        let kind = one
+            .get("kind")
+            .and_then(Json::as_str)
+            .ok_or_else(|| bad_ir(ir_path, "IR effect is missing string 'kind'"))?;
+        match kind {
+            "delay" => {
+                let ms = one
+                    .get("ms")
+                    .and_then(Json::as_u64)
+                    .ok_or_else(|| bad_ir(ir_path, "IR delay effect needs integer 'ms'"))?;
+                if ms > 60000 {
+                    return Err(bad_ir(
+                        ir_path,
+                        format!("IR delay effect 'ms' must be 0..60000, found {ms}"),
+                    ));
+                }
+                out.push(Effect::Delay { ms });
+            }
+            "fetch" => {
+                let path = one
+                    .get("path")
+                    .and_then(Json::as_str)
+                    .ok_or_else(|| bad_ir(ir_path, "IR fetch effect needs string 'path'"))?
+                    .to_string();
+                let into = one
+                    .get("into")
+                    .and_then(Json::as_str)
+                    .ok_or_else(|| bad_ir(ir_path, "IR fetch effect needs string 'into'"))?
+                    .to_string();
+                out.push(Effect::Fetch { path, into });
+            }
+            other => {
+                return Err(bad_ir(ir_path, format!("unknown IR effect kind '{other}'")));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn tree_has_effects(states: &[EState], tree: &ENode, ir_path: &str) -> DResult<bool> {
+    let mut nodes = Vec::new();
+    collect(tree, &mut nodes);
+    let mut found = false;
+    for node in nodes {
+        for (name, event) in &node.events {
+            let effects = event_effects(event, ir_path)?;
+            let marked = event.get("async").is_some() || event.get("effects").is_some();
+            if marked && name.as_str() != "tap" {
+                return Err(bad_ir(
+                    ir_path,
+                    format!("IR effects are only supported on 'tap' events, found '{name}'"),
+                ));
+            }
+            for effect in &effects {
+                found = true;
+                if let Effect::Fetch { into, .. } = effect {
+                    let valid = simple_ident(into)
+                        && states
+                            .iter()
+                            .any(|state| state.name == *into && state.ty == "string");
+                    if !valid {
+                        return Err(bad_ir(
+                            ir_path,
+                            format!("IR fetch target '{into}' is not a declared string state"),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// An event is either one action object (v0.1), `{"actions":[...]}` (R2), or effects only (R4).
 pub fn event_actions(event: &Json) -> Vec<&Json> {
     match event.get("actions").and_then(Json::as_array) {
         Some(list) => list.iter().collect(),
-        None => vec![event],
+        None if event.get("op").is_some() => vec![event],
+        None => Vec::new(),
     }
 }
 
@@ -369,6 +483,7 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
         .ok_or_else(|| bad_ir(ir_path, "IR is missing the 'tree' field"))?;
     let states = read_state(&state_values, ir_path)?;
     let tree = read_node(tree_value, ir_path)?;
+    let has_effects = tree_has_effects(&states, &tree, ir_path)?;
     fs::create_dir_all(out).map_err(|e| {
         Diagnostic::file(
             ir_path,
@@ -377,9 +492,9 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
         )
     })?;
     match target {
-        "native" => emit_native(&app, &states, &tree, out, ir_path),
+        "native" => emit_native(&app, &states, &tree, out, ir_path, has_effects),
         "web" => emit_web(&ir, &app, &states, &tree, out, ir_path),
-        "wasm" => crate::wasm::emit_wasm(&app, &states, &tree, out, ir_path),
+        "wasm" => crate::wasm::emit_wasm(&app, &states, &tree, out, ir_path, has_effects),
         _ => emit_mini(target, &app, &states, &tree, out, ir_path),
     }
 }
@@ -482,12 +597,180 @@ fn native_action(action: &Json, states: &[EState], ir_path: &str) -> DResult<(St
     Ok((mutation, patch))
 }
 
-fn native_source(app: &str, states: &[EState], tree: &ENode, ir_path: &str) -> DResult<String> {
+/// Generated std-only effect helpers. Each event calls the sequencer in source order.
+fn native_effect_helpers() -> &'static str {
+    r#"// R4 effects: measured sleeps and plain HTTP GET; no third-party runtime.
+#[allow(dead_code)]
+enum Effect<'a> {
+    Delay(u64),
+    Fetch { path: &'static str, into: &'a mut String },
+}
+
+#[allow(dead_code)]
+fn measured_delay(ms: u64) {
+    let start = Instant::now();
+    let target = Duration::from_millis(ms);
+    loop {
+        let elapsed = start.elapsed();
+        if elapsed >= target { break; }
+        std::thread::sleep(target - elapsed);
+    }
+}
+
+#[allow(dead_code)]
+fn decode_chunked(body: &str) -> Result<String, String> {
+    let bytes = body.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    loop {
+        let end = bytes[i..]
+            .windows(2)
+            .position(|pair| pair == b"\r\n")
+            .ok_or_else(|| "truncated chunked HTTP body".to_string())?;
+        let size_line = std::str::from_utf8(&bytes[i..i + end])
+            .map_err(|_| "invalid chunk size".to_string())?;
+        let size_text = size_line.split(';').next().unwrap_or(size_line).trim();
+        let size = usize::from_str_radix(size_text, 16)
+            .map_err(|_| "invalid chunk size".to_string())?;
+        i += end + 2;
+        if size == 0 { break; }
+        if i + size + 2 > bytes.len() {
+            return Err("truncated chunked HTTP body".to_string());
+        }
+        out.extend_from_slice(&bytes[i..i + size]);
+        i += size;
+        if bytes.get(i..i + 2) != Some(b"\r\n".as_slice()) {
+            return Err("invalid chunk terminator".to_string());
+        }
+        i += 2;
+    }
+    Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+#[allow(dead_code)]
+fn http_get(base: &str, path: &str) -> Result<String, String> {
+    let url = base.trim_end_matches('/');
+    let rest = url
+        .strip_prefix("http://")
+        .ok_or_else(|| "OPR_BASE_URL must start with http://".to_string())?;
+    let (authority, prefix) = match rest.find('/') {
+        Some(index) => (&rest[..index], &rest[index..]),
+        None => (rest, ""),
+    };
+    if authority.is_empty() {
+        return Err("OPR_BASE_URL is missing a host".to_string());
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (
+            host,
+            port.parse::<u16>()
+                .map_err(|_| "invalid port in OPR_BASE_URL".to_string())?,
+        ),
+        None => (authority, 80),
+    };
+    if host.is_empty() {
+        return Err("OPR_BASE_URL is missing a host".to_string());
+    }
+    let prefix = prefix.trim_end_matches('/');
+    let request_path = if path.starts_with('/') {
+        format!("{prefix}{path}")
+    } else {
+        format!("{prefix}/{path}")
+    };
+    let request_path = if request_path.is_empty() {
+        "/".to_string()
+    } else {
+        request_path
+    };
+    let mut stream = TcpStream::connect((host, port)).map_err(|e| e.to_string())?;
+    write!(
+        stream,
+        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nAccept: */*\r\n\r\n",
+        request_path, authority
+    )
+    .map_err(|e| e.to_string())?;
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|e| e.to_string())?;
+    let (head, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| "malformed HTTP response".to_string())?;
+    if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+        decode_chunked(body)
+    } else {
+        Ok(body.to_string())
+    }
+}
+
+#[allow(dead_code)]
+fn fetch_text(path: &str) -> String {
+    // OPR_BASE_URL unset: use a deterministic local result instead of touching the network.
+    match std::env::var("OPR_BASE_URL") {
+        Ok(base) if !base.trim().is_empty() => http_get(base.trim(), path)
+            .unwrap_or_else(|error| format!("error: {error}")),
+        _ => format!("local: {path}"),
+    }
+}
+
+#[allow(dead_code)]
+fn run_effects<'a>(effects: impl IntoIterator<Item = Effect<'a>>) {
+    for effect in effects {
+        match effect {
+            Effect::Delay(ms) => measured_delay(ms),
+            Effect::Fetch { path, into } => *into = fetch_text(path),
+        }
+    }
+}
+
+"#
+}
+
+fn native_effects(effects: &[Effect], ir_path: &str) -> DResult<String> {
+    let mut out = String::new();
+    for effect in effects {
+        match effect {
+            Effect::Delay { ms } => {
+                out.push_str(&format!(
+                    "            run_effects([Effect::Delay({ms})]);\n"
+                ));
+            }
+            Effect::Fetch { path, into } => {
+                if !simple_ident(into) {
+                    return Err(bad_ir(
+                        ir_path,
+                        format!("IR fetch target '{into}' is not a valid state field"),
+                    ));
+                }
+                out.push_str(&format!(
+                    "            run_effects([Effect::Fetch {{ path: {}, into: &mut _state.{into} }}]);\n",
+                    rust_str(path)
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn native_source(
+    app: &str,
+    states: &[EState],
+    tree: &ENode,
+    ir_path: &str,
+    has_effects: bool,
+) -> DResult<String> {
     let mut s = String::new();
     s.push_str(&format!(
         "// Generated by opuromc for app {app}; lowered from IR v0.1. Do not edit.\n"
     ));
-    s.push_str("use std::io::{self, BufRead, Write};\n\n");
+    if has_effects {
+        s.push_str("use std::io::{self, BufRead, Read, Write};\n");
+        s.push_str("use std::net::TcpStream;\n");
+        s.push_str("use std::time::{Duration, Instant};\n\n");
+        s.push_str(native_effect_helpers());
+    } else {
+        s.push_str("use std::io::{self, BufRead, Write};\n\n");
+    }
     s.push_str("struct State {\n");
     for st in states {
         s.push_str(&format!("    {}: {},\n", st.name, rust_ty(&st.ty)));
@@ -502,6 +785,7 @@ fn native_source(app: &str, states: &[EState], tree: &ENode, ir_path: &str) -> D
     for n in &nodes {
         for (event, is_input) in [("tap", false), ("input", true)] {
             if let Some(action) = n.events.get(event) {
+                let effect_code = native_effects(&event_effects(action, ir_path)?, ir_path)?;
                 let mut body = String::new();
                 let mut patches = Vec::new();
                 for one in event_actions(action) {
@@ -515,7 +799,7 @@ fn native_source(app: &str, states: &[EState], tree: &ENode, ir_path: &str) -> D
                     format!("vec![{}]", patches.join(", "))
                 };
                 s.push_str(&format!(
-                    "        ({}, {}) => {{\n{body}            {patch_expr}\n        }}\n",
+                    "        ({}, {}) => {{\n{effect_code}{body}            {patch_expr}\n        }}\n",
                     n.id, is_input
                 ));
             }
@@ -586,9 +870,10 @@ fn emit_native(
     tree: &ENode,
     out: &Path,
     ir_path: &str,
+    has_effects: bool,
 ) -> DResult<()> {
     write(out, "Cargo.toml", &native_manifest(), ir_path)?;
-    let src = native_source(app, states, tree, ir_path)?;
+    let src = native_source(app, states, tree, ir_path, has_effects)?;
     write(out, "src/main.rs", &src, ir_path)
 }
 
@@ -871,6 +1156,30 @@ fn js_action_chain(event: &Json, ir_path: &str) -> DResult<String> {
     Ok(code)
 }
 
+fn web_effects(effects: &[Effect], ir_path: &str) -> DResult<String> {
+    let mut code = String::new();
+    for (index, effect) in effects.iter().enumerate() {
+        match effect {
+            Effect::Delay { ms } => code.push_str(&format!(
+                "await new Promise(function (resolve) {{ setTimeout(resolve, {ms}); }}); "
+            )),
+            Effect::Fetch { path, into } => {
+                if !simple_ident(into) {
+                    return Err(bad_ir(
+                        ir_path,
+                        format!("IR fetch target '{into}' is not a valid state field"),
+                    ));
+                }
+                code.push_str(&format!(
+                    "const response{index} = await fetch({}); state.{into} = await response{index}.text(); ",
+                    js_lit(&Json::String(path.clone()))
+                ));
+            }
+        }
+    }
+    Ok(code)
+}
+
 fn emit_web(
     ir: &Json,
     app: &str,
@@ -903,10 +1212,11 @@ fn emit_web(
     let mut input_listeners = String::new();
     for n in &nodes {
         if let Some(action) = n.events.get("tap") {
+            let effect_code = web_effects(&event_effects(action, ir_path)?, ir_path)?;
             let code = js_action_chain(action, ir_path)?;
             tap_arms.push_str(&format!(
-                "  if (id === {}) {{ {}  render(); return; }}\n",
-                n.id, code
+                "  if (id === {}) {{ {effect_code}{code}  render(); return; }}\n",
+                n.id
             ));
             if n.kind == "Button" {
                 let b = boxes.get(&n.id).copied().unwrap_or(Box2 {
@@ -958,7 +1268,7 @@ fn emit_web(
     app_js.push_str("  ctx.textBaseline = \"top\";\n");
     app_js.push_str(&draw);
     app_js.push_str("}\n\n");
-    app_js.push_str("function applyTap(id) {\n");
+    app_js.push_str("async function applyTap(id) {\n");
     app_js.push_str(&tap_arms);
     app_js.push_str("}\n\n");
     app_js.push_str("function applyInput(id, text) {\n");
@@ -1171,6 +1481,49 @@ fn mini_action_chain(event: &Json, p: &Platform, ir_path: &str) -> DResult<Strin
     Ok(code)
 }
 
+fn mini_effects(effects: &[Effect], p: &Platform, ir_path: &str) -> DResult<String> {
+    let mut code = String::new();
+    if effects
+        .iter()
+        .any(|effect| matches!(effect, Effect::Fetch { .. }))
+    {
+        code.push_str("const page = this; ");
+    }
+    for effect in effects {
+        match effect {
+            Effect::Delay { ms } => code.push_str(&format!(
+                "await new Promise(function (resolve) {{ setTimeout(resolve, {ms}); }}); "
+            )),
+            Effect::Fetch { path, into } => {
+                if !simple_ident(into) {
+                    return Err(bad_ir(
+                        ir_path,
+                        format!("IR fetch target '{into}' is not a valid state field"),
+                    ));
+                }
+                let path = js_lit(&Json::String(path.clone()));
+                let target = js_lit(&Json::String(into.clone()));
+                code.push_str("await new Promise(function (resolve) { ");
+                code.push_str(&format!(
+                    "{}({{url: {path}, method: \"GET\", success: function (res) {{ ",
+                    p.request_api
+                ));
+                code.push_str(&format!(
+                    "page.{}({{{target}: typeof res.data === \"string\" ? res.data : JSON.stringify(res.data)}}); resolve(); ",
+                    p.state_set
+                ));
+                code.push_str("}, fail: function () { ");
+                code.push_str(&format!(
+                    "page.{}({{{target}: \"error: request failed\"}}); resolve(); ",
+                    p.state_set
+                ));
+                code.push_str("}}); }); ");
+            }
+        }
+    }
+    Ok(code)
+}
+
 fn emit_mini(
     target: &str,
     app: &str,
@@ -1230,8 +1583,12 @@ fn emit_mini(
     let mut methods = String::new();
     for n in &nodes {
         if let Some(action) = n.events.get("tap") {
+            let effect_code = mini_effects(&event_effects(action, ir_path)?, p, ir_path)?;
             let code = mini_action_chain(action, p, ir_path)?;
-            methods.push_str(&format!("  onTap{}: function () {{ {} }},\n", n.id, code));
+            methods.push_str(&format!(
+                "  onTap{}: async function () {{ {effect_code}{code} }},\n",
+                n.id
+            ));
         }
         if let Some(action) = n.events.get("input") {
             let target_name = action_str(action, "target", ir_path)?;

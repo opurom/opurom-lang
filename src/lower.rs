@@ -5,8 +5,9 @@ use serde_json::{json, Map as JsonMap, Value as Json};
 use crate::catalog;
 use crate::diag::{DResult, Diagnostic};
 use crate::lexer::lex;
+use crate::modules;
 use crate::parser::{
-    self, Arg, Lit, Node, NodeKind, Pos, Program, Stmt, StmtKind, Value as AstValue,
+    self, Arg, Effect, Lit, Node, NodeKind, Pos, Program, Stmt, StmtKind, Value as AstValue,
 };
 
 pub const KINDS: &[&str] = &[
@@ -34,6 +35,14 @@ pub const KINDS: &[&str] = &[
     "Scroll",
     "Avatar",
     "Spinner",
+    "Table",
+    "Chart",
+    "Calendar",
+    "RichText",
+    "Player",
+    "Map",
+    "Menu",
+    "Tooltip",
 ];
 
 /// Generic props every kind accepts: canonical R2 visual props plus R3 accessibility keys.
@@ -170,6 +179,7 @@ pub fn compile_source(src: &str, path: &str) -> DResult<Json> {
     catalog::catalog()?;
     let toks = lex(src, path)?;
     let program = parser::parse(toks, path)?;
+    let program = modules::resolve_imports(program, path)?;
     lower(&program, path)
 }
 
@@ -367,6 +377,70 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             numeric: &[],
             positional: None,
             children: false,
+            tap: false,
+        },
+        "Table" => KindInfo {
+            props: &["columns", "rows", "gap"],
+            required: &[],
+            numeric: &["columns", "rows", "gap"],
+            positional: None,
+            children: true,
+            tap: false,
+        },
+        "Chart" => KindInfo {
+            props: &["type", "width", "height"],
+            required: &[],
+            numeric: &["width", "height"],
+            positional: None,
+            children: false,
+            tap: false,
+        },
+        "Calendar" => KindInfo {
+            props: &["date", "height"],
+            required: &[],
+            numeric: &["height"],
+            positional: None,
+            children: false,
+            tap: false,
+        },
+        "RichText" => KindInfo {
+            props: &["value", "size", "color"],
+            required: &[],
+            numeric: &["size"],
+            positional: Some("value"),
+            children: false,
+            tap: false,
+        },
+        "Player" => KindInfo {
+            props: &["src", "width", "height"],
+            required: &[],
+            numeric: &["width", "height"],
+            positional: None,
+            children: false,
+            tap: false,
+        },
+        "Map" => KindInfo {
+            props: &["center", "zoom", "height"],
+            required: &[],
+            numeric: &["zoom", "height"],
+            positional: None,
+            children: false,
+            tap: false,
+        },
+        "Menu" => KindInfo {
+            props: &["items", "width"],
+            required: &[],
+            numeric: &["width"],
+            positional: None,
+            children: true,
+            tap: false,
+        },
+        "Tooltip" => KindInfo {
+            props: &["text", "placement", "width"],
+            required: &[],
+            numeric: &["width"],
+            positional: Some("text"),
+            children: true,
             tap: false,
         },
         _ => return None,
@@ -828,13 +902,55 @@ fn lower_actions(ctx: &Ctx, stmts: &[Stmt]) -> DResult<Vec<Json>> {
     Ok(actions)
 }
 
+fn lower_effects(ctx: &Ctx, effects: &[Effect]) -> DResult<Vec<Json>> {
+    let mut out = Vec::with_capacity(effects.len());
+    for effect in effects {
+        match effect {
+            Effect::Delay { ms, pos } => {
+                if !(0..=60000).contains(ms) {
+                    return Err(ctx.err(
+                        *pos,
+                        format!("delay must be between 0 and 60000 ms, found {ms}"),
+                        "write a delay from 0 to 60000 milliseconds",
+                    ));
+                }
+                out.push(json!({"kind": "delay", "ms": ms}));
+            }
+            Effect::Fetch { path, into, pos } => {
+                let ty = ctx.types.get(into).copied().ok_or_else(|| {
+                    ctx.err(
+                        *pos,
+                        format!("unknown state '{into}' in fetch target"),
+                        format!(
+                            "declare it with 'state {into} = \"\"' or use one of: {}",
+                            ctx.state_list()
+                        ),
+                    )
+                })?;
+                if ty != Ty::Str {
+                    return Err(ctx.err(
+                        *pos,
+                        format!(
+                            "'fetch' requires a string state, found {} state '{into}'",
+                            ty.name()
+                        ),
+                        format!("declare '{into}' with a string initializer"),
+                    ));
+                }
+                out.push(json!({"kind": "fetch", "path": path, "into": into}));
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
     let id = ctx.take_id();
     let source_kind = match &node.kind {
         NodeKind::Widget(k) => k.as_str(),
         _ => unreachable!("conditional nodes are expanded before lowering"),
     };
-    // A catalog name expands to its primitive at compile time; the 24 primitives stay unchanged.
+    // A catalog name expands to its primitive at compile time; the 32 primitives stay unchanged.
     let component = if KINDS.contains(&source_kind) {
         None
     } else {
@@ -960,6 +1076,13 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
     let mut events = JsonMap::new();
     let mut children = Vec::new();
     if let Some(block) = &node.block {
+        if block.is_async && !info.tap {
+            return Err(ctx.err(
+                node.pos,
+                "'async' requires a tap-handler node",
+                "put async on a Button, Switch, Checkbox, Radio or Taps block",
+            ));
+        }
         if info.tap {
             if !block.nodes.is_empty() {
                 return Err(ctx.err(
@@ -970,12 +1093,20 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
                 ));
             }
             let actions = lower_actions(ctx, &block.stmts)?;
-            if !actions.is_empty() {
-                let event = if actions.len() == 1 {
-                    actions.into_iter().next().unwrap()
-                } else {
-                    json!({ "actions": actions })
-                };
+            let effects = lower_effects(ctx, &block.effects)?;
+            let has_actions = !actions.is_empty();
+            let has_effects = !effects.is_empty();
+            let mut event = if actions.len() == 1 {
+                actions.into_iter().next().unwrap()
+            } else {
+                json!({ "actions": actions })
+            };
+            if block.is_async {
+                let object = event.as_object_mut().expect("lowered event is an object");
+                object.insert("async".to_string(), json!(true));
+                object.insert("effects".to_string(), Json::Array(effects));
+            }
+            if block.is_async || has_actions || has_effects {
                 events.insert("tap".to_string(), event);
             }
         } else if info.children {
@@ -984,6 +1115,13 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
                     stmt.pos,
                     format!("a {source_kind} block cannot contain statements"),
                     "put state changes inside a Button { ... } tap handler".to_string(),
+                ));
+            }
+            if let Some(effect) = block.effects.first() {
+                return Err(ctx.err(
+                    effect.pos(),
+                    format!("a {source_kind} block cannot contain effects"),
+                    "put effects inside an async tap-handler block".to_string(),
                 ));
             }
             children = lower_node_list(ctx, &block.nodes, when)?;
@@ -1113,6 +1251,13 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], when: Option<&str>) -> DResult
                         "put state changes inside a Button { ... } tap handler".to_string(),
                     ));
                 }
+                if let Some(effect) = block.effects.first() {
+                    return Err(ctx.err(
+                        effect.pos(),
+                        "an 'if' block cannot contain effects".to_string(),
+                        "put effects inside an async tap-handler block".to_string(),
+                    ));
+                }
                 out.extend(lower_node_list(ctx, &block.nodes, Some(cond))?);
             }
             NodeKind::For {
@@ -1139,6 +1284,13 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], when: Option<&str>) -> DResult
                         stmt.pos,
                         "a 'for' block cannot contain statements".to_string(),
                         "put state changes inside a Button { ... } tap handler".to_string(),
+                    ));
+                }
+                if let Some(effect) = block.effects.first() {
+                    return Err(ctx.err(
+                        effect.pos(),
+                        "a 'for' block cannot contain effects".to_string(),
+                        "put effects inside an async tap-handler block".to_string(),
                     ));
                 }
                 for i in 0..*count {
@@ -1396,6 +1548,14 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
     }
     if !apis.is_empty() {
         out.insert("api".to_string(), Json::Array(apis));
+    }
+    if !program.imports.is_empty() {
+        let imports = program
+            .imports
+            .iter()
+            .map(|i| json!(i.path))
+            .collect::<Vec<Json>>();
+        out.insert("imports".to_string(), Json::Array(imports));
     }
     Ok(Json::Object(out))
 }

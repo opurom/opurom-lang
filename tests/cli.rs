@@ -81,6 +81,26 @@ fn assert_diag(stderr: &str, path: &Path) {
     assert!(!stderr.contains("thread '"), "compiler crashed: {stderr}");
 }
 
+fn assert_error_shape(stderr: &str) {
+    let first = stderr.lines().next().unwrap_or("");
+    assert!(
+        first.contains(": error: "),
+        "missing 'error:' header: {stderr}"
+    );
+    let head = first.split(": error: ").next().unwrap_or("");
+    let pieces: Vec<&str> = head.split(':').collect();
+    assert!(pieces.len() >= 3, "bad diagnostic prefix: {first}");
+    let line: usize = pieces[pieces.len() - 2].parse().expect("numeric line");
+    let col: usize = pieces[pieces.len() - 1].parse().expect("numeric column");
+    assert!(line >= 1 && col >= 1, "bad line/col: {first}");
+    assert!(
+        stderr.lines().any(|l| l.starts_with("  help: ")),
+        "missing help line: {stderr}"
+    );
+    assert!(!stderr.contains("panicked"), "compiler panicked: {stderr}");
+    assert!(!stderr.contains("thread '"), "compiler crashed: {stderr}");
+}
+
 fn assert_shape(node: &Json) {
     assert!(node["id"].is_u64());
     assert!(node["kind"].is_string());
@@ -258,6 +278,14 @@ fn unknown_kind_lists_all_valid_kinds() {
         "Scroll",
         "Avatar",
         "Spinner",
+        "Table",
+        "Chart",
+        "Calendar",
+        "RichText",
+        "Player",
+        "Map",
+        "Menu",
+        "Tooltip",
     ] {
         assert!(err.contains(kind), "help must list kind {kind}: {err}");
     }
@@ -587,6 +615,7 @@ fn build_native(dir: &Path) -> (bool, String) {
 
 fn run_native(exe: &Path, stdin: &str) -> (bool, String) {
     let mut child = Command::new(exe)
+        .env_remove("OPR_BASE_URL")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -837,15 +866,15 @@ fn all_r2_primitives_stay_unchanged() {
 }
 
 #[test]
-fn components_lists_at_least_100_rows() {
+fn components_lists_116_rows() {
     let r = bin().arg("components").output().expect("run components");
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let text = String::from_utf8_lossy(&r.stdout);
     let lines: Vec<&str> = text.lines().collect();
     let last = *lines.last().expect("count line");
-    assert!(last.ends_with(" components"), "final count line: {last}");
+    assert_eq!(last, "116 components", "final count line: {last}");
     let count: usize = last.split_whitespace().next().unwrap().parse().unwrap();
-    assert!(count >= 100, "catalog count: {count}");
+    assert_eq!(count, 116, "catalog count: {count}");
     assert_eq!(lines.len(), count + 1, "one row per component plus count");
     for row in &lines[..count] {
         let parts: Vec<&str> = row.split(" | ").collect();
@@ -858,6 +887,18 @@ fn components_lists_at_least_100_rows() {
             .any(|l| l.starts_with("PrimaryButton | Button | form")),
         "missing known catalog row"
     );
+    for row in [
+        "DataTable | Table | data",
+        "BarChart | Chart | data",
+        "MonthCalendar | Calendar | data",
+        "Article | RichText | typography",
+        "MediaPlayer | Player | media",
+        "MapView | Map | media",
+        "ContextMenu | Menu | navigation",
+        "Hint | Tooltip | overlay",
+    ] {
+        assert!(lines.contains(&row), "missing R4 catalog row: {row}");
+    }
 }
 
 #[test]
@@ -866,13 +907,20 @@ fn vendored_catalog_matches_spec_when_present() {
     if !upstream.is_file() {
         return; // standalone checkout: the sibling spec repo is optional
     }
-    let vendored: Json =
-        serde_json::from_slice(&fs::read(workspace().join("src/catalog.json")).unwrap()).unwrap();
-    let expected: Json = serde_json::from_slice(&fs::read(&upstream).unwrap()).unwrap();
+    let vendored_bytes = fs::read(workspace().join("src/catalog.json")).unwrap();
+    let expected_bytes = fs::read(&upstream).unwrap();
+    assert_eq!(
+        vendored_bytes, expected_bytes,
+        "vendored catalog must be byte-identical to opurom-spec"
+    );
+    let vendored: Json = serde_json::from_slice(&vendored_bytes).unwrap();
+    let expected: Json = serde_json::from_slice(&expected_bytes).unwrap();
     assert_eq!(
         vendored, expected,
         "vendored catalog drifted from opurom-spec"
     );
+    assert_eq!(vendored["count"], 116);
+    assert_eq!(vendored["primitives"], 32);
 }
 
 #[test]
@@ -1077,4 +1125,380 @@ fn optimizer_rejects_bad_ir() {
         assert_diag(&err, &ir_path);
         assert!(!out.exists(), "{name}: no output may be written on error");
     }
+}
+
+// ------------------------------------------------------------------ R4 ----
+
+fn node_check(file: &Path) {
+    let r = Command::new("node")
+        .arg("--check")
+        .arg(file)
+        .output()
+        .expect("run node --check");
+    assert!(
+        r.status.success(),
+        "node --check failed for {}: {}",
+        file.display(),
+        String::from_utf8_lossy(&r.stderr)
+    );
+}
+
+#[test]
+fn golden_counter_and_profile_ir_are_byte_identical() {
+    let cases = [
+        (spec("counter.opu"), fixture("golden/counter.opuir.json")),
+        (
+            fixture("golden/profile.opu"),
+            fixture("golden/profile.opuir.json"),
+        ),
+    ];
+    for (index, (src, golden)) in cases.iter().enumerate() {
+        let out = out_dir("r4-golden-bytes").join(format!("golden-{index}.opuir.json"));
+        let r = compile(src, &out);
+        assert!(
+            r.status.success(),
+            "compile failed: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let got = fs::read(&out).expect("read compiled IR");
+        let expected = fs::read(golden).expect("read byte-level golden IR");
+        assert_eq!(
+            got,
+            expected,
+            "plain program changed its R1-R3 IR bytes: {}",
+            src.display()
+        );
+        let ir: Json = serde_json::from_slice(&got).unwrap();
+        assert!(ir.get("imports").is_none());
+        assert!(ir.get("models").is_none());
+        assert!(ir.get("api").is_none());
+        for node in nodes_of(&ir) {
+            for event in node["events"].as_object().unwrap().values() {
+                assert!(event.get("async").is_none(), "unexpected async key");
+                assert!(event.get("effects").is_none(), "unexpected effects key");
+            }
+        }
+    }
+}
+
+#[test]
+fn async_effects_lower_to_the_documented_ir() {
+    let ir = compile_ok(&fixture("async.opu"));
+    assert_eq!(
+        ir["tree"]["events"]["tap"],
+        json!({
+            "op": "add",
+            "target": "count",
+            "value": 1,
+            "async": true,
+            "effects": [
+                {"kind": "delay", "ms": 50},
+                {"kind": "fetch", "path": "/todos", "into": "payload"}
+            ]
+        })
+    );
+    assert_eq!(
+        ir["state"][1],
+        json!({"name": "payload", "type": "string", "init": "idle"})
+    );
+}
+
+#[test]
+fn async_diagnostics_are_friendly() {
+    let cases: &[(&str, &str)] = &[
+        ("await_outside_async.opu", "'await' requires an async block"),
+        ("duplicate_async.opu", "duplicate 'async' keyword"),
+        ("async_non_tap.opu", "'async' requires a tap-handler node"),
+        ("async_no_block.opu", "'async' requires a tap-handler block"),
+        (
+            "delay_out_of_range.opu",
+            "delay must be between 0 and 60000 ms",
+        ),
+        ("delay_negative.opu", "delay must be between 0 and 60000 ms"),
+        ("fetch_non_string.opu", "'fetch' requires a string state"),
+        (
+            "fetch_unknown_state.opu",
+            "unknown state 'payload' in fetch target",
+        ),
+        ("unknown_effect.opu", "unknown effect 'pause'"),
+        ("bad_fetch_target.opu", "expected a string state name"),
+    ];
+    for &(file, message) in cases {
+        let path = error_fixture(file);
+        let r = bin().arg("check").arg(&path).output().expect("run check");
+        assert_eq!(r.status.code(), Some(1), "{file} must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            err.contains(message),
+            "{file}: unexpected diagnostic: {err}"
+        );
+        assert_diag(&err, &path);
+        let out = out_dir("r4-reject").join("out.opuir.json");
+        let r2 = compile(&path, &out);
+        assert_eq!(r2.status.code(), Some(1), "{file}: compile must fail");
+        assert!(!out.exists(), "{file}: no IR may be written on error");
+    }
+}
+
+#[test]
+fn imports_merge_declarations_roots_and_transitive_files() {
+    let ir = compile_ok(&fixture("imports/main.opu"));
+    assert_eq!(
+        ir["imports"],
+        json!(["models/todo.opu", "ui/cards.opu", "rooted.opu"])
+    );
+    assert_eq!(
+        state_names(&ir),
+        vec!["nested", "payload", "count", "rootValue", "local"]
+    );
+    assert_eq!(ir["models"][0]["name"], "Todo");
+    assert_eq!(ir["api"][0]["path"], "/todos");
+    assert_eq!(ir["api"][0]["handlers"], json!(["list"]));
+    assert_eq!(
+        ir["theme"],
+        json!({"mode": "dark", "accent": "#FF4D6D", "radius": 8})
+    );
+    assert_eq!(
+        ir["tree"]["children"][0]["props"]["value"],
+        "{payload} {count} {nested} {rootValue} {local}"
+    );
+    let plain = compile_ok(&spec("counter.opu"));
+    assert!(
+        plain.get("imports").is_none(),
+        "plain IR stays additive-free"
+    );
+}
+
+#[test]
+fn imports_reject_cycles_traversal_duplicates_and_bad_files() {
+    let cases: &[(&str, &str)] = &[
+        ("cycle_a.opu", "import cycle detected"),
+        (
+            "traversal.opu",
+            "import path may not be absolute or contain '..'",
+        ),
+        (
+            "missing.opu",
+            "cannot read imported module 'absent.opu': file not found",
+        ),
+        ("non_opu.opu", "must end in '.opu'"),
+        ("duplicate.opu", "duplicate imported name 'shared'"),
+        (
+            "disallowed.opu",
+            "imported module may declare only state, model, api, theme and imports",
+        ),
+        (
+            "disallowed_async.opu",
+            "imported module may declare only state, model, api, theme and imports",
+        ),
+    ];
+    for &(file, message) in cases {
+        let path = fixture("imports/errors").join(file);
+        let r = bin().arg("check").arg(&path).output().expect("run check");
+        assert_eq!(r.status.code(), Some(1), "{file} must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            err.contains(message),
+            "{file}: unexpected diagnostic: {err}"
+        );
+        assert_error_shape(&err);
+        let out = out_dir("r4-import-reject").join("out.opuir.json");
+        let r2 = compile(&path, &out);
+        assert_eq!(r2.status.code(), Some(1), "{file}: compile must fail");
+        assert!(!out.exists(), "{file}: no IR may be written on error");
+    }
+}
+
+#[test]
+fn r4_primitives_and_catalog_names_are_accepted() {
+    let dir = out_dir("r4-kinds");
+    let src = dir.join("kinds.opu");
+    fs::write(
+        &src,
+        r#"app R4Kinds {
+  Column {
+    Table(columns: 2, rows: 3) { }
+    Chart(height: 120)
+    Calendar(date: "2026-01-01")
+    RichText("body", size: 16)
+    Player(src: "a.mp4", height: 180)
+    Map(center: "0,0", zoom: 2, height: 200)
+    Menu(items: "a,b") { }
+    Tooltip("hint") { }
+    DataTable()
+    BarChart()
+    MonthCalendar()
+    Article()
+    MediaPlayer()
+    MapView()
+    ContextMenu()
+    Hint()
+  }
+}
+"#,
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let nodes = nodes_of(&ir);
+    assert_eq!(
+        nodes.len(),
+        17,
+        "root plus eight primitives and eight catalog names"
+    );
+    let kinds: Vec<&str> = nodes.iter().map(|n| n["kind"].as_str().unwrap()).collect();
+    for kind in [
+        "Table", "Chart", "Calendar", "RichText", "Player", "Map", "Menu", "Tooltip",
+    ] {
+        assert!(kinds.contains(&kind), "missing primitive kind {kind}");
+    }
+    for (name, primitive) in [
+        ("DataTable", "Table"),
+        ("BarChart", "Chart"),
+        ("MonthCalendar", "Calendar"),
+        ("Article", "RichText"),
+        ("MediaPlayer", "Player"),
+        ("MapView", "Map"),
+        ("ContextMenu", "Menu"),
+        ("Hint", "Tooltip"),
+    ] {
+        let node = nodes
+            .iter()
+            .find(|n| n.get("component").and_then(Json::as_str) == Some(name))
+            .unwrap_or_else(|| panic!("missing catalog component {name}"));
+        assert_eq!(node["kind"], primitive);
+    }
+}
+
+#[test]
+fn optimizer_preserves_async_effect_state_and_imports() {
+    let mut ir = compile_ok(&fixture("async.opu"));
+    ir["imports"] = json!(["models/todo.opu"]);
+    let dir = out_dir("r4-opt-async");
+    let ir_path = dir.join("async.opuir.json");
+    let out = dir.join("optimized.opuir.json");
+    fs::write(&ir_path, pretty_ir(&ir)).unwrap();
+    let r = optimize(&ir_path, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let got: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(state_names(&got), vec!["count", "payload"]);
+    assert_eq!(got["imports"], json!(["models/todo.opu"]));
+    assert_eq!(got["tree"]["events"]["tap"]["async"], true);
+    assert_eq!(
+        got["tree"]["events"]["tap"]["effects"],
+        json!([
+            {"kind": "delay", "ms": 50},
+            {"kind": "fetch", "path": "/todos", "into": "payload"}
+        ])
+    );
+}
+
+#[test]
+fn every_target_emits_effect_code() {
+    let ir = out_dir("r4-effect-ir").join("async.opuir.json");
+    let r = compile(&fixture("async.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let web = out_dir("r4-effect-web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let web_js = fs::read_to_string(web.join("app.js")).unwrap();
+    assert!(web_js.contains("const state = {\"count\":0,\"payload\":\"idle\"};"));
+    assert!(web_js.contains("async function applyTap(id)"));
+    assert!(web_js.contains("setTimeout(resolve, 50)"));
+    assert!(web_js.contains("await fetch(\"/todos\")"));
+    assert!(web_js.contains("state.payload = await response1.text();"));
+    node_check(&web.join("app.js"));
+
+    let native = out_dir("r4-effect-native");
+    let r = emit(&ir, "native", &native);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let native_rs = fs::read_to_string(native.join("src/main.rs")).unwrap();
+    for marker in [
+        "OPR_BASE_URL",
+        "TcpStream::connect",
+        "Effect::Delay(50)",
+        "Effect::Fetch",
+        "run_effects",
+        "local: ",
+    ] {
+        assert!(native_rs.contains(marker), "native source missing {marker}");
+    }
+
+    let mini_cases: &[(&str, &str)] = &[
+        ("wechat", "wx.request"),
+        ("alipay", "my.request"),
+        ("qq", "qq.request"),
+        ("douyin", "tt.request"),
+        ("baidu", "swan.request"),
+        ("kuaishou", "ks.request"),
+    ];
+    for &(target, request_api) in mini_cases {
+        let dir = out_dir(&format!("r4-effect-{target}"));
+        let r = emit(&ir, target, &dir);
+        assert!(
+            r.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let js = fs::read_to_string(dir.join("index.js")).unwrap();
+        for marker in [
+            "async function ()",
+            "await new Promise",
+            "setTimeout(resolve, 50)",
+            request_api,
+            "setData",
+            "request failed",
+        ] {
+            assert!(js.contains(marker), "{target} index.js missing {marker}");
+        }
+        node_check(&dir.join("index.js"));
+    }
+
+    let wasm = out_dir("r4-effect-wasm");
+    let r = emit(&ir, "wasm", &wasm);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let host_js = fs::read_to_string(wasm.join("host.js")).unwrap();
+    for marker in [
+        "const EFFECTS =",
+        "const HOST_CALLBACKS =",
+        "setTimeout(resolve, ms)",
+        "await fetch(base + path)",
+        "async function runEffects(id)",
+        "async function applyTap(id)",
+        "await runEffects(id)",
+    ] {
+        assert!(host_js.contains(marker), "wasm host.js missing {marker}");
+    }
+    let readme = fs::read_to_string(wasm.join("README.md")).unwrap();
+    assert!(
+        readme.contains("host callbacks"),
+        "wasm README missing honest status"
+    );
+    node_check(&wasm.join("host.js"));
+}
+
+#[test]
+fn native_effects_build_and_run_locally() {
+    let ir = out_dir("r4-native-ir").join("async.opuir.json");
+    let r = compile(&fixture("async.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let dir = out_dir("r4-native-run");
+    let r = emit(&ir, "native", &dir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let (built, stderr) = build_native(&dir);
+    assert!(built, "cargo build --release failed:\n{stderr}");
+    assert!(
+        !stderr.contains("warning:"),
+        "generated Rust must be warning-free:\n{stderr}"
+    );
+    let (ran, stdout) = run_native(
+        &dir.join("target/release/opurom_native"),
+        "tap 0\nstate\nquit\n",
+    );
+    assert!(ran, "native binary exited nonzero");
+    assert!(
+        stdout.contains("state count=1 payload=local: /todos"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("patch count=1"), "{stdout}");
 }

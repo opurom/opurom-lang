@@ -1,0 +1,86 @@
+{
+  "app": "Profile",
+  "ir": "0.1",
+  "state": [
+    {
+      "init": "world",
+      "name": "name",
+      "type": "string"
+    },
+    {
+      "init": false,
+      "name": "dark",
+      "type": "bool"
+    }
+  ],
+  "theme": {
+    "accent": "#4F46E5",
+    "mode": "system",
+    "radius": 12
+  },
+  "tree": {
+    "children": [
+      {
+        "children": [],
+        "events": {},
+        "id": 1,
+        "kind": "Text",
+        "props": {
+          "size": 20,
+          "value": "Hello, {name}"
+        }
+      },
+      {
+        "children": [],
+        "events": {
+          "input": {
+            "op": "set",
+            "target": "name"
+          }
+        },
+        "id": 2,
+        "kind": "Input",
+        "props": {
+          "bind": "name",
+          "placeholder": "Your name"
+        }
+      },
+      {
+        "children": [],
+        "events": {
+          "tap": {
+            "op": "toggle",
+            "target": "dark"
+          }
+        },
+        "id": 3,
+        "kind": "Button",
+        "props": {
+          "label": "Toggle theme"
+        }
+      },
+      {
+        "children": [],
+        "events": {
+          "tap": {
+            "op": "set",
+            "target": "name",
+            "value": "world"
+          }
+        },
+        "id": 4,
+        "kind": "Button",
+        "props": {
+          "label": "Reset"
+        }
+      }
+    ],
+    "events": {},
+    "id": 0,
+    "kind": "Column",
+    "props": {
+      "gap": 12,
+      "padding": 24
+    }
+  }
+}

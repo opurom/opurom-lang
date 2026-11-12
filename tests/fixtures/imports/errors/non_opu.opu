@@ -1,0 +1,5 @@
+import "data.txt"
+
+app BadPath {
+  Text("x")
+}

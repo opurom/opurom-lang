@@ -1,0 +1,12 @@
+// Second golden: strings, booleans, input binding, set and toggle.
+app Profile {
+  state name = "world"
+  state dark = false
+
+  Column(gap: 12, padding: 24) {
+    Text("Hello, {name}", size: 20)
+    Input(placeholder: "Your name", bind: name)
+    Button("Toggle theme") { dark.toggle() }
+    Button("Reset") { name = "world" }
+  }
+}

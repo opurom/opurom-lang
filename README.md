@@ -4,40 +4,47 @@ The language/compiler workstream of OPUROM. An independent Rust 1.99.1 crate (st
 `serde_json` only) with one binary, `opuromc`. The frontend lowers `.opu` source to
 [IR v0.1](../opurom-spec/IR_SCHEMA.md); the backend lowers IR into target-native source.
 **No target ships a runtime IR interpreter**: every emitter writes straight-line code from the
-tree.
+tree. R4 is additive: a program without imports or async effects produces byte-identical R1-R3 IR.
 
-## Grammar summary (LANG_SPEC v0.1 + LANG_R2_ADDENDUM)
+## Grammar summary (LANG_SPEC v0.1 + R2 + R4)
 
 ```ebnf
-program    = "app" IDENT "{" { state_decl | model_decl | api_decl | theme_decl | node } "}" ;
+program    = { import_decl } "app" IDENT "{" { state_decl | model_decl | api_decl | theme_decl | node } "}" ;
+import_decl = "import" STRING [";"] ;
 state_decl = "state" IDENT "=" literal [";"] ;
 model_decl = "model" IDENT "{" { field_decl } "}" ;
 field_decl = IDENT ":" ( "int" | "string" | "bool" ) [ "primary" ] [ "=" literal ] [";"] ;
 api_decl   = "api" STRING "{" { handler_decl } "}" ;
 handler_decl = ( "list" | "get" | "create" | "update" | "delete" ) IDENT [";"] ;
 theme_decl = "theme" "{" ( "mode" | "accent" | "radius" ) ":" value { "," } "}" ;
-node       = KIND [ "(" [ args ] ")" ] [ ";" | "{" { node | statement } "}" ]
+node       = KIND [ "(" [ args ] ")" ] [ "async" ] [ ";" | "{" { node | statement | effect } "}" ]
            | "if" "(" IDENT ")" "{" { node } "}"
            | "for" "(" IDENT "in" INT ")" "{" { node } "}" ;
 args       = ( IDENT ":" value | value ) { "," ... } [ "," ] ;
 value      = INT | FLOAT | STRING | BOOL | IDENT ;
 statement  = IDENT ( "+=" | "-=" | "=" ) expr [";"]
            | IDENT "." "toggle" "(" ")" [";"] ;
+effect     = "await" "delay" "(" INT ")" [";"]
+           | "await" "fetch" "(" STRING "," IDENT ")" [";"] ;
 expr       = literal | IDENT ;
 ```
 
 - UTF-8, `.opu` extension, `//` line comments, insignificant whitespace (a newline is a valid
   node terminator, so `;` is optional).
 - Kinds: the eight v0.1 kinds (`Column`, `Row`, `Container`, `Text`, `Button`, `Input`, `Image`,
-  `Spacer`) plus the sixteen R2 kinds (`Card`, `Divider`, `Icon`, `Badge`, `Progress`, `Switch`,
-  `Slider`, `Checkbox`, `Radio`, `Dialog`, `Tabs`, `List`, `Grid`, `Scroll`, `Avatar`, `Spinner`).
+  `Spacer`), the sixteen R2 kinds (`Card`, `Divider`, `Icon`, `Badge`, `Progress`, `Switch`,
+  `Slider`, `Checkbox`, `Radio`, `Dialog`, `Tabs`, `List`, `Grid`, `Scroll`, `Avatar`, `Spinner`)
+  and the eight R4 primitives (`Table`, `Chart`, `Calendar`, `RichText`, `Player`, `Map`, `Menu`,
+  `Tooltip`). Catalog names are also accepted and lower to one of these 32 primitives.
   `Text("x")` and `Button("OK")` are the positional forms of `Text(value: "x")` /
   `Button(label: "OK")`.
 - Types are inferred from the initializer: `int` (i64), `bool`, `string`. `Text` values
   interpolate `{name}` against state; `{{` is a literal `{` (and `}}` a literal `}`).
 - `Input(bind: name)` lowers to an `input` event whose `set` action omits `value`; the runtime
   supplies the string.
-- `async`, `await`, `fn`, `import`, `else` are rejected with a "not yet supported" diagnostic.
+- `fn`, `else`, `component`, `module`, `units`, `dp`, `rem`, `let` and `var` remain rejected with
+  a "not yet supported" diagnostic. `async`, `await` and `import` are R4 syntax with strict
+  validation.
 
 ### R2 language features
 
@@ -52,6 +59,62 @@ expr       = literal | IDENT ;
 | Visual props | `shadow`, `gradient`, `glass`, `opacity`, `border`, `animate` | passed through |
 
 `for` counts are limited to 0..64; colors are `#RRGGBB`; `opacity` is 0..1; `shadow` is 0..8.
+
+### R4 async/await effects
+
+```opu
+app AsyncDemo {
+  state count = 0
+  state payload = "idle"
+
+  Button("Load") async {
+    await delay(50)
+    await fetch("/todos", payload)
+    count += 1
+  }
+}
+```
+
+Only an `async` tap-handler block may contain `await`. `await delay(INT)` accepts 0..60000 ms;
+`await fetch(STRING, IDENT)` performs a GET at runtime and stores the body in a declared string
+state. Duplicate `async`, `await` outside an async block, an unknown effect, a bad call shape, a
+non-string or undeclared `fetch` target and an out-of-range delay are diagnostics.
+
+The event gains optional `"async": true` and an `"effects"` array:
+
+```json
+{
+  "op": "add", "target": "count", "value": 1,
+  "async": true,
+  "effects": [
+    {"kind": "delay", "ms": 50},
+    {"kind": "fetch", "path": "/todos", "into": "payload"}
+  ]
+}
+```
+
+Effects are compile-time lowered, not interpreted. The IR has no interleaving marker: emitters run
+effects in source order before applying `actions`. An R1-R3 consumer ignores `async` and `effects`
+and still applies `actions` (documented degradation). Plain events gain neither key.
+
+### R4 modules
+
+```opu
+import "models/todo.opu"
+import "ui/cards.opu"
+
+app TodoApp { ... }
+```
+
+Imports appear before the app block. An imported `.opu` file may declare `state`, `model`, `api`
+and `theme` only, either as bare declarations or inside an `app` wrapper; nested imports are
+allowed. Declarations are merged before type checking. Duplicate names, duplicate themes, duplicate
+API paths, cycles, `..` traversal, absolute paths, missing files, non-`.opu` paths and disallowed
+declarations produce diagnostics. Paths resolve relative to the importing file, then against
+`moduleRoots` from the nearest `opurom.json`; a missing manifest is fine. Manifest `dependencies`
+is metadata only; package resolution belongs to `opurom-pkg`. The IR gains an optional top-level
+`"imports": ["models/todo.opu", ...]` array containing the direct imports, and consumers may
+ignore it.
 
 ### Full-stack syntax (FULLSTACK_SPEC)
 
@@ -96,7 +159,7 @@ opuromc check <src.opu>                                   # diagnostics only
 opuromc compile <src.opu> -o <out.opuir.json>             # lex -> parse -> typecheck -> IR
 opuromc target <ir.json> --target <name> -o <dir>         # lower IR into target source
 opuromc targets                                           # list all 9 targets
-opuromc components                                        # list the 108 catalog names
+opuromc components                                        # list the 116 catalog names
 opuromc optimize <ir.json> -o <out.json>                  # dead-state elimination
 opuromc --version                                         # 0.2.0
 ```
@@ -105,7 +168,8 @@ The compiler emits node ids pre-order from 0, keeps numeric props as JSON number
 `events: {}` and `children: []` on every node, and adds the default theme
 `{"mode":"system","accent":"#4F46E5","radius":12}`. Compiling
 [`counter.opu`](../opurom-spec/counter.opu) is deep-equal to
-[`counter.opuir.json`](../opurom-spec/counter.opuir.json).
+[`counter.opuir.json`](../opurom-spec/counter.opuir.json); both `counter.opu` and `profile.opu`
+also have byte-level golden IR fixtures in `tests/fixtures/golden/`.
 
 ## Emitters
 
@@ -122,28 +186,38 @@ The compiler emits node ids pre-order from 0, keeps numeric props as JSON number
 | `wasm` | `Cargo.toml`, `src/lib.rs`, `index.html`, `host.js`, `README.md` | std-only `cdylib` for `wasm32-unknown-unknown` with the C ABI of [WASM_ABI](../opurom-spec/WASM_ABI.md): `opu_version`, `opu_state_len`, `opu_state`, `opu_tap`, `opu_input` |
 
 The six mini-program targets share one lowering pass and one small per-platform table
-(extensions, loop/key directives, tap/input directives, state-set API, window title key and
-binding delimiters). Web and mini emitters generate code, not an IR parser.
+(extensions, loop/key directives, tap/input directives, state-set API, request API, window title
+key and binding delimiters). Web and mini emitters generate code, not an IR parser.
 
 All emitters understand the R2 IR: an event is one action object or an `actions` array, an
 action may read another state through `valueFrom`, a node may carry `when`, and a node kind a
 consumer does not know renders as a `Container` (with children) or a `Text`
 (label/value/title/name) — the documented fallback, not an error.
 
-### R3 component catalog
+### R4 per-target effect status
 
-[components.json](../opurom-spec/components.json) is vendored as
+| Target | Status | Honest implementation and limits |
+| --- | --- | --- |
+| `web` | **Full** | `async function applyTap`, `await` on a `Promise`/`setTimeout` delay, `await fetch(path)`, then `response.text()` into the string state. `node --check` is verified; no browser automation runs here. |
+| `native` | **Full within the std-only contract** | A deterministic source-order sequencer uses `Instant`-measured `thread::sleep` (busy-free) and a `TcpStream` HTTP/1.1 GET against `OPR_BASE_URL`. With the variable unset, the documented local result is `local: <path>`. Plain HTTP only: no TLS, redirects, IPv6 literals or HTTP/2. |
+| `wechat`, `alipay`, `qq`, `douyin`, `baidu`, `kuaishou` | **Approximate** | `async` handlers await `setTimeout` promises and call each platform's `request` API (`wx.request`, `my.request`, `qq.request`, `tt.request`, `swan.request`, `ks.request`). The generated URL is the literal IR path; a real deployment needs a configured absolute base and domain allowlist. No simulator or device conformance runs. |
+| `wasm` | **Approximate** | `host.js` exposes `HOST_CALLBACKS` for `setTimeout` and `fetch`, runs them through `runEffects(id)` before the synchronous `opu_tap`, and keeps string state in the host mirror. The wasm module has no imports and no internal OS async IO; browser host behavior is not automated here. |
+
+### R3/R4 component catalog
+
+[components.json](../opurom-spec/components.json) is vendored **byte-for-byte** as
 [src/catalog.json](src/catalog.json) and embedded with `include_str!`, so the crate builds
-standalone. Its 108 tuples are `[name, primitive, category, defaultProps]`. A source `Kind` that
-is a catalog name lowers to the named primitive: the IR node keeps `kind` = primitive and gains
-`"component": "<name>"`. Consumers that ignore `component` still read valid v0.1 IR.
+standalone. Its 116 tuples are `[name, primitive, category, defaultProps]`, mapping onto 32
+primitive kinds. A source `Kind` that is a catalog name lowers to the named primitive: the IR node
+keeps `kind` = primitive and gains `"component": "<name>"`. Consumers that ignore `component`
+still read valid v0.1 IR.
 
 `defaultProps` are injected **after** explicitly written props are validated, so explicit values
 win and preset keys need not be props that the primitive declares. The catalog is validated at
-compile time: duplicate names, unknown primitives and malformed (non-flat/non-scalar) defaults
-are rejected. Expansion is deterministic and compile-time only; no component registry ships in a
-build. `opuromc components` prints `name | primitive | category` rows and a final
-`108 components` line. Unknown kinds remain a diagnostic.
+compile time: duplicate names, unknown primitives, count/primitive metadata drift and malformed
+(non-flat/non-scalar) defaults are rejected. Expansion is deterministic and compile-time only; no
+component registry ships in a build. `opuromc components` prints `name | primitive | category`
+rows and a final `116 components` line. Unknown kinds remain a diagnostic.
 
 The R3 accessibility keys `label`, `role`, `fontScale` and `highContrast` are accepted on any
 node and preserved in IR props. This crate only produces them; rendering them belongs to
@@ -153,10 +227,11 @@ node and preserved in IR props. This crate only produces them; rendering them be
 
 `opuromc optimize <ir.json> -o <out.json>` performs dead-state elimination: it removes `state`
 entries that no interpolation (`{name}` in any string prop), `bind`, event action `target` or
-`valueFrom`, or `when` can observe. It drops props whose value is `null` and keeps empty
-`children`/`events` objects (the schema requires them). It never removes nodes, folds `when`,
-changes ids, reorders state, or strips the optional `component` field. IR versions other than
-`0.1` and fields outside the IR schema are rejected with a diagnostic and exit code 1.
+`valueFrom`, `when`, or R4 fetch `into` can observe. It drops props whose value is `null` and keeps
+empty `children`/`events` objects (the schema requires them). It never removes nodes, folds `when`,
+changes ids, reorders state, strips the optional `component` field, or mutates `imports`/`effects`.
+IR versions other than `0.1` and fields outside the additive IR schema are rejected with a
+diagnostic and exit code 1.
 
 Measured byte counts are printed to stdout as `optimize: <in> bytes in, <out> bytes out` — both
 numbers come from the actual input and output files, not estimates. A golden IR with no dead state
@@ -168,65 +243,63 @@ to R2.
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
 cd /Users/mac/work/opurom/opurom-lang
-cargo test --offline                 # 26 integration + 4 unit tests
+cargo test --offline                 # 40 tests: 4 unit + 32 CLI + 4 wasm
 RUSTFLAGS="-D warnings" cargo test --offline   # zero compiler warnings
 ```
 
-The test harness drives the CLI binary from `tests/fixtures/`, compares the golden IR with deep
-equality, checks `node --check` on web + six mini `index.js`/`app.js` files plus the wasm
-`host.js`, runs `cargo build --release --offline` inside the generated native crate followed by
-a piped-stdin session, and builds the generated wasm crate for `wasm32-unknown-unknown` before
-instantiating it in Node's `WebAssembly` runtime with an empty import object. R3 tests cover
-catalog/spec parity, catalog expansion with explicit-props-win, the `component` field, all 24
-primitive kinds, the `components` count, and optimizer no-op/shrink/id-order/bad-IR cases.
+The test harness drives the CLI binary from `tests/fixtures/`, compares golden IR byte-for-byte and
+parsed-JSON deep-equality, checks `node --check` on web + six mini `index.js`/`app.js` files plus
+the wasm `host.js`, runs `cargo build --release --offline` inside generated native crates followed
+by piped-stdin sessions, and builds generated wasm crates for `wasm32-unknown-unknown` before
+instantiating them in Node's `WebAssembly` runtime with an empty import object. R4 tests cover
+async lowering, all async diagnostics, every target's effect emission, import merge/cycle/traversal
+/duplicate/missing/disallowed cases, the 116/32 catalog, all eight new primitives and optimizer
+preservation of effect state.
 
 ## Honest status
 
 **Verified in this round**
 
-- `cargo test --offline`: 30/30 tests pass (26 integration + 4 unit), including the golden
-  `counter.opu` → `counter.opuir.json` parsed-JSON deep-equality assertion.
-- UI-only programs (`counter.opu`, `profile.opu`) compile to **byte-identical** IR compared
-  with the R1 compiler; no empty `models`/`api` arrays are added.
-- 36 negative fixtures: the 21 v0.1 classes plus the R2 classes (model type, two primaries,
-  default mismatch, duplicate model, unknown api model, unknown handler verb, missing path
-  parameter, `else`, `for` count > 64, bad color, opacity/shadow range, `valueFrom` type
-  mismatch, non-bool `when`, duplicate theme, unknown theme key, unknown animate value). No
+- `cargo test --offline`: 40/40 tests pass (4 unit + 32 CLI + 4 wasm); `RUSTFLAGS="-D warnings"`
+  is clean.
+- UI-only programs (`counter.opu`, `profile.opu`) compile to **byte-identical** IR compared with
+  the R1-R3 compiler; no `imports`, `async`, `effects`, `models` or `api` keys are added to plain
+  IR. The 116/32 vendored catalog is byte-identical to the spec catalog.
+- Negative fixtures cover the 21 v0.1 classes, the R2 classes and the R4 async/import classes. No
   panics, no stack traces.
 - The wasm target builds with `cargo build --release --target wasm32-unknown-unknown` and the
-  `.wasm` instantiates in Node with an empty import object; `opu_version() == 1`,
-  `opu_state(0) == init`, `opu_tap(plus) == 1`, `opu_state(0) == init + 1`.
+  `.wasm` instantiates in Node with an empty import object; `opu_version() == 1`, `opu_state(0)`
+  starts at `init`, `opu_tap(plus) == 1`, `opu_state(0) == init + 1`. R4 effects remain host-side
+  callbacks and do not add wasm imports.
 - Every generated JS file passes `node --check` (web + 6 mini + wasm host); `opuromc targets`
-  lists all 9 targets.
-- Generated native output builds warning-free with `cargo build --release` and runs with piped
-  stdin (`state ...` and `patch ...` lines verified).
-- `RUSTFLAGS="-D warnings" cargo test --offline` is clean.
+  lists all 9 targets and `opuromc components` prints `116 components`.
+- Generated native output builds warning-free with `cargo build --release --offline` and runs with
+  piped stdin. The R4 native sequencer's local fallback and plain-HTTP `OPR_BASE_URL` path are
+  generated from the same IR.
 
-### R3 status
+### Catalog, optimizer and effects scope
 
-- **108 named components map onto the 24 primitives.** There are no distinct renderer
-  implementations per component: a component is a compile-time name plus preset props, resolved
-  to a primitive before any emitter sees the tree.
+- **116 named components map onto 32 primitives.** There are no distinct renderer
+  implementations per component in this crate: a component is a compile-time name plus preset props,
+  resolved to a primitive before any emitter sees the tree.
 - **The optimizer is dead-state elimination only, not full tree shaking.** It does not prune
   nodes, fold conditionals, remove events or reorder anything; it only removes unreachable state
-  entries and null-valued props. No byte counts are estimated — both numbers are measured from
-  the input and output files.
-- Verified: catalog/spec parity, compile-time catalog validation (duplicates, unknown
-  primitives, malformed props), explicit-props-win expansion, `component` field presence only
-  on catalog nodes, `opuromc components` count >= 100, all 24 primitive kinds unchanged,
-  golden IR optimizing to a deep-equal IR, dead-state shrinking, id/order/`when`/`component`
-  preservation, and bad-IR diagnostics.
+  entries and null-valued props. No byte counts are estimated.
+- **Effects run before actions.** The IR has separate `effects` and `actions` arrays; source-level
+  interleaving after an `await` is intentionally not represented. Web and native fully implement
+  the R4 contract; the six mini targets and wasm approximate it as described above.
+- Modules are compile-time declaration merges. There is no runtime module registry, no remote
+  resolver and no code execution during import resolution. Manifest `dependencies` is not used for
+  resolution in this crate.
 
 **Planned / not verified (later rounds)**
 
 - GPU/ANGLE/Metal/Vulkan backend, LSP, user-defined custom components, plugin sandboxing,
-  perf harness — R4+.
-- `async`/`await`, `fn`, modules/imports, `else`: rejected by design.
-- Event handlers with local variables and list-valued state are out of scope for R2.
+  perf harness, `fn`, `else`, list-valued state and local variables.
 - The wasm host renders with Canvas 2D and forwards taps; there is no DOM/WASM hybrid
-  rendering, no SIMD, no threads and no startup benchmark (R3+ per WASM_ABI.md).
+  rendering, no SIMD, no threads and no startup benchmark.
 - Bool and string states live in the wasm host as a mirror (`host.js`); only int states cross
-  the ABI in R2.
+  the ABI.
 - Web target: Canvas 2D draws every node, and `Input` is also exposed as a DOM `<input>` for
   keyboard events. Only `node --check` is verified; no browser/DOM automation runs here.
 - Mini-program markup is verified at the syntax/artifact level only (files, directives,

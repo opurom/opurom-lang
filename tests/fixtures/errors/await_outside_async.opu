@@ -1,0 +1,6 @@
+app Bad {
+  state payload = "idle"
+  Button("Load") {
+    await delay(50)
+  }
+}

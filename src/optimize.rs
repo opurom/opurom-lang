@@ -8,7 +8,9 @@ use crate::diag::{DResult, Diagnostic};
 use crate::emit::bad_ir;
 use crate::lower::{interp_parts, Part};
 
-const IR_FIELDS: &[&str] = &["ir", "app", "state", "tree", "theme", "models", "api"];
+const IR_FIELDS: &[&str] = &[
+    "ir", "app", "state", "tree", "theme", "models", "api", "imports",
+];
 const STATE_FIELDS: &[&str] = &["name", "type", "init"];
 const NODE_FIELDS: &[&str] = &[
     "id",
@@ -61,6 +63,16 @@ fn validate(ir: &Json, path: &str) -> DResult<()> {
             }
             if fields.get("name").and_then(Json::as_str).is_none() {
                 return Err(bad_ir(path, "IR state entry is missing a string 'name'"));
+            }
+        }
+    }
+    if let Some(imports) = o.get("imports") {
+        let arr = imports
+            .as_array()
+            .ok_or_else(|| bad_ir(path, "IR 'imports' must be an array"))?;
+        for entry in arr {
+            if !entry.is_string() {
+                return Err(bad_ir(path, "IR 'imports' entries must be strings"));
             }
         }
     }
@@ -122,7 +134,10 @@ fn collect_refs(v: &Json, states: &[String], refs: &mut HashSet<String>) {
         }
         Json::Object(o) => {
             for (key, value) in o {
-                if matches!(key.as_str(), "bind" | "when" | "target" | "valueFrom") {
+                if matches!(
+                    key.as_str(),
+                    "bind" | "when" | "target" | "valueFrom" | "into"
+                ) {
                     if let Some(name) = value.as_str() {
                         refs.insert(name.to_string());
                     }

@@ -1,0 +1,5 @@
+app Bad {
+  Button("Load") async {
+    await fetch("/todos", payload)
+  }
+}

@@ -1,0 +1,12 @@
+import "nested.opu"
+
+state payload = "idle"
+
+model Todo {
+  id: int primary
+  title: string
+}
+
+api "/todos" {
+  list Todo
+}

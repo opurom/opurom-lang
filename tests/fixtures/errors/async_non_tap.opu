@@ -1,0 +1,5 @@
+app Bad {
+  Column() async {
+    await delay(50)
+  }
+}

@@ -1,8 +1,8 @@
 use crate::diag::{DResult, Diagnostic};
 
-// R3 constructs are rejected at lex time so they can never be silently miscompiled.
-// v0.1 keywords keep their original diagnostic for compatibility; v0.2 help text is added.
-const RESERVED_V01: &[&str] = &["async", "await", "fn", "import"];
+// R4 promotes `async`, `await` and `import` to real syntax; `fn` stays reserved.
+// Other R3 constructs are rejected at lex time so they can never be silently miscompiled.
+const RESERVED_V01: &[&str] = &["fn"];
 const RESERVED_V02: &[&str] = &[
     "else",
     "component",

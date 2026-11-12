@@ -1,0 +1,8 @@
+app Cards {
+  state count = 0
+  theme {
+    mode: dark,
+    accent: "#FF4D6D",
+    radius: 8
+  }
+}

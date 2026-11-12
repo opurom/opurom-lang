@@ -1,0 +1,78 @@
+{
+  "app": "Counter",
+  "ir": "0.1",
+  "state": [
+    {
+      "init": 0,
+      "name": "count",
+      "type": "int"
+    }
+  ],
+  "theme": {
+    "accent": "#4F46E5",
+    "mode": "system",
+    "radius": 12
+  },
+  "tree": {
+    "children": [
+      {
+        "children": [],
+        "events": {},
+        "id": 1,
+        "kind": "Text",
+        "props": {
+          "size": 24,
+          "value": "Count: {count}"
+        }
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "events": {
+              "tap": {
+                "op": "add",
+                "target": "count",
+                "value": -1
+              }
+            },
+            "id": 3,
+            "kind": "Button",
+            "props": {
+              "label": "-"
+            }
+          },
+          {
+            "children": [],
+            "events": {
+              "tap": {
+                "op": "add",
+                "target": "count",
+                "value": 1
+              }
+            },
+            "id": 4,
+            "kind": "Button",
+            "props": {
+              "label": "+"
+            }
+          }
+        ],
+        "events": {},
+        "id": 2,
+        "kind": "Row",
+        "props": {
+          "gap": 8
+        }
+      }
+    ],
+    "events": {},
+    "id": 0,
+    "kind": "Column",
+    "props": {
+      "align": "center",
+      "gap": 8,
+      "padding": 16
+    }
+  }
+}

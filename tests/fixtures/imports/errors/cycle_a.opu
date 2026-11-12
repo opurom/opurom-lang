@@ -1,0 +1,5 @@
+import "cycle_b.opu"
+
+app CycleA {
+  Text("x")
+}

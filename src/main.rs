@@ -3,6 +3,7 @@ mod diag;
 mod emit;
 mod lexer;
 mod lower;
+mod modules;
 mod optimize;
 mod parser;
 mod wasm;
@@ -108,14 +109,14 @@ fn run() -> DResult<()> {
         }
         Some("components") => {
             let catalog = catalog::catalog()?;
-            if catalog.components.len() < 100 {
+            if catalog.components.len() != 116 {
                 return Err(Diagnostic::file(
                     "opuromc",
                     format!(
-                        "catalog has only {} components, expected >= 100",
+                        "catalog has {} components, expected 116",
                         catalog.components.len()
                     ),
-                    "update the vendored catalog in src/catalog.json",
+                    "sync the vendored catalog in src/catalog.json with opurom-spec",
                 ));
             }
             for c in &catalog.components {
