@@ -1,0 +1,105 @@
+mod diag;
+mod emit;
+mod lexer;
+mod lower;
+mod parser;
+
+use std::fs;
+use std::path::Path;
+
+use diag::{Diagnostic, DResult};
+
+const USAGE: &str = "usage: opuromc check <src.opu> | compile <src.opu> -o <out.opuir.json> | target <ir.json> --target <name> -o <dir> | targets";
+
+fn main() {
+    if let Err(e) = run() {
+        eprint!("{e}");
+        std::process::exit(1);
+    }
+}
+
+fn read_source(path: &str) -> DResult<String> {
+    fs::read_to_string(path).map_err(|e| {
+        Diagnostic::file(
+            path,
+            format!("cannot read source file: {e}"),
+            "check the path, the file encoding (UTF-8) and permissions",
+        )
+    })
+}
+
+fn flag_value(args: &[String], flag: &str) -> Option<String> {
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+}
+
+fn need<'a>(args: &'a [String], index: usize, what: &str) -> DResult<&'a str> {
+    args.get(index).map(String::as_str).ok_or_else(|| {
+        Diagnostic::file("opuromc", format!("missing {what}"), USAGE.to_string())
+    })
+}
+
+fn run() -> DResult<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("check") => {
+            let src_path = need(&args, 1, "source file for 'check'")?;
+            let src = read_source(src_path)?;
+            let _ = lower::compile_source(&src, src_path)?;
+            Ok(())
+        }
+        Some("compile") => {
+            let src_path = need(&args, 1, "source file for 'compile'")?;
+            let out = flag_value(&args[2..], "-o").ok_or_else(|| {
+                Diagnostic::file("opuromc", "compile needs '-o <out.opuir.json>'", USAGE.to_string())
+            })?;
+            let src = read_source(src_path)?;
+            let ir = lower::compile_source(&src, src_path)?;
+            let text = serde_json::to_string_pretty(&ir)
+                .map_err(|e| Diagnostic::file(src_path, format!("cannot serialize IR: {e}"), "report this compiler bug"))?
+                + "\n";
+            fs::write(&out, text).map_err(|e| {
+                Diagnostic::file(
+                    src_path,
+                    format!("cannot write {out}: {e}"),
+                    "check the -o path and permissions",
+                )
+            })?;
+            Ok(())
+        }
+        Some("target") => {
+            let ir_path = need(&args, 1, "IR file for 'target'")?;
+            let target = flag_value(&args[2..], "--target").ok_or_else(|| {
+                Diagnostic::file(
+                    "opuromc",
+                    "target needs '--target <name>' (try 'opuromc targets')",
+                    USAGE.to_string(),
+                )
+            })?;
+            let out = flag_value(&args[2..], "-o").ok_or_else(|| {
+                Diagnostic::file("opuromc", "target needs '-o <dir>'", USAGE.to_string())
+            })?;
+            let text = fs::read_to_string(ir_path).map_err(|e| {
+                Diagnostic::file(
+                    ir_path,
+                    format!("cannot read IR file: {e}"),
+                    "compile a .opu file with 'opuromc compile' first",
+                )
+            })?;
+            emit::emit(&target, &text, ir_path, Path::new(&out))
+        }
+        Some("targets") => {
+            for (name, artifacts) in emit::TARGETS {
+                println!("{name}\t{artifacts}");
+            }
+            Ok(())
+        }
+        _ => Err(Diagnostic::file(
+            "opuromc",
+            "missing or unknown subcommand",
+            USAGE.to_string(),
+        )),
+    }
+}

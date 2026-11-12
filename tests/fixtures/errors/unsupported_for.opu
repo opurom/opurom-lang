@@ -1,0 +1,3 @@
+app Bad {
+  for x in items { Text("x") }
+}

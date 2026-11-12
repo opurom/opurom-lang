@@ -1,0 +1,3 @@
+app Bad {
+  Fancy() { Text("x") }
+}

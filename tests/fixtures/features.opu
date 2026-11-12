@@ -1,0 +1,23 @@
+// Feature coverage for v0.1: comments, interpolation, escapes, all statement forms.
+app Features {
+  state count = 0
+  state flag = false
+  state name = "world"
+
+  Column(gap: 8, padding: 16, align: center) {
+    Text("Hello, {name}!", size: 24)
+    Text("Literal {{brace}} and {count}", color: "#334155")
+    Button("Reset") { count = 0 }
+    Button("Toggle") { flag.toggle() }
+    Button("Name") { name = "opurom" }
+    Input(placeholder: "Your name", bind: name)
+    Image(src: "logo.png", width: 64, height: 64)
+    Spacer(width: 8, height: 8)
+    Container(padding: 8, radius: 12, color: "#f1f5f9") {
+      Row(gap: 4) {
+        Button("-") { count -= 2 }
+        Button("+") { count += 2 }
+      }
+    }
+  }
+}

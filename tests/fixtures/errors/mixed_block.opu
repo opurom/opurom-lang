@@ -1,0 +1,3 @@
+app Bad {
+  Button("x") { Text("y") }
+}

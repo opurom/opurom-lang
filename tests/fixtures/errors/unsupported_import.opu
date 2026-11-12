@@ -1,0 +1,4 @@
+app Bad {
+  import "ui"
+  Text("x")
+}

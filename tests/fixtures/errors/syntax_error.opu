@@ -1,0 +1,3 @@
+app Bad {
+  state count = 0
+  Text("unclosed

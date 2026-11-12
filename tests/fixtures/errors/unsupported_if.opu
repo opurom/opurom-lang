@@ -1,0 +1,3 @@
+app Bad {
+  if true { Text("x") }
+}

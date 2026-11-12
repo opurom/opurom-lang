@@ -1,0 +1,3 @@
+app Bad {
+  fn go() { Text("x") }
+}

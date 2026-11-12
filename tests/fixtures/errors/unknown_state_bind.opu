@@ -1,0 +1,3 @@
+app Unknown {
+  Input(bind: nope)
+}
