@@ -1,0 +1,5 @@
+app Bad {
+  theme { mode: dark }
+  theme { radius: 8 }
+  Text("x")
+}

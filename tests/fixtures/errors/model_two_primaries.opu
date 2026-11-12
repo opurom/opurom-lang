@@ -1,0 +1,7 @@
+app Bad {
+  model Todo {
+    id: int primary
+    other: int primary
+  }
+  Text("x")
+}

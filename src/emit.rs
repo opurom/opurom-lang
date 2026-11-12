@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde_json::{json, Map as JsonMap, Value as Json};
 
-use crate::diag::{Diagnostic, DResult};
+use crate::diag::{DResult, Diagnostic};
 use crate::lower::{interp_parts, offset_pos, Part};
 use crate::parser::Pos;
 
@@ -17,22 +17,28 @@ pub const TARGETS: &[(&str, &str)] = &[
     ("douyin", "app.json, index.ttml, index.ttss, index.js"),
     ("baidu", "app.json, index.swan, index.css, index.js"),
     ("kuaishou", "app.json, index.ksml, index.css, index.js"),
+    (
+        "wasm",
+        "Cargo.toml, src/lib.rs, index.html, host.js, README.md",
+    ),
 ];
 
 #[derive(Clone)]
-struct EState {
-    name: String,
-    ty: String,
-    init: Json,
+pub struct EState {
+    pub name: String,
+    pub ty: String,
+    pub init: Json,
 }
 
 #[derive(Clone)]
-struct ENode {
-    id: u64,
-    kind: String,
-    props: JsonMap<String, Json>,
-    events: JsonMap<String, Json>,
-    children: Vec<ENode>,
+pub struct ENode {
+    pub id: u64,
+    pub kind: String,
+    pub props: JsonMap<String, Json>,
+    pub events: JsonMap<String, Json>,
+    pub children: Vec<ENode>,
+    /// Optional bool state that hides this node and its subtree.
+    pub when: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -48,6 +54,7 @@ struct Platform {
     markup_ext: &'static str,
     style_ext: &'static str,
     for_attr: &'static str,
+    cond_attr: &'static str,
     key_attr: &'static str,
     tap_attr: &'static str,
     input_attr: &'static str,
@@ -60,6 +67,7 @@ struct Platform {
 const PLATFORMS: &[Platform] = &[
     Platform {
         key: "wechat",
+        cond_attr: "wx:if",
         markup_ext: "wxml",
         style_ext: "wxss",
         for_attr: "wx:for",
@@ -73,6 +81,7 @@ const PLATFORMS: &[Platform] = &[
     },
     Platform {
         key: "alipay",
+        cond_attr: "a:if",
         markup_ext: "axml",
         style_ext: "acss",
         for_attr: "a:for",
@@ -86,6 +95,7 @@ const PLATFORMS: &[Platform] = &[
     },
     Platform {
         key: "qq",
+        cond_attr: "qq:if",
         markup_ext: "qml",
         style_ext: "qss",
         for_attr: "qq:for",
@@ -99,6 +109,7 @@ const PLATFORMS: &[Platform] = &[
     },
     Platform {
         key: "douyin",
+        cond_attr: "tt:if",
         markup_ext: "ttml",
         style_ext: "ttss",
         for_attr: "tt:for",
@@ -112,6 +123,7 @@ const PLATFORMS: &[Platform] = &[
     },
     Platform {
         key: "baidu",
+        cond_attr: "s-if",
         markup_ext: "swan",
         style_ext: "css",
         for_attr: "s-for",
@@ -125,6 +137,7 @@ const PLATFORMS: &[Platform] = &[
     },
     Platform {
         key: "kuaishou",
+        cond_attr: "ks:if",
         markup_ext: "ksml",
         style_ext: "css",
         for_attr: "ks:for",
@@ -138,7 +151,7 @@ const PLATFORMS: &[Platform] = &[
     },
 ];
 
-fn bad_ir(ir_path: &str, message: impl Into<String>) -> Diagnostic {
+pub fn bad_ir(ir_path: &str, message: impl Into<String>) -> Diagnostic {
     Diagnostic::file(
         ir_path,
         message,
@@ -159,23 +172,33 @@ fn read_node(v: &Json, ir_path: &str) -> DResult<ENode> {
         .and_then(Json::as_str)
         .ok_or_else(|| bad_ir(ir_path, "IR tree node is missing a string 'kind'"))?
         .to_string();
-    let props = o.get("props").and_then(Json::as_object).cloned().unwrap_or_default();
+    let props = o
+        .get("props")
+        .and_then(Json::as_object)
+        .cloned()
+        .unwrap_or_default();
     let events = o
         .get("events")
         .and_then(Json::as_object)
         .cloned()
         .unwrap_or_default();
-    let child_values = o.get("children").and_then(Json::as_array).cloned().unwrap_or_default();
+    let child_values = o
+        .get("children")
+        .and_then(Json::as_array)
+        .cloned()
+        .unwrap_or_default();
     let mut children = Vec::new();
     for c in &child_values {
         children.push(read_node(c, ir_path)?);
     }
+    let when = o.get("when").and_then(Json::as_str).map(str::to_string);
     Ok(ENode {
         id,
         kind,
         props,
         events,
         children,
+        when,
     })
 }
 
@@ -201,7 +224,7 @@ fn read_state(arr: &[Json], ir_path: &str) -> DResult<Vec<EState>> {
     Ok(out)
 }
 
-fn collect<'a>(n: &'a ENode, out: &mut Vec<&'a ENode>) {
+pub fn collect<'a>(n: &'a ENode, out: &mut Vec<&'a ENode>) {
     out.push(n);
     for c in &n.children {
         collect(c, out);
@@ -209,10 +232,7 @@ fn collect<'a>(n: &'a ENode, out: &mut Vec<&'a ENode>) {
 }
 
 fn prop_num(props: &JsonMap<String, Json>, key: &str, default: f64) -> f64 {
-    props
-        .get(key)
-        .and_then(Json::as_f64)
-        .unwrap_or(default)
+    props.get(key).and_then(Json::as_f64).unwrap_or(default)
 }
 
 fn prop_str(props: &JsonMap<String, Json>, key: &str, default: &str) -> String {
@@ -239,14 +259,16 @@ fn html_attr(s: &str) -> String {
 }
 
 fn markup_text(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn fmt_num(v: f64) -> String {
     format!("{v:.0}")
 }
 
-fn write(out: &Path, name: &str, content: &str, ir_path: &str) -> DResult<()> {
+pub fn write(out: &Path, name: &str, content: &str, ir_path: &str) -> DResult<()> {
     let p = out.join(name);
     if let Some(parent) = p.parent() {
         fs::create_dir_all(parent).map_err(|e| {
@@ -271,6 +293,14 @@ fn action_str<'a>(action: &'a Json, key: &str, ir_path: &str) -> DResult<&'a str
         .get(key)
         .and_then(Json::as_str)
         .ok_or_else(|| bad_ir(ir_path, format!("event action is missing string '{key}'")))
+}
+
+/// An event is either one action object (v0.1) or `{"actions":[...]}` (R2).
+pub fn event_actions(event: &Json) -> Vec<&Json> {
+    match event.get("actions").and_then(Json::as_array) {
+        Some(list) => list.iter().collect(),
+        None => vec![event],
+    }
 }
 
 fn interp_error(s: &str, off: usize, msg: String, ir_path: &str) -> Diagnostic {
@@ -329,7 +359,11 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
         .and_then(Json::as_str)
         .unwrap_or("App")
         .to_string();
-    let state_values = ir.get("state").and_then(Json::as_array).cloned().unwrap_or_default();
+    let state_values = ir
+        .get("state")
+        .and_then(Json::as_array)
+        .cloned()
+        .unwrap_or_default();
     let tree_value = ir
         .get("tree")
         .ok_or_else(|| bad_ir(ir_path, "IR is missing the 'tree' field"))?;
@@ -345,6 +379,7 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
     match target {
         "native" => emit_native(&app, &states, &tree, out, ir_path),
         "web" => emit_web(&ir, &app, &states, &tree, out, ir_path),
+        "wasm" => crate::wasm::emit_wasm(&app, &states, &tree, out, ir_path),
         _ => emit_mini(target, &app, &states, &tree, out, ir_path),
     }
 }
@@ -395,50 +430,54 @@ fn patch_value(states: &[EState], target: &str) -> String {
     }
 }
 
-fn native_action(
-    action: &Json,
-    states: &[EState],
-    ir_path: &str,
-) -> DResult<(String, String)> {
+fn native_action(action: &Json, states: &[EState], ir_path: &str) -> DResult<(String, String)> {
     let op = action_str(action, "op", ir_path)?;
     let target = action_str(action, "target", ir_path)?;
     let patch = format!(
-        "vec![Patch {{ name: {}, value: {} }}]",
+        "Patch {{ name: {}, value: {} }}",
         rust_str(target),
         patch_value(states, target)
     );
     let mutation = match op {
         "add" => {
-            let n = action
-                .get("value")
-                .and_then(Json::as_i64)
-                .ok_or_else(|| bad_ir(ir_path, "'add' action needs an integer 'value'"))?;
-            format!("_state.{target} += {n}i64;")
+            let rhs = match action.get("valueFrom").and_then(Json::as_str) {
+                Some(from) => format!("_state.{from}"),
+                None => {
+                    let n = action
+                        .get("value")
+                        .and_then(Json::as_i64)
+                        .ok_or_else(|| bad_ir(ir_path, "'add' action needs an integer 'value'"))?;
+                    format!("{n}i64")
+                }
+            };
+            format!("_state.{target} = _state.{target}.saturating_add({rhs});")
         }
         "toggle" => format!("_state.{target} = !_state.{target};"),
-        "set" => match action.get("value") {
-            Some(v) => {
-                let rhs = match state_ty(states, target) {
-                    "int" => format!("{}i64", v.as_i64().unwrap_or(0)),
-                    "bool" => v.as_bool().unwrap_or(false).to_string(),
-                    _ => format!("{}.to_string()", rust_str(v.as_str().unwrap_or(""))),
-                };
-                format!("_state.{target} = {rhs};")
-            }
-            None => match state_ty(states, target) {
-                "int" => format!(
-                    "_state.{target} = _input.unwrap_or(\"\").parse::<i64>().unwrap_or(0);"
-                ),
-                "bool" => format!("_state.{target} = _input.unwrap_or(\"\") == \"true\";"),
-                _ => format!("_state.{target} = _input.unwrap_or(\"\").to_string();"),
+        "set" => match action.get("valueFrom").and_then(Json::as_str) {
+            Some(from) => match state_ty(states, target) {
+                "int" => format!("_state.{target} = _state.{from};"),
+                "bool" => format!("_state.{target} = _state.{from};"),
+                _ => format!("_state.{target} = _state.{from}.clone();"),
+            },
+            None => match action.get("value") {
+                Some(v) => {
+                    let rhs = match state_ty(states, target) {
+                        "int" => format!("{}i64", v.as_i64().unwrap_or(0)),
+                        "bool" => v.as_bool().unwrap_or(false).to_string(),
+                        _ => format!("{}.to_string()", rust_str(v.as_str().unwrap_or(""))),
+                    };
+                    format!("_state.{target} = {rhs};")
+                }
+                None => match state_ty(states, target) {
+                    "int" => format!(
+                        "_state.{target} = _input.unwrap_or(\"\").parse::<i64>().unwrap_or(0);"
+                    ),
+                    "bool" => format!("_state.{target} = _input.unwrap_or(\"\") == \"true\";"),
+                    _ => format!("_state.{target} = _input.unwrap_or(\"\").to_string();"),
+                },
             },
         },
-        _ => {
-            return Err(bad_ir(
-                ir_path,
-                format!("unknown event op '{op}'"),
-            ))
-        }
+        _ => return Err(bad_ir(ir_path, format!("unknown event op '{op}'"))),
     };
     Ok((mutation, patch))
 }
@@ -454,16 +493,29 @@ fn native_source(app: &str, states: &[EState], tree: &ENode, ir_path: &str) -> D
         s.push_str(&format!("    {}: {},\n", st.name, rust_ty(&st.ty)));
     }
     s.push_str("}\n\nstruct Patch {\n    name: &'static str,\n    value: String,\n}\n\n");
-    s.push_str("fn apply(_state: &mut State, event_node_id: u32, _input: Option<&str>) -> Vec<Patch> {\n");
+    s.push_str(
+        "fn apply(_state: &mut State, event_node_id: u32, _input: Option<&str>) -> Vec<Patch> {\n",
+    );
     s.push_str("    match (event_node_id, _input.is_some()) {\n");
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
     for n in &nodes {
         for (event, is_input) in [("tap", false), ("input", true)] {
             if let Some(action) = n.events.get(event) {
-                let (mutation, patch) = native_action(action, states, ir_path)?;
+                let mut body = String::new();
+                let mut patches = Vec::new();
+                for one in event_actions(action) {
+                    let (mutation, patch) = native_action(one, states, ir_path)?;
+                    body.push_str(&format!("            {mutation}\n"));
+                    patches.push(patch);
+                }
+                let patch_expr = if patches.is_empty() {
+                    "Vec::new()".to_string()
+                } else {
+                    format!("vec![{}]", patches.join(", "))
+                };
                 s.push_str(&format!(
-                    "        ({}, {}) => {{\n            {mutation}\n            {patch}\n        }}\n",
+                    "        ({}, {}) => {{\n{body}            {patch_expr}\n        }}\n",
                     n.id, is_input
                 ));
             }
@@ -620,8 +672,7 @@ fn layout(n: &ENode, x: f64, y: f64, boxes: &mut HashMap<u64, Box2>) -> Box2 {
 }
 
 fn js_interp(s: &str, ir_path: &str) -> DResult<String> {
-    let parts = interp_parts(s)
-        .map_err(|(off, msg)| interp_error(s, off, msg, ir_path))?;
+    let parts = interp_parts(s).map_err(|(off, msg)| interp_error(s, off, msg, ir_path))?;
     let mut exprs = Vec::new();
     for part in parts {
         match part {
@@ -642,6 +693,9 @@ fn draw_node(
     out: &mut String,
     ir_path: &str,
 ) -> DResult<()> {
+    if let Some(cond) = &n.when {
+        out.push_str(&format!("  if (state.{cond}) {{\n"));
+    }
     let zero = Box2 {
         x: 0.0,
         y: 0.0,
@@ -679,16 +733,100 @@ fn draw_node(
                 "  ctx.strokeStyle = \"#94a3b8\";\n  ctx.strokeRect({x}, {y}, {w}, {h});\n  ctx.fillStyle = \"#64748b\";\n  ctx.font = \"14px sans-serif\";\n  ctx.fillText(\"[image]\", {x} + 6, {y} + 6);\n"
             ));
         }
-        "Container" => {
+        "Container" | "Card" | "Dialog" | "List" | "Grid" | "Scroll" => {
             let color = js_lit(&Json::String(prop_str(&n.props, "color", "#f1f5f9")));
-            out.push_str(&format!("  ctx.fillStyle = {color};\n  ctx.fillRect({x}, {y}, {w}, {h});\n"));
+            out.push_str(&format!(
+                "  ctx.fillStyle = {color};\n  ctx.fillRect({x}, {y}, {w}, {h});\n"
+            ));
         }
-        _ => {}
+        "Badge" | "Avatar" | "Icon" => {
+            let label = fallback_label(n);
+            out.push_str(&format!(
+                "  ctx.fillStyle = \"#334155\";\n  ctx.font = \"14px sans-serif\";\n  ctx.fillText({label}, {x} + 6, {y} + 6);\n"
+            ));
+        }
+        "Divider" | "Spinner" => {
+            out.push_str(&format!(
+                "  ctx.strokeStyle = \"#cbd5e1\";\n  ctx.beginPath();\n  ctx.moveTo({x}, {y} + {h} / 2);\n  ctx.lineTo({x} + {w}, {y} + {h} / 2);\n  ctx.stroke();\n"
+            ));
+        }
+        "Progress" => {
+            let value = fmt_num(prop_num(&n.props, "value", 0.0).clamp(0.0, 100.0));
+            out.push_str(&format!(
+                "  ctx.fillStyle = \"#e2e8f0\";\n  ctx.fillRect({x}, {y}, {w}, {h});\n  ctx.fillStyle = \"#4F46E5\";\n  ctx.fillRect({x}, {y}, {w} * {value} / 100, {h});\n"
+            ));
+        }
+        "Switch" | "Checkbox" => {
+            let bind = prop_str(&n.props, "bind", "");
+            out.push_str(&format!(
+                "  ctx.strokeStyle = \"#94a3b8\";\n  ctx.strokeRect({x}, {y}, {h}, {h});\n  if (state.{bind}) {{ ctx.fillStyle = \"#4F46E5\"; ctx.fillRect({x} + 3, {y} + 3, {h} - 6, {h} - 6); }}\n"
+            ));
+        }
+        "Slider" => {
+            let bind = prop_str(&n.props, "bind", "");
+            let min = fmt_num(prop_num(&n.props, "min", 0.0));
+            let max = fmt_num(prop_num(&n.props, "max", 100.0));
+            out.push_str(&format!(
+                "  ctx.strokeStyle = \"#cbd5e1\";\n  ctx.beginPath();\n  ctx.moveTo({x}, {y} + {h} / 2);\n  ctx.lineTo({x} + {w}, {y} + {h} / 2);\n  ctx.stroke();\n  ctx.fillStyle = \"#4F46E5\";\n  ctx.beginPath();\n  ctx.arc({x} + {w} * (state.{bind} - ({min})) / (({max}) - ({min})), {y} + {h} / 2, 6, 0, 6.283185307179586);\n  ctx.fill();\n"
+            ));
+        }
+        "Radio" => {
+            let bind = prop_str(&n.props, "bind", "");
+            let label = js_lit(
+                &n.props
+                    .get("value")
+                    .cloned()
+                    .unwrap_or(Json::String(String::new())),
+            );
+            out.push_str(&format!(
+                "  ctx.strokeStyle = \"#94a3b8\";\n  ctx.beginPath();\n  ctx.arc({x} + {h} / 2, {y} + {h} / 2, {h} / 2 - 2, 0, 6.283185307179586);\n  ctx.stroke();\n  if (state.{bind} === {label}) {{ ctx.fillStyle = \"#4F46E5\"; ctx.fill(); }}\n"
+            ));
+        }
+        "Tabs" => {
+            let labels = prop_str(&n.props, "labels", "");
+            let bind = prop_str(&n.props, "bind", "");
+            let label = js_lit(&Json::String(labels));
+            out.push_str(&format!(
+                "  ctx.fillStyle = \"#334155\";\n  ctx.font = \"14px sans-serif\";\n  ctx.fillText({label}, {x} + 6, {y} + 6);\n  if (state.{bind}) {{ ctx.fillStyle = \"#4F46E5\"; ctx.fillRect({x}, {y} + {h} - 3, {w}, 3); }}\n"
+            ));
+        }
+        // Documented fallback: an unknown kind renders as a Container or Text.
+        _ => {
+            let label = fallback_label(n);
+            if !label.is_empty() {
+                out.push_str(&format!(
+                    "  ctx.fillStyle = \"#334155\";\n  ctx.font = \"14px sans-serif\";\n  ctx.fillText({label}, {x} + 6, {y} + 6);\n"
+                ));
+            }
+        }
     }
     for child in &n.children {
         draw_node(child, boxes, out, ir_path)?;
     }
+    if n.when.is_some() {
+        out.push_str("  }\n");
+    }
     Ok(())
+}
+
+/// A node kind a consumer does not know is rendered as its label/value/title/name.
+fn fallback_label(n: &ENode) -> String {
+    for key in ["label", "value", "title", "name"] {
+        if let Some(Json::String(s)) = n.props.get(key) {
+            return js_lit(&Json::String(s.clone()));
+        }
+    }
+    "\"\"".to_string()
+}
+
+/// The text a fallback rendering shows for a node kind.
+fn fallback_text(n: &ENode) -> String {
+    for key in ["label", "value", "title", "name"] {
+        if let Some(Json::String(s)) = n.props.get(key) {
+            return s.clone();
+        }
+    }
+    String::new()
 }
 
 fn js_action(action: &Json, ir_path: &str) -> DResult<String> {
@@ -696,19 +834,41 @@ fn js_action(action: &Json, ir_path: &str) -> DResult<String> {
     let target = action_str(action, "target", ir_path)?;
     Ok(match op {
         "add" => {
-            let n = action
-                .get("value")
-                .and_then(Json::as_i64)
-                .ok_or_else(|| bad_ir(ir_path, "'add' action needs an integer 'value'"))?;
-            format!("state.{target} += {n};")
+            let rhs = match action.get("valueFrom").and_then(Json::as_str) {
+                Some(from) => format!("state.{from}"),
+                None => {
+                    let n = action
+                        .get("value")
+                        .and_then(Json::as_i64)
+                        .ok_or_else(|| bad_ir(ir_path, "'add' action needs an integer 'value'"))?;
+                    n.to_string()
+                }
+            };
+            format!("state.{target} += {rhs};")
         }
         "toggle" => format!("state.{target} = !state.{target};"),
-        "set" => {
-            let v = action.get("value").cloned().unwrap_or(Json::String(String::new()));
-            format!("state.{target} = {};", js_lit(&v))
-        }
+        "set" => match action.get("valueFrom").and_then(Json::as_str) {
+            Some(from) => format!("state.{target} = state.{from};"),
+            None => {
+                let v = action
+                    .get("value")
+                    .cloned()
+                    .unwrap_or(Json::String(String::new()));
+                format!("state.{target} = {};", js_lit(&v))
+            }
+        },
         _ => return Err(bad_ir(ir_path, format!("unknown event op '{op}'"))),
     })
+}
+
+/// One statement per action; a chain is a sequence of statements.
+fn js_action_chain(event: &Json, ir_path: &str) -> DResult<String> {
+    let mut code = String::new();
+    for action in event_actions(event) {
+        code.push_str(&js_action(action, ir_path)?);
+        code.push('\n');
+    }
+    Ok(code)
 }
 
 fn emit_web(
@@ -743,9 +903,9 @@ fn emit_web(
     let mut input_listeners = String::new();
     for n in &nodes {
         if let Some(action) = n.events.get("tap") {
-            let code = js_action(action, ir_path)?;
+            let code = js_action_chain(action, ir_path)?;
             tap_arms.push_str(&format!(
-                "  if (id === {}) {{ {} render(); return; }}\n",
+                "  if (id === {}) {{ {}  render(); return; }}\n",
                 n.id, code
             ));
             if n.kind == "Button" {
@@ -842,15 +1002,18 @@ fn style_of(props: &JsonMap<String, Json>, background: bool) -> String {
         }
     }
     if let Some(Json::String(c)) = props.get("color") {
-        let key = if background { "background-color" } else { "color" };
+        let key = if background {
+            "background-color"
+        } else {
+            "color"
+        };
         parts.push(format!("{key}:{c}"));
     }
     parts.join(";")
 }
 
 fn markup_interp(s: &str, p: &Platform, ir_path: &str) -> DResult<String> {
-    let parts = interp_parts(s)
-        .map_err(|(off, msg)| interp_error(s, off, msg, ir_path))?;
+    let parts = interp_parts(s).map_err(|(off, msg)| interp_error(s, off, msg, ir_path))?;
     let mut out = String::new();
     for part in parts {
         match part {
@@ -884,11 +1047,15 @@ fn markup_node(
     } else {
         format!(" style=\"{}\"", html_attr(&style))
     };
+    let cond_attr = match &n.when {
+        Some(name) => format!(" {}=\"{{{{{name}}}}}\"", p.cond_attr),
+        None => String::new(),
+    };
     match n.kind.as_str() {
         "Text" => {
             let value = markup_interp(&prop_str(&n.props, "value", ""), p, ir_path)?;
             out.push_str(&format!(
-                "{pad}<text class=\"n{id}\"{style_attr}>{value}</text>\n"
+                "{pad}<text class=\"n{id}\"{style_attr}{cond_attr}>{value}</text>\n"
             ));
         }
         "Button" => {
@@ -899,7 +1066,7 @@ fn markup_node(
                 String::new()
             };
             out.push_str(&format!(
-                "{pad}<button class=\"n{id}\"{style_attr}{tap}>{label}</button>\n"
+                "{pad}<button class=\"n{id}\"{style_attr}{cond_attr}{tap}>{label}</button>\n"
             ));
         }
         "Input" => {
@@ -915,24 +1082,42 @@ fn markup_node(
                 String::new()
             };
             out.push_str(&format!(
-                "{pad}<input class=\"n{id}\"{style_attr} placeholder=\"{placeholder}\"{value}{input} />\n"
+                "{pad}<input class=\"n{id}\"{style_attr}{cond_attr} placeholder=\"{placeholder}\"{value}{input} />\n"
             ));
         }
         "Image" => {
             let src = html_attr(&prop_str(&n.props, "src", ""));
             out.push_str(&format!(
-                "{pad}<image class=\"n{id}\"{style_attr} src=\"{src}\" />\n"
+                "{pad}<image class=\"n{id}\"{style_attr}{cond_attr} src=\"{src}\" />\n"
             ));
         }
         "Spacer" => {
             out.push_str(&format!(
-                "{pad}<view class=\"spacer n{id}\"{style_attr}></view>\n"
+                "{pad}<view class=\"spacer n{id}\"{style_attr}{cond_attr}></view>\n"
+            ));
+        }
+        "Badge" | "Avatar" | "Icon" | "Progress" | "Switch" | "Slider" | "Checkbox" | "Radio"
+        | "Tabs" => {
+            let label = markup_text(&fallback_text(n));
+            let tap = if n.events.contains_key("tap") {
+                format!(" {}=\"onTap{id}\"", p.tap_attr)
+            } else {
+                String::new()
+            };
+            out.push_str(&format!(
+                "{pad}<view class=\"n{id}\"{style_attr}{cond_attr}{tap}><text>{label}</text></view>\n"
+            ));
+        }
+        "Divider" | "Spinner" => {
+            out.push_str(&format!(
+                "{pad}<view class=\"n{id}\"{style_attr}{cond_attr}></view>\n"
             ));
         }
         kind => {
+            // Documented fallback: an unknown kind renders as a Container.
             let cls = if kind == "Row" { "row" } else { "col" };
             out.push_str(&format!(
-                "{pad}<view class=\"{cls} n{id}\"{style_attr}>\n"
+                "{pad}<view class=\"{cls} n{id}\"{style_attr}{cond_attr}>\n"
             ));
             for child in &n.children {
                 markup_node(child, p, depth + 1, out, ir_path)?;
@@ -949,19 +1134,41 @@ fn mini_action(action: &Json, p: &Platform, ir_path: &str) -> DResult<String> {
     let set = &p.state_set;
     Ok(match op {
         "add" => {
-            let n = action
-                .get("value")
-                .and_then(Json::as_i64)
-                .ok_or_else(|| bad_ir(ir_path, "'add' action needs an integer 'value'"))?;
-            format!("this.{set}({{\"{target}\": this.data.{target} + ({n})}});")
+            let rhs = match action.get("valueFrom").and_then(Json::as_str) {
+                Some(from) => format!("this.data.{from}"),
+                None => {
+                    let n = action
+                        .get("value")
+                        .and_then(Json::as_i64)
+                        .ok_or_else(|| bad_ir(ir_path, "'add' action needs an integer 'value'"))?;
+                    n.to_string()
+                }
+            };
+            format!("this.{set}({{\"{target}\": this.data.{target} + ({rhs})}});")
         }
         "toggle" => format!("this.{set}({{\"{target}\": !this.data.{target}}});"),
-        "set" => {
-            let v = action.get("value").cloned().unwrap_or(Json::String(String::new()));
-            format!("this.{set}({{\"{target}\": {}}});", js_lit(&v))
-        }
+        "set" => match action.get("valueFrom").and_then(Json::as_str) {
+            Some(from) => format!("this.{set}({{\"{target}\": this.data.{from}}});"),
+            None => {
+                let v = action
+                    .get("value")
+                    .cloned()
+                    .unwrap_or(Json::String(String::new()));
+                format!("this.{set}({{\"{target}\": {}}});", js_lit(&v))
+            }
+        },
         _ => return Err(bad_ir(ir_path, format!("unknown event op '{op}'"))),
     })
+}
+
+/// A chain is a sequence of statements, executed in order.
+fn mini_action_chain(event: &Json, p: &Platform, ir_path: &str) -> DResult<String> {
+    let mut code = String::new();
+    for action in event_actions(event) {
+        code.push_str(&mini_action(action, p, ir_path)?);
+        code.push(' ');
+    }
+    Ok(code)
 }
 
 fn emit_mini(
@@ -987,7 +1194,10 @@ fn emit_mini(
     write(out, "app.json", &(app_json + "\n"), ir_path)?;
 
     let mut markup = String::new();
-    markup.push_str(&format!("<!-- Generated by opuromc for {}; no IR interpreter. -->\n", p.key));
+    markup.push_str(&format!(
+        "<!-- Generated by opuromc for {}; no IR interpreter. -->\n",
+        p.key
+    ));
     markup_node(tree, p, 0, &mut markup, ir_path)?;
     let keys = bind_expr(p, "__stateKeys");
     let item = bind_expr(p, "item");
@@ -995,12 +1205,7 @@ fn emit_mini(
         "<view class=\"state\" {}=\"{}\" {}=\"*this\"><text>{}</text></view>\n",
         p.for_attr, keys, p.key_attr, item
     ));
-    write(
-        out,
-        &format!("index.{}", p.markup_ext),
-        &markup,
-        ir_path,
-    )?;
+    write(out, &format!("index.{}", p.markup_ext), &markup, ir_path)?;
 
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
@@ -1025,7 +1230,7 @@ fn emit_mini(
     let mut methods = String::new();
     for n in &nodes {
         if let Some(action) = n.events.get("tap") {
-            let code = mini_action(action, p, ir_path)?;
+            let code = mini_action_chain(action, p, ir_path)?;
             methods.push_str(&format!("  onTap{}: function () {{ {} }},\n", n.id, code));
         }
         if let Some(action) = n.events.get("input") {

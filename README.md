@@ -6,14 +6,21 @@ The language/compiler workstream of OPUROM. An independent Rust 1.99.1 crate (st
 **No target ships a runtime IR interpreter**: every emitter writes straight-line code from the
 tree.
 
-## Grammar summary (LANG_SPEC v0.1)
+## Grammar summary (LANG_SPEC v0.1 + LANG_R2_ADDENDUM)
 
 ```ebnf
-program    = "app" IDENT "{" { state_decl | node } "}" ;
+program    = "app" IDENT "{" { state_decl | model_decl | api_decl | theme_decl | node } "}" ;
 state_decl = "state" IDENT "=" literal [";"] ;
-node       = KIND [ "(" [ args ] ")" ] [ ";" | "{" { node | statement } "}" ] ;
+model_decl = "model" IDENT "{" { field_decl } "}" ;
+field_decl = IDENT ":" ( "int" | "string" | "bool" ) [ "primary" ] [ "=" literal ] [";"] ;
+api_decl   = "api" STRING "{" { handler_decl } "}" ;
+handler_decl = ( "list" | "get" | "create" | "update" | "delete" ) IDENT [";"] ;
+theme_decl = "theme" "{" ( "mode" | "accent" | "radius" ) ":" value { "," } "}" ;
+node       = KIND [ "(" [ args ] ")" ] [ ";" | "{" { node | statement } "}" ]
+           | "if" "(" IDENT ")" "{" { node } "}"
+           | "for" "(" IDENT "in" INT ")" "{" { node } "}" ;
 args       = ( IDENT ":" value | value ) { "," ... } [ "," ] ;
-value      = INT | STRING | BOOL | IDENT ;
+value      = INT | FLOAT | STRING | BOOL | IDENT ;
 statement  = IDENT ( "+=" | "-=" | "=" ) expr [";"]
            | IDENT "." "toggle" "(" ")" [";"] ;
 expr       = literal | IDENT ;
@@ -21,15 +28,63 @@ expr       = literal | IDENT ;
 
 - UTF-8, `.opu` extension, `//` line comments, insignificant whitespace (a newline is a valid
   node terminator, so `;` is optional).
-- Kinds: `Column`, `Row`, `Container` (children), `Text` (`value`), `Button` (`label` + one tap
-  statement), `Input` (`placeholder`, `bind`), `Image` (`src`), `Spacer`. `Text("x")` and
-  `Button("OK")` are the positional forms of `Text(value: "x")` / `Button(label: "OK")`.
+- Kinds: the eight v0.1 kinds (`Column`, `Row`, `Container`, `Text`, `Button`, `Input`, `Image`,
+  `Spacer`) plus the sixteen R2 kinds (`Card`, `Divider`, `Icon`, `Badge`, `Progress`, `Switch`,
+  `Slider`, `Checkbox`, `Radio`, `Dialog`, `Tabs`, `List`, `Grid`, `Scroll`, `Avatar`, `Spinner`).
+  `Text("x")` and `Button("OK")` are the positional forms of `Text(value: "x")` /
+  `Button(label: "OK")`.
 - Types are inferred from the initializer: `int` (i64), `bool`, `string`. `Text` values
   interpolate `{name}` against state; `{{` is a literal `{` (and `}}` a literal `}`).
 - `Input(bind: name)` lowers to an `input` event whose `set` action omits `value`; the runtime
   supplies the string.
-- `async`, `await`, `if`, `for`, `fn`, `import` are rejected with a
-  "not yet supported in v0.1" diagnostic.
+- `async`, `await`, `fn`, `import`, `else` are rejected with a "not yet supported" diagnostic.
+
+### R2 language features
+
+| Feature | Source | IR |
+| --- | --- | --- |
+| Multi-statement handler | `Button("+2") { count += 1; count += 1 }` | `{"actions":[...]}` |
+| State-to-state action | `Button("copy") { a = b }` | `{"op":"set","target":"a","valueFrom":"b"}` |
+| Conditional UI | `if (dark) { Text("...") }` | `"when": "dark"` on each direct child |
+| Compile-time repetition | `for (i in 3) { Text("Item {i}") }` | unrolled nodes, consecutive ids |
+| Theme block | `theme { mode: dark, accent: "#FF4D6D", radius: 8 }` | `IR.theme` |
+| Atomic shortcuts | `p` / `m` / `bg` / `rounded` | `padding` / `margin` / `color` / `radius` |
+| Visual props | `shadow`, `gradient`, `glass`, `opacity`, `border`, `animate` | passed through |
+
+`for` counts are limited to 0..64; colors are `#RRGGBB`; `opacity` is 0..1; `shadow` is 0..8.
+
+### Full-stack syntax (FULLSTACK_SPEC)
+
+```opu
+app TodoApp {
+  model Todo {
+    id: int primary
+    title: string
+    done: bool = false
+  }
+
+  api "/todos" {
+    list Todo
+    create Todo
+  }
+
+  api "/todos/:id" {
+    get Todo
+    update Todo
+    delete Todo
+  }
+
+  state remaining = 0
+  Column(p: 16) {
+    Text("Remaining: {remaining}")
+    Button("Refresh") { remaining += 1 }
+  }
+}
+```
+
+`model`/`api` lower to the additive top-level IR arrays `models` and `api` (see
+[FULLSTACK_SPEC](../opurom-spec/FULLSTACK_SPEC.md) §2). The arrays appear **only** when the
+source declares them: a UI-only program keeps byte-identical v0.1 IR. `ir` stays `"0.1"`.
 
 Diagnostics go to stderr as `path:line:col: error: message` plus a `  help: ...` line; exit code
 1 on any error, 0 on success. `check` is diagnostics-only (no stdout, no files).
@@ -40,7 +95,8 @@ Diagnostics go to stderr as `path:line:col: error: message` plus a `  help: ...`
 opuromc check <src.opu>                                   # diagnostics only
 opuromc compile <src.opu> -o <out.opuir.json>             # lex -> parse -> typecheck -> IR
 opuromc target <ir.json> --target <name> -o <dir>         # lower IR into target source
-opuromc targets                                           # list all 8 targets
+opuromc targets                                           # list all 9 targets
+opuromc --version                                         # 0.2.0
 ```
 
 The compiler emits node ids pre-order from 0, keeps numeric props as JSON numbers, puts
@@ -61,53 +117,69 @@ The compiler emits node ids pre-order from 0, keeps numeric props as JSON number
 | `douyin` | `app.json`, `index.ttml`, `index.ttss`, `index.js` | `tt:for`, `bindtap`/`bindinput`, `setData` |
 | `baidu` | `app.json`, `index.swan`, `index.css`, `index.js` | `s-for`, `bindtap`/`bindinput`, `setData` |
 | `kuaishou` | `app.json`, `index.ksml`, `index.css`, `index.js` | `ks:for`, `bindtap`/`bindinput`, `setData` |
+| `wasm` | `Cargo.toml`, `src/lib.rs`, `index.html`, `host.js`, `README.md` | std-only `cdylib` for `wasm32-unknown-unknown` with the C ABI of [WASM_ABI](../opurom-spec/WASM_ABI.md): `opu_version`, `opu_state_len`, `opu_state`, `opu_tap`, `opu_input` |
 
 The six mini-program targets share one lowering pass and one small per-platform table
 (extensions, loop/key directives, tap/input directives, state-set API, window title key and
 binding delimiters). Web and mini emitters generate code, not an IR parser.
+
+All emitters understand the R2 IR: an event is one action object or an `actions` array, an
+action may read another state through `valueFrom`, a node may carry `when`, and a node kind a
+consumer does not know renders as a `Container` (with children) or a `Text`
+(label/value/title/name) — the documented fallback, not an error.
 
 ## Verify
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
 cd /Users/mac/work/opurom/opurom-lang
-cargo test --offline                 # 10 integration tests
+cargo test --offline                 # 16 integration tests
 RUSTFLAGS="-D warnings" cargo test --offline   # zero compiler warnings
 ```
 
-The test harness drives the CLI binary from `tests/fixtures/` (21 negative fixtures covering
-every error class), compares the golden IR with deep equality, checks `node --check` on web +
-six mini `index.js`/`app.js` files, and runs `cargo build --release --offline` inside the
-generated native crate followed by a piped-stdin session.
+The test harness drives the CLI binary from `tests/fixtures/`, compares the golden IR with deep
+equality, checks `node --check` on web + six mini `index.js`/`app.js` files plus the wasm
+`host.js`, runs `cargo build --release --offline` inside the generated native crate followed by
+a piped-stdin session, and builds the generated wasm crate for `wasm32-unknown-unknown` before
+instantiating it in Node's `WebAssembly` runtime with an empty import object.
 
 ## Honest status
 
 **Verified in this round**
 
-- `cargo test --offline`: 10/10 tests pass, including the golden `counter.opu` →
+- `cargo test --offline`: 16/16 tests pass, including the golden `counter.opu` →
   `counter.opuir.json` parsed-JSON deep-equality assertion.
-- 21 negative fixtures: duplicate state, unknown state in events/interpolation/`bind`,
-  add/toggle type misuse, assignment mismatch, unknown node kind/prop, missing required prop,
-  syntax errors, mixed blocks and all five v0.2 keywords. No panics, no stack traces.
-- Every generated JS file passes `node --check` (web + 6 mini targets); `opuromc targets`
-  lists all 8 targets.
+- UI-only programs (`counter.opu`, `profile.opu`) compile to **byte-identical** IR compared
+  with the R1 compiler; no empty `models`/`api` arrays are added.
+- 36 negative fixtures: the 21 v0.1 classes plus the R2 classes (model type, two primaries,
+  default mismatch, duplicate model, unknown api model, unknown handler verb, missing path
+  parameter, `else`, `for` count > 64, bad color, opacity/shadow range, `valueFrom` type
+  mismatch, non-bool `when`, duplicate theme, unknown theme key, unknown animate value). No
+  panics, no stack traces.
+- The wasm target builds with `cargo build --release --target wasm32-unknown-unknown` and the
+  `.wasm` instantiates in Node with an empty import object; `opu_version() == 1`,
+  `opu_state(0) == init`, `opu_tap(plus) == 1`, `opu_state(0) == init + 1`.
+- Every generated JS file passes `node --check` (web + 6 mini + wasm host); `opuromc targets`
+  lists all 9 targets.
 - Generated native output builds warning-free with `cargo build --release` and runs with piped
   stdin (`state ...` and `patch ...` lines verified).
 - `RUSTFLAGS="-D warnings" cargo test --offline` is clean.
 
 **Planned / not verified (later rounds)**
 
-- WASM emitter + wasm32 build, GPU/ANGLE/Metal/Vulkan backend, LSP + debugger, animation and
-  theme DSL, custom components, units/tokens, plugin sandboxing, perf harness — R2+.
-- `async`/`await`, `if`/`for` in UI, `fn`, modules/imports: rejected by design in v0.1.
-- Event expressions that read another state (`a = b`, `a += b`) are rejected with a friendly
-  v0.1 diagnostic: IR v0.1 has no dynamic-expression action. Literal `set`/`add` are supported.
-- A Button tap block holds exactly one statement; container blocks cannot hold statements.
-  Multiple top-level nodes are wrapped in a synthesized `Column` root (id 0).
+- GPU/ANGLE/Metal/Vulkan backend, LSP + debugger, custom components, plugin sandboxing,
+  perf harness — R3+.
+- `async`/`await`, `fn`, modules/imports, `else`: rejected by design.
+- Event handlers with local variables and list-valued state are out of scope for R2.
+- The wasm host renders with Canvas 2D and forwards taps; there is no DOM/WASM hybrid
+  rendering, no SIMD, no threads and no startup benchmark (R3+ per WASM_ABI.md).
+- Bool and string states live in the wasm host as a mirror (`host.js`); only int states cross
+  the ABI in R2.
 - Web target: Canvas 2D draws every node, and `Input` is also exposed as a DOM `<input>` for
   keyboard events. Only `node --check` is verified; no browser/DOM automation runs here.
 - Mini-program markup is verified at the syntax/artifact level only (files, directives,
   `node --check` on generated JS). No simulator or device conformance runs, no pixel golden
   hash (that contract belongs to `opurom-render`).
 - Native target is a std-only command loop with state + patches; it has no renderer or widgets.
-- Theme is always the compiler default; source theme syntax is v0.2.
+- The `models`/`api` IR arrays are consumed by `opurom-server` and `opurom-db`; this crate only
+  produces them.

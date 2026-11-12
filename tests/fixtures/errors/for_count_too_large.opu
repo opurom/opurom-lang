@@ -1,0 +1,5 @@
+app Bad {
+  for (i in 65) {
+    Text("Item {i}")
+  }
+}

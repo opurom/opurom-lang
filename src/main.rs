@@ -3,13 +3,15 @@ mod emit;
 mod lexer;
 mod lower;
 mod parser;
+mod wasm;
 
 use std::fs;
 use std::path::Path;
 
-use diag::{Diagnostic, DResult};
+use diag::{DResult, Diagnostic};
 
-const USAGE: &str = "usage: opuromc check <src.opu> | compile <src.opu> -o <out.opuir.json> | target <ir.json> --target <name> -o <dir> | targets";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const USAGE: &str = "usage: opuromc check <src.opu> | compile <src.opu> -o <out.opuir.json> | target <ir.json> --target <name> -o <dir> | targets | --version";
 
 fn main() {
     if let Err(e) = run() {
@@ -36,14 +38,18 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
 }
 
 fn need<'a>(args: &'a [String], index: usize, what: &str) -> DResult<&'a str> {
-    args.get(index).map(String::as_str).ok_or_else(|| {
-        Diagnostic::file("opuromc", format!("missing {what}"), USAGE.to_string())
-    })
+    args.get(index)
+        .map(String::as_str)
+        .ok_or_else(|| Diagnostic::file("opuromc", format!("missing {what}"), USAGE.to_string()))
 }
 
 fn run() -> DResult<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("--version") | Some("-V") => {
+            println!("opuromc {VERSION}");
+            Ok(())
+        }
         Some("check") => {
             let src_path = need(&args, 1, "source file for 'check'")?;
             let src = read_source(src_path)?;
@@ -53,13 +59,21 @@ fn run() -> DResult<()> {
         Some("compile") => {
             let src_path = need(&args, 1, "source file for 'compile'")?;
             let out = flag_value(&args[2..], "-o").ok_or_else(|| {
-                Diagnostic::file("opuromc", "compile needs '-o <out.opuir.json>'", USAGE.to_string())
+                Diagnostic::file(
+                    "opuromc",
+                    "compile needs '-o <out.opuir.json>'",
+                    USAGE.to_string(),
+                )
             })?;
             let src = read_source(src_path)?;
             let ir = lower::compile_source(&src, src_path)?;
-            let text = serde_json::to_string_pretty(&ir)
-                .map_err(|e| Diagnostic::file(src_path, format!("cannot serialize IR: {e}"), "report this compiler bug"))?
-                + "\n";
+            let text = serde_json::to_string_pretty(&ir).map_err(|e| {
+                Diagnostic::file(
+                    src_path,
+                    format!("cannot serialize IR: {e}"),
+                    "report this compiler bug",
+                )
+            })? + "\n";
             fs::write(&out, text).map_err(|e| {
                 Diagnostic::file(
                     src_path,

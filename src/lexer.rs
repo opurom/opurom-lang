@@ -1,12 +1,24 @@
-use crate::diag::{Diagnostic, DResult};
+use crate::diag::{DResult, Diagnostic};
 
-// v0.2 constructs are rejected at lex time so they can never be silently miscompiled.
-const RESERVED: &[&str] = &["async", "await", "if", "for", "fn", "import"];
+// R3 constructs are rejected at lex time so they can never be silently miscompiled.
+// v0.1 keywords keep their original diagnostic for compatibility; v0.2 help text is added.
+const RESERVED_V01: &[&str] = &["async", "await", "fn", "import"];
+const RESERVED_V02: &[&str] = &[
+    "else",
+    "component",
+    "module",
+    "units",
+    "dp",
+    "rem",
+    "let",
+    "var",
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
     Ident(String),
     Int(i64),
+    Float(f64),
     Str(String),
     Bool(bool),
     Sym(String),
@@ -25,6 +37,7 @@ impl Token {
         match &self.tok {
             Tok::Ident(s) => format!("'{s}'"),
             Tok::Int(n) => n.to_string(),
+            Tok::Float(n) => n.to_string(),
             Tok::Str(s) => format!("string \"{s}\""),
             Tok::Bool(b) => b.to_string(),
             Tok::Sym(s) => format!("'{s}'"),
@@ -104,7 +117,7 @@ pub fn lex(src: &str, path: &str) -> DResult<Vec<Token>> {
                                 line,
                                 col,
                                 format!("unknown escape sequence '\\{other}'"),
-                                "v0.1 strings support \\\\, \\\", \\n and \\t; write '{{' for a literal '{'",
+                                "strings support \\\\, \\\", \\n and \\t; write '{{' for a literal '{'",
                             ));
                         }
                     }
@@ -137,20 +150,47 @@ pub fn lex(src: &str, path: &str) -> DResult<Vec<Token>> {
                 s.push(cs[i]);
                 bump(&cs, &mut i, &mut line, &mut col);
             }
-            let n = s.parse::<i64>().map_err(|_| {
-                Diagnostic::new(
-                    path,
-                    start_line,
-                    start_col,
-                    format!("integer literal '{s}' is out of range"),
-                    "use a value between -9223372036854775808 and 9223372036854775807",
-                )
-            })?;
-            out.push(Token {
-                tok: Tok::Int(n),
-                line: start_line,
-                col: start_col,
-            });
+            let mut float = false;
+            if i + 1 < cs.len() && cs[i] == '.' && cs[i + 1].is_ascii_digit() {
+                float = true;
+                s.push('.');
+                bump(&cs, &mut i, &mut line, &mut col);
+                while i < cs.len() && cs[i].is_ascii_digit() {
+                    s.push(cs[i]);
+                    bump(&cs, &mut i, &mut line, &mut col);
+                }
+            }
+            if float {
+                let n = s.parse::<f64>().map_err(|_| {
+                    Diagnostic::new(
+                        path,
+                        start_line,
+                        start_col,
+                        format!("number literal '{s}' is out of range"),
+                        "use a finite decimal number",
+                    )
+                })?;
+                out.push(Token {
+                    tok: Tok::Float(n),
+                    line: start_line,
+                    col: start_col,
+                });
+            } else {
+                let n = s.parse::<i64>().map_err(|_| {
+                    Diagnostic::new(
+                        path,
+                        start_line,
+                        start_col,
+                        format!("integer literal '{s}' is out of range"),
+                        "use a value between -9223372036854775808 and 9223372036854775807",
+                    )
+                })?;
+                out.push(Token {
+                    tok: Tok::Int(n),
+                    line: start_line,
+                    col: start_col,
+                });
+            }
             continue;
         }
 
@@ -160,15 +200,22 @@ pub fn lex(src: &str, path: &str) -> DResult<Vec<Token>> {
                 s.push(cs[i]);
                 bump(&cs, &mut i, &mut line, &mut col);
             }
-            if RESERVED.contains(&s.as_str()) {
+            if RESERVED_V01.contains(&s.as_str()) {
                 return Err(Diagnostic::new(
                     path,
                     start_line,
                     start_col,
                     format!("'{s}' is not yet supported in v0.1"),
-                    format!(
-                        "remove '{s}' and write state, nodes and event statements; language-level '{s}' arrives in v0.2"
-                    ),
+                    format!("remove '{s}'; this construct is not yet supported in v0.2"),
+                ));
+            }
+            if RESERVED_V02.contains(&s.as_str()) {
+                return Err(Diagnostic::new(
+                    path,
+                    start_line,
+                    start_col,
+                    format!("'{s}' is not yet supported in v0.2"),
+                    format!("remove '{s}'; R2 supports state, nodes, model, api and theme only"),
                 ));
             }
             let tok = match s.as_str() {
@@ -198,7 +245,7 @@ pub fn lex(src: &str, path: &str) -> DResult<Vec<Token>> {
                 continue;
             }
         }
-        if "{}():,=.;+-".contains(c) {
+        if "{}():,=.;+-[]".contains(c) {
             bump(&cs, &mut i, &mut line, &mut col);
             out.push(Token {
                 tok: Tok::Sym(c.to_string()),
@@ -212,7 +259,7 @@ pub fn lex(src: &str, path: &str) -> DResult<Vec<Token>> {
             start_line,
             start_col,
             format!("unexpected character '{c}'"),
-            "v0.1 source uses letters, digits, strings, '//' comments and punctuation",
+            "source uses letters, digits, strings, '//' comments and punctuation",
         ));
     }
     out.push(Token {

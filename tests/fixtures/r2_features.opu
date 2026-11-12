@@ -1,0 +1,63 @@
+// R2 feature coverage: full-stack model/api, multi-statement handlers,
+// state-to-state actions, conditionals, compile-time loops, theme and styles.
+app R2Features {
+  model Todo {
+    id: int primary
+    title: string
+    done: bool = false
+  }
+
+  api "/todos" {
+    list Todo
+    create Todo
+  }
+
+  api "/todos/:id" {
+    get Todo
+    update Todo
+    delete Todo
+  }
+
+  theme { mode: dark, accent: "#FF4D6D", radius: 8 }
+
+  state count = 0
+  state total = 10
+  state dark = true
+  state label = "hello"
+
+  Column(p: 16, m: 8, gap: 8, bg: "#101828", rounded: 12) {
+    Text("Count: {count}", size: 20)
+    Button("+2") { count += 1; count += 1 }
+    Button("copy") { count = total }
+    Button("add total") { count += total }
+
+    if (dark) {
+      Text("Dark mode on")
+      Card { Text("Only visible when dark is true") }
+    }
+
+    for (i in 3) {
+      Text("Item {i}")
+    }
+
+    Card(p: 16, shadow: 2, gradient: "#4F46E5,#101828", glass: true, opacity: 0.95, border: "#FFFFFF", animate: spring) {
+      Text("Hi", color: "#FFFFFF", size: 20)
+    }
+
+    Switch(bind: dark)
+    Slider(bind: count, min: 0, max: 10)
+    Checkbox(bind: dark)
+    Radio(bind: label, value: "hello")
+    Tabs(labels: "one,two", bind: label)
+    Badge(label: "new")
+    Avatar(label: "OP")
+    Icon(name: "star")
+    Progress(value: 40)
+    Grid(columns: 2) { Text("cell") }
+    Scroll(height: 100) { Text("scrolled") }
+    Dialog(title: "Hello") { Text("body") }
+    List { Text("row") }
+    Divider()
+    Spinner()
+  }
+}

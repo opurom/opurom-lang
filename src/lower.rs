@@ -2,15 +2,59 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Map as JsonMap, Value as Json};
 
-use crate::diag::{Diagnostic, DResult};
+use crate::diag::{DResult, Diagnostic};
 use crate::lexer::lex;
-use crate::parser::{self, Arg, Lit, Node, Pos, Program, Stmt, StmtKind, Value as AstValue};
+use crate::parser::{
+    self, Arg, Lit, Node, NodeKind, Pos, Program, Stmt, StmtKind, Value as AstValue,
+};
 
 pub const KINDS: &[&str] = &[
-    "Column", "Row", "Container", "Text", "Button", "Input", "Image", "Spacer",
+    "Column",
+    "Row",
+    "Container",
+    "Text",
+    "Button",
+    "Input",
+    "Image",
+    "Spacer",
+    "Card",
+    "Divider",
+    "Icon",
+    "Badge",
+    "Progress",
+    "Switch",
+    "Slider",
+    "Checkbox",
+    "Radio",
+    "Dialog",
+    "Tabs",
+    "List",
+    "Grid",
+    "Scroll",
+    "Avatar",
+    "Spinner",
 ];
 
-const NUMERIC: &[&str] = &["gap", "padding", "width", "height", "radius", "size"];
+/// Visual props every kind accepts (canonical R2 names).
+const GENERIC_PROPS: &[&str] = &[
+    "padding", "margin", "color", "radius", "shadow", "gradient", "glass", "opacity", "border",
+    "animate",
+];
+
+/// Atomic source shortcuts and the canonical prop they lower to.
+const SHORTCUTS: &[(&str, &str)] = &[
+    ("p", "padding"),
+    ("m", "margin"),
+    ("bg", "color"),
+    ("rounded", "radius"),
+];
+
+/// Numeric props every kind accepts (canonical R2 visual props).
+const GENERIC_NUMERIC: &[&str] = &["padding", "margin", "radius"];
+
+const HANDLER_VERBS: &[&str] = &["list", "get", "create", "update", "delete"];
+
+const ANIMATE_VALUES: &[&str] = &["spring", "ease", "none"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Ty {
@@ -44,7 +88,7 @@ fn valid_ident(s: &str) -> bool {
     cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Split a v0.1 string into literal parts and `{state}` references. `{{` is a literal `{`.
+/// Split a string into literal parts and `{state}` references. `{{` is a literal `{`.
 /// Errors carry the char offset inside the string.
 pub fn interp_parts(s: &str) -> Result<Vec<Part>, (usize, String)> {
     let cs: Vec<char> = s.chars().collect();
@@ -116,7 +160,9 @@ pub fn compile_source(src: &str, path: &str) -> DResult<Json> {
 
 struct KindInfo {
     props: &'static [&'static str],
-    required: Option<&'static str>,
+    required: &'static [&'static str],
+    /// Kind-specific props that must hold an integer.
+    numeric: &'static [&'static str],
     positional: Option<&'static str>,
     children: bool,
     tap: bool,
@@ -126,49 +172,184 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
     let info = match kind {
         "Column" | "Row" => KindInfo {
             props: &["gap", "padding", "align", "width"],
-            required: None,
+            required: &[],
+            numeric: &["gap", "width"],
             positional: None,
             children: true,
             tap: false,
         },
         "Container" => KindInfo {
             props: &["padding", "width", "height", "radius", "color"],
-            required: None,
+            required: &[],
+            numeric: &["width", "height"],
             positional: None,
             children: true,
             tap: false,
         },
         "Text" => KindInfo {
             props: &["value", "size", "color"],
-            required: Some("value"),
+            required: &["value"],
+            numeric: &["size"],
             positional: Some("value"),
             children: false,
             tap: false,
         },
         "Button" => KindInfo {
             props: &["label"],
-            required: Some("label"),
+            required: &["label"],
+            numeric: &[],
             positional: Some("label"),
             children: false,
             tap: true,
         },
         "Input" => KindInfo {
             props: &["placeholder", "bind"],
-            required: None,
+            required: &[],
+            numeric: &[],
             positional: None,
             children: false,
             tap: false,
         },
         "Image" => KindInfo {
             props: &["src", "width", "height"],
-            required: Some("src"),
+            required: &["src"],
+            numeric: &["width", "height"],
             positional: None,
             children: false,
             tap: false,
         },
         "Spacer" => KindInfo {
             props: &["width", "height"],
-            required: None,
+            required: &[],
+            numeric: &["width", "height"],
+            positional: None,
+            children: false,
+            tap: false,
+        },
+        "Card" => KindInfo {
+            props: &[],
+            required: &[],
+            numeric: &[],
+            positional: None,
+            children: true,
+            tap: false,
+        },
+        "Divider" => KindInfo {
+            props: &[],
+            required: &[],
+            numeric: &[],
+            positional: None,
+            children: false,
+            tap: false,
+        },
+        "Icon" => KindInfo {
+            props: &["name"],
+            required: &["name"],
+            numeric: &[],
+            positional: None,
+            children: false,
+            tap: false,
+        },
+        "Badge" => KindInfo {
+            props: &["label"],
+            required: &["label"],
+            numeric: &[],
+            positional: None,
+            children: false,
+            tap: false,
+        },
+        "Progress" => KindInfo {
+            props: &["value"],
+            required: &["value"],
+            numeric: &["value"],
+            positional: None,
+            children: false,
+            tap: false,
+        },
+        "Switch" => KindInfo {
+            props: &["bind"],
+            required: &["bind"],
+            numeric: &[],
+            positional: None,
+            children: false,
+            tap: true,
+        },
+        "Slider" => KindInfo {
+            props: &["bind", "min", "max"],
+            required: &["bind", "min", "max"],
+            numeric: &["min", "max"],
+            positional: None,
+            children: false,
+            tap: false,
+        },
+        "Checkbox" => KindInfo {
+            props: &["bind"],
+            required: &["bind"],
+            numeric: &[],
+            positional: None,
+            children: false,
+            tap: true,
+        },
+        "Radio" => KindInfo {
+            props: &["bind", "value"],
+            required: &["bind", "value"],
+            numeric: &[],
+            positional: None,
+            children: false,
+            tap: true,
+        },
+        "Dialog" => KindInfo {
+            props: &["title"],
+            required: &["title"],
+            numeric: &[],
+            positional: None,
+            children: true,
+            tap: false,
+        },
+        "Tabs" => KindInfo {
+            props: &["labels", "bind"],
+            required: &["labels"],
+            numeric: &[],
+            positional: None,
+            children: false,
+            tap: true,
+        },
+        "List" => KindInfo {
+            props: &[],
+            required: &[],
+            numeric: &[],
+            positional: None,
+            children: true,
+            tap: false,
+        },
+        "Grid" => KindInfo {
+            props: &["columns"],
+            required: &["columns"],
+            numeric: &["columns"],
+            positional: None,
+            children: true,
+            tap: false,
+        },
+        "Scroll" => KindInfo {
+            props: &["height"],
+            required: &["height"],
+            numeric: &["height"],
+            positional: None,
+            children: true,
+            tap: false,
+        },
+        "Avatar" => KindInfo {
+            props: &["label"],
+            required: &["label"],
+            numeric: &[],
+            positional: None,
+            children: false,
+            tap: false,
+        },
+        "Spinner" => KindInfo {
+            props: &[],
+            required: &[],
+            numeric: &[],
             positional: None,
             children: false,
             tap: false,
@@ -183,6 +364,8 @@ struct Ctx<'a> {
     types: HashMap<String, Ty>,
     order: Vec<String>,
     next_id: u64,
+    /// Loop variables of enclosing `for` blocks, innermost last.
+    loops: Vec<(String, i64)>,
 }
 
 impl<'a> Ctx<'a> {
@@ -203,11 +386,20 @@ impl<'a> Ctx<'a> {
             self.order.join(", ")
         }
     }
+
+    fn loop_value(&self, name: &str) -> Option<i64> {
+        self.loops
+            .iter()
+            .rev()
+            .find(|(v, _)| v == name)
+            .map(|(_, n)| *n)
+    }
 }
 
 fn json_lit(l: &Lit) -> Json {
     match l {
         Lit::Int(n) => json!(*n),
+        Lit::Float(n) => json!(*n),
         Lit::Bool(b) => json!(*b),
         Lit::Str(s) => json!(s),
     }
@@ -216,14 +408,238 @@ fn json_lit(l: &Lit) -> Json {
 fn value_desc(v: &AstValue) -> &'static str {
     match v {
         AstValue::Lit(Lit::Int(_)) => "int",
+        AstValue::Lit(Lit::Float(_)) => "number",
         AstValue::Lit(Lit::Bool(_)) => "bool",
         AstValue::Lit(Lit::Str(_)) => "string",
         AstValue::Ident(_) => "identifier",
     }
 }
 
-fn prop_value(ctx: &Ctx<'_>, key: &str, arg: &Arg, info: &KindInfo) -> DResult<Json> {
-    if NUMERIC.contains(&key) && info.props.contains(&key) {
+/// Replace `{i}` with the loop index for every enclosing `for` variable.
+fn substitute_loops(ctx: &Ctx, s: &str) -> String {
+    if ctx.loops.is_empty() {
+        return s.to_string();
+    }
+    let cs: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0usize;
+    while i < cs.len() {
+        if cs[i] == '{' {
+            if i + 1 < cs.len() && cs[i + 1] == '{' {
+                out.push('{');
+                out.push('{');
+                i += 2;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < cs.len() && cs[j] != '}' && cs[j] != '{' {
+                j += 1;
+            }
+            if j < cs.len() && cs[j] == '}' {
+                let name: String = cs[i + 1..j].iter().collect();
+                if let Some(v) = ctx.loop_value(&name) {
+                    out.push_str(&v.to_string());
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(cs[i]);
+        i += 1;
+    }
+    out
+}
+
+fn is_color(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 7 && b[0] == b'#' && b[1..].iter().all(|c| c.is_ascii_hexdigit())
+}
+
+fn check_color(ctx: &Ctx, pos: Pos, key: &str, value: &str) -> DResult<()> {
+    if is_color(value) {
+        return Ok(());
+    }
+    Err(ctx.err(
+        pos,
+        format!("invalid color '{value}' for '{key}'"),
+        "write a color as '#RRGGBB', for example '#4F46E5'".to_string(),
+    ))
+}
+
+fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> DResult<Json> {
+    if key == "bind" {
+        let expected = match kind {
+            "Switch" | "Checkbox" => Ty::Bool,
+            "Slider" => Ty::Int,
+            _ => Ty::Str,
+        };
+        return match &arg.value {
+            AstValue::Ident(name) => {
+                let ty = ctx.types.get(name).copied().ok_or_else(|| {
+                    ctx.err(
+                        arg.pos,
+                        format!("unknown state '{name}' in 'bind'"),
+                        format!(
+                            "declare it with 'state {name} = \"\"' or bind one of: {}",
+                            ctx.state_list()
+                        ),
+                    )
+                })?;
+                if ty != expected {
+                    return Err(ctx.err(
+                        arg.pos,
+                        format!(
+                            "'bind' requires a {} state, found {} state '{name}'",
+                            expected.name(),
+                            ty.name()
+                        ),
+                        format!(
+                            "declare the state with a {} initializer or remove 'bind'",
+                            expected.name()
+                        ),
+                    ));
+                }
+                Ok(json!(name))
+            }
+            _ => Err(ctx.err(
+                arg.pos,
+                format!(
+                    "'bind' expects a state name, found {}",
+                    value_desc(&arg.value)
+                ),
+                "write bind: name, where 'name' is a declared state".to_string(),
+            )),
+        };
+    }
+    if key == "opacity" {
+        let n = match &arg.value {
+            AstValue::Lit(Lit::Int(n)) => *n as f64,
+            AstValue::Lit(Lit::Float(n)) => *n,
+            _ => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop 'opacity' expects a number, found {}",
+                        value_desc(&arg.value)
+                    ),
+                    "write a number between 0 and 1, such as opacity: 0.95".to_string(),
+                ))
+            }
+        };
+        if !(0.0..=1.0).contains(&n) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("opacity must be between 0 and 1, found {n}"),
+                "write a number between 0 and 1, such as opacity: 0.95".to_string(),
+            ));
+        }
+        return Ok(json!(n));
+    }
+    if key == "shadow" {
+        let n = match &arg.value {
+            AstValue::Lit(Lit::Int(n)) => *n,
+            _ => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop 'shadow' expects an integer, found {}",
+                        value_desc(&arg.value)
+                    ),
+                    "write an integer between 0 and 8, such as shadow: 2".to_string(),
+                ))
+            }
+        };
+        if !(0..=8).contains(&n) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("shadow must be between 0 and 8, found {n}"),
+                "write an integer between 0 and 8, such as shadow: 2".to_string(),
+            ));
+        }
+        return Ok(json!(n));
+    }
+    if key == "color" || key == "border" {
+        let s = match &arg.value {
+            AstValue::Lit(Lit::Str(s)) => s.clone(),
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop '{key}' expects a color string, found {}",
+                        value_desc(other)
+                    ),
+                    "write a color as '#RRGGBB', for example '#4F46E5'".to_string(),
+                ))
+            }
+        };
+        check_color(ctx, arg.pos, key, &s)?;
+        return Ok(json!(s));
+    }
+    if key == "gradient" {
+        let s = match &arg.value {
+            AstValue::Lit(Lit::Str(s)) => s.clone(),
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop 'gradient' expects a color string, found {}",
+                        value_desc(other)
+                    ),
+                    "write two colors as '#RRGGBB,#RRGGBB'".to_string(),
+                ))
+            }
+        };
+        let stops: Vec<&str> = s.split(',').collect();
+        if stops.len() != 2 {
+            return Err(ctx.err(
+                arg.pos,
+                format!("gradient needs exactly two colors, found {}", stops.len()),
+                "write two colors as '#4F46E5,#101828'".to_string(),
+            ));
+        }
+        for stop in stops {
+            check_color(ctx, arg.pos, "gradient", stop.trim())?;
+        }
+        return Ok(json!(s));
+    }
+    if key == "glass" {
+        return match &arg.value {
+            AstValue::Lit(Lit::Bool(b)) => Ok(json!(*b)),
+            other => Err(ctx.err(
+                arg.pos,
+                format!(
+                    "prop 'glass' expects true or false, found {}",
+                    value_desc(other)
+                ),
+                "write glass: true or glass: false".to_string(),
+            )),
+        };
+    }
+    if key == "animate" {
+        let s = match &arg.value {
+            AstValue::Lit(Lit::Str(s)) => s.clone(),
+            AstValue::Ident(s) => s.clone(),
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop 'animate' expects a keyword, found {}",
+                        value_desc(other)
+                    ),
+                    "write animate: spring, animate: ease or animate: none".to_string(),
+                ))
+            }
+        };
+        if !ANIMATE_VALUES.contains(&s.as_str()) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("unknown animate value '{s}'"),
+                "use one of: spring, ease, none".to_string(),
+            ));
+        }
+        return Ok(json!(s));
+    }
+    if info.numeric.contains(&key) || GENERIC_NUMERIC.contains(&key) {
         return match &arg.value {
             AstValue::Lit(Lit::Int(n)) => Ok(json!(*n)),
             _ => Err(ctx.err(
@@ -237,45 +653,14 @@ fn prop_value(ctx: &Ctx<'_>, key: &str, arg: &Arg, info: &KindInfo) -> DResult<J
             )),
         };
     }
-    if key == "bind" {
-        return match &arg.value {
-            AstValue::Ident(name) => {
-                let ty = ctx.types.get(name).copied().ok_or_else(|| {
-                    ctx.err(
-                        arg.pos,
-                        format!("unknown state '{name}' in 'bind'"),
-                        format!(
-                            "declare it with 'state {name} = \"\"' or bind one of: {}",
-                            ctx.state_list()
-                        ),
-                    )
-                })?;
-                if ty != Ty::Str {
-                    return Err(ctx.err(
-                        arg.pos,
-                        format!(
-                            "'bind' requires a string state, found {} state '{name}'",
-                            ty.name()
-                        ),
-                        "declare the state with a string initializer or remove 'bind'".to_string(),
-                    ));
-                }
-                Ok(json!(name))
-            }
-            _ => Err(ctx.err(
-                arg.pos,
-                format!("'bind' expects a state name, found {}", value_desc(&arg.value)),
-                "write bind: name, where 'name' is a declared string state".to_string(),
-            )),
-        };
-    }
     Ok(match &arg.value {
         AstValue::Lit(l) => json_lit(l),
         AstValue::Ident(s) => json!(s),
     })
 }
 
-fn lower_action(ctx: &Ctx<'_>, stmt: &Stmt) -> DResult<Json> {
+/// Lower one event statement into an IR action.
+fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
     let ty = ctx.types.get(&stmt.target).copied().ok_or_else(|| {
         ctx.err(
             stmt.pos,
@@ -304,81 +689,105 @@ fn lower_action(ctx: &Ctx<'_>, stmt: &Stmt) -> DResult<Json> {
                     ),
                 ));
             }
-            let n = match v {
-                AstValue::Lit(Lit::Int(n)) => *n,
+            let value = match v {
+                AstValue::Lit(Lit::Int(n)) => {
+                    if matches!(stmt.kind, StmtKind::Sub(..)) {
+                        n.checked_neg().ok_or_else(|| {
+                            ctx.err(
+                                *p,
+                                "integer overflow in '-='",
+                                "use a value within the i64 range".to_string(),
+                            )
+                        })?
+                    } else {
+                        *n
+                    }
+                }
                 AstValue::Ident(name) => {
-                    if !ctx.types.contains_key(name) {
-                        return Err(ctx.err(
+                    let src = ctx.types.get(name).copied().ok_or_else(|| {
+                        ctx.err(
                             *p,
                             format!("unknown state '{name}' in event expression"),
-                            format!("declare it with 'state {name} = 0' or use one of: {}", ctx.state_list()),
+                            format!(
+                                "declare it with 'state {name} = 0' or use one of: {}",
+                                ctx.state_list()
+                            ),
+                        )
+                    })?;
+                    if src != Ty::Int {
+                        return Err(ctx.err(
+                            *p,
+                            format!(
+                                "'+=' / '-=' requires an int state, found {} state '{name}'",
+                                src.name()
+                            ),
+                            "use a literal here or read an int state".to_string(),
                         ));
                     }
-                    return Err(ctx.err(
-                        *p,
-                        format!("reading state '{name}' in an event expression is not yet supported in v0.1"),
-                        "use a literal here; state-to-state expressions are planned for a later round"
-                            .to_string(),
-                    ));
+                    return Ok(json!({"op": "add", "target": stmt.target, "valueFrom": name}));
                 }
-                _ => {
+                other => {
                     return Err(ctx.err(
                         *p,
-                        format!("'+=' / '-=' requires an int literal, found {}", value_desc(v)),
+                        format!(
+                            "'+=' / '-=' requires an int literal, found {}",
+                            value_desc(other)
+                        ),
                         "write an integer such as 'x += 1'".to_string(),
                     ));
                 }
             };
-            let value = if matches!(stmt.kind, StmtKind::Sub(..)) {
-                n.checked_neg().ok_or_else(|| {
-                    ctx.err(
-                        *p,
-                        "integer overflow in '-='",
-                        "use a value within the i64 range".to_string(),
-                    )
-                })?
-            } else {
-                n
-            };
             Ok(json!({"op": "add", "target": stmt.target, "value": value}))
         }
-        StmtKind::Set(v, p) => {
-            let lit = match v {
-                AstValue::Lit(l) => l,
-                AstValue::Ident(name) => {
-                    if !ctx.types.contains_key(name) {
-                        return Err(ctx.err(
-                            *p,
-                            format!("unknown state '{name}' in event expression"),
-                            format!("declare it with 'state {name} = 0' or use one of: {}", ctx.state_list()),
-                        ));
-                    }
+        StmtKind::Set(v, p) => match v {
+            AstValue::Lit(l) => {
+                let given = value_desc(&AstValue::Lit(l.clone()));
+                if given != ty.name() {
                     return Err(ctx.err(
                         *p,
-                        format!("reading state '{name}' in an event expression is not yet supported in v0.1"),
-                        "use a literal here; state-to-state assignment is planned for a later round"
-                            .to_string(),
+                        format!(
+                            "cannot assign {} to {} state '{}'",
+                            given,
+                            ty.name(),
+                            stmt.target
+                        ),
+                        format!(
+                            "use a {} literal or change the state initializer",
+                            ty.name()
+                        ),
                     ));
                 }
-            };
-            let given = value_desc(&AstValue::Lit(lit.clone()));
-            if given != ty.name() {
-                return Err(ctx.err(
-                    *p,
-                    format!(
-                        "cannot assign {} to {} state '{}'",
-                        given,
-                        ty.name(),
-                        stmt.target
-                    ),
-                    format!(
-                        "use a {} literal or change the state initializer",
-                        ty.name()
-                    ),
-                ));
+                Ok(json!({"op": "set", "target": stmt.target, "value": json_lit(l)}))
             }
-            Ok(json!({"op": "set", "target": stmt.target, "value": json_lit(lit)}))
-        }
+            AstValue::Ident(name) => {
+                let src = ctx.types.get(name).copied().ok_or_else(|| {
+                    ctx.err(
+                        *p,
+                        format!("unknown state '{name}' in event expression"),
+                        format!(
+                            "declare it with 'state {name} = 0' or use one of: {}",
+                            ctx.state_list()
+                        ),
+                    )
+                })?;
+                if src != ty {
+                    return Err(ctx.err(
+                        *p,
+                        format!(
+                            "cannot assign {} to {} state '{}'",
+                            src.name(),
+                            ty.name(),
+                            stmt.target
+                        ),
+                        format!(
+                            "read a {} state here or change the state initializer",
+                            ty.name()
+                        ),
+                    ));
+                }
+                Ok(json!({"op": "set", "target": stmt.target, "valueFrom": name}))
+            }
+        },
         StmtKind::Toggle => {
             if ty != Ty::Bool {
                 return Err(ctx.err(
@@ -396,12 +805,24 @@ fn lower_action(ctx: &Ctx<'_>, stmt: &Stmt) -> DResult<Json> {
     }
 }
 
-fn lower_node(ctx: &mut Ctx<'_>, node: &Node) -> DResult<Json> {
+fn lower_actions(ctx: &Ctx, stmts: &[Stmt]) -> DResult<Vec<Json>> {
+    let mut actions = Vec::with_capacity(stmts.len());
+    for stmt in stmts {
+        actions.push(lower_action(ctx, stmt)?);
+    }
+    Ok(actions)
+}
+
+fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
     let id = ctx.take_id();
-    let info = kind_info(&node.kind).ok_or_else(|| {
+    let kind = match &node.kind {
+        NodeKind::Widget(k) => k.as_str(),
+        _ => unreachable!("conditional nodes are expanded before lowering"),
+    };
+    let info = kind_info(kind).ok_or_else(|| {
         ctx.err(
             node.pos,
-            format!("unknown node kind '{}'", node.kind),
+            format!("unknown node kind '{kind}'"),
             format!("use one of: {}", KINDS.join(", ")),
         )
     })?;
@@ -409,7 +830,7 @@ fn lower_node(ctx: &mut Ctx<'_>, node: &Node) -> DResult<Json> {
     let mut seen = HashSet::new();
     let mut value_pos: Option<Pos> = None;
     for (idx, arg) in node.args.iter().enumerate() {
-        let key = match &arg.name {
+        let raw_key = match &arg.name {
             Some(k) => k.clone(),
             None => {
                 if idx != 0 {
@@ -425,10 +846,10 @@ fn lower_node(ctx: &mut Ctx<'_>, node: &Node) -> DResult<Json> {
                     None => {
                         return Err(ctx.err(
                             arg.pos,
-                            format!("'{}' does not accept a positional argument", node.kind),
+                            format!("'{kind}' does not accept a positional argument"),
                             format!(
                                 "write props explicitly, e.g. {}({}: value)",
-                                node.kind,
+                                kind,
                                 info.props.first().copied().unwrap_or("value")
                             ),
                         ));
@@ -436,37 +857,44 @@ fn lower_node(ctx: &mut Ctx<'_>, node: &Node) -> DResult<Json> {
                 }
             }
         };
-        if !info.props.contains(&key.as_str()) {
+        let key = SHORTCUTS
+            .iter()
+            .find(|(short, _)| *short == raw_key)
+            .map(|(_, canonical)| canonical.to_string())
+            .unwrap_or_else(|| raw_key.clone());
+        if !info.props.contains(&key.as_str()) && !GENERIC_PROPS.contains(&key.as_str()) {
             return Err(ctx.err(
                 arg.pos,
-                format!("unknown prop '{}' on {}", key, node.kind),
+                format!("unknown prop '{raw_key}' on {kind}"),
                 format!(
-                    "{} accepts: {}; remove '{}'",
-                    node.kind,
-                    info.props.join(", "),
-                    key
+                    "{kind} accepts: {}; remove '{raw_key}'",
+                    info.props.join(", ")
                 ),
             ));
         }
         if !seen.insert(key.clone()) {
             return Err(ctx.err(
                 arg.pos,
-                format!("duplicate prop '{}' on {}", key, node.kind),
+                format!("duplicate prop '{key}' on {kind}"),
                 format!("keep one '{key}' prop per node"),
             ));
         }
-        if node.kind == "Text" && key == "value" {
+        if kind == "Text" && key == "value" {
             value_pos = Some(arg.pos);
         }
-        let val = prop_value(ctx, &key, arg, &info)?;
+        let val = prop_value(ctx, kind, &key, arg, &info)?;
+        let val = match val {
+            Json::String(s) => Json::String(substitute_loops(ctx, &s)),
+            other => other,
+        };
         props.insert(key, val);
     }
-    if let Some(req) = info.required {
-        if !props.contains_key(req) {
+    for req in info.required {
+        if !props.contains_key(*req) {
             return Err(ctx.err(
                 node.pos,
-                format!("{} requires the '{}' prop", node.kind, req),
-                format!("write {}(\"...\") or {}({}: \"...\")", node.kind, node.kind, req),
+                format!("{kind} requires the '{req}' prop"),
+                format!("write {kind}({req}: ...) with every required prop"),
             ));
         }
     }
@@ -504,53 +932,342 @@ fn lower_node(ctx: &mut Ctx<'_>, node: &Node) -> DResult<Json> {
                 return Err(ctx.err(
                     block.pos,
                     "a block may not mix children and statements".to_string(),
-                    "a Button block is a tap handler: keep one statement, put nodes in a container"
+                    "a Button block is a tap handler: keep statements, put nodes in a container"
                         .to_string(),
                 ));
             }
-            if block.stmts.len() > 1 {
-                return Err(ctx.err(
-                    block.stmts[1].pos,
-                    "a Button tap handler supports exactly one statement in v0.1".to_string(),
-                    "split the work across buttons or wait for v0.2 multi-statement handlers"
-                        .to_string(),
-                ));
-            }
-            if let Some(stmt) = block.stmts.first() {
-                events.insert("tap".to_string(), lower_action(ctx, stmt)?);
+            let actions = lower_actions(ctx, &block.stmts)?;
+            if !actions.is_empty() {
+                let event = if actions.len() == 1 {
+                    actions.into_iter().next().unwrap()
+                } else {
+                    json!({ "actions": actions })
+                };
+                events.insert("tap".to_string(), event);
             }
         } else if info.children {
             if let Some(stmt) = block.stmts.first() {
                 return Err(ctx.err(
                     stmt.pos,
-                    format!("a {} block cannot contain statements", node.kind),
+                    format!("a {kind} block cannot contain statements"),
                     "put state changes inside a Button { ... } tap handler".to_string(),
                 ));
             }
-            for child in &block.nodes {
-                children.push(lower_node(ctx, child)?);
-            }
+            children = lower_node_list(ctx, &block.nodes, when)?;
         } else {
             return Err(ctx.err(
                 block.pos,
-                format!("'{}' does not support children or tap handlers", node.kind),
-                "remove the trailing block; only Column, Row, Container and Button accept blocks"
+                format!("'{kind}' does not support children or tap handlers"),
+                "remove the trailing block; only container kinds and Button accept blocks"
                     .to_string(),
             ));
         }
     }
-    if node.kind == "Input" {
-        if let Some(Json::String(name)) = props.get("bind") {
-            events.insert("input".to_string(), json!({"op": "set", "target": name}));
+    match kind {
+        "Input" => {
+            if let Some(Json::String(name)) = props.get("bind") {
+                events.insert("input".to_string(), json!({"op": "set", "target": name}));
+            }
+        }
+        "Switch" | "Checkbox" => {
+            if let Some(Json::String(name)) = props.get("bind") {
+                events
+                    .entry("tap".to_string())
+                    .or_insert(json!({"op": "toggle", "target": name}));
+            }
+        }
+        "Slider" => {
+            if let Some(Json::String(name)) = props.get("bind") {
+                events
+                    .entry("input".to_string())
+                    .or_insert(json!({"op": "set", "target": name}));
+            }
+        }
+        "Radio" => {
+            if let (Some(Json::String(name)), Some(value)) = (props.get("bind"), props.get("value"))
+            {
+                events.entry("tap".to_string()).or_insert(json!({
+                    "op": "set",
+                    "target": name,
+                    "value": value,
+                }));
+            }
+        }
+        "Tabs" => {
+            if let (Some(Json::String(name)), Some(Json::String(labels))) =
+                (props.get("bind"), props.get("labels"))
+            {
+                let first = labels.split(',').next().unwrap_or(labels.as_str()).trim();
+                events.entry("tap".to_string()).or_insert(json!({
+                    "op": "set",
+                    "target": name,
+                    "value": first,
+                }));
+            }
+        }
+        _ => {}
+    }
+    let mut node_json = JsonMap::new();
+    node_json.insert("id".to_string(), json!(id));
+    node_json.insert("kind".to_string(), json!(kind));
+    node_json.insert("props".to_string(), Json::Object(props));
+    node_json.insert("children".to_string(), Json::Array(children));
+    node_json.insert("events".to_string(), Json::Object(events));
+    if let Some(w) = when {
+        node_json.insert("when".to_string(), json!(w));
+    }
+    Ok(Json::Object(node_json))
+}
+
+/// Number of tree nodes produced by a node list after `if`/`for` expansion.
+fn count_expanded(nodes: &[Node]) -> usize {
+    nodes
+        .iter()
+        .map(|n| match &n.kind {
+            NodeKind::Widget(_) => 1,
+            NodeKind::If { .. } => n
+                .block
+                .as_ref()
+                .map(|b| count_expanded(&b.nodes))
+                .unwrap_or(0),
+            NodeKind::For { count, .. } => {
+                *count
+                    * n.block
+                        .as_ref()
+                        .map(|b| count_expanded(&b.nodes))
+                        .unwrap_or(0)
+            }
+        })
+        .sum()
+}
+
+/// Expand `if`/`for` blocks and lower every resulting node.
+fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], when: Option<&str>) -> DResult<Vec<Json>> {
+    let mut out = Vec::new();
+    for node in nodes {
+        match &node.kind {
+            NodeKind::If { cond, cond_pos } => {
+                let ty = ctx.types.get(cond).copied().ok_or_else(|| {
+                    ctx.err(
+                        *cond_pos,
+                        format!("unknown state '{cond}' in 'if'"),
+                        format!(
+                            "declare it with 'state {cond} = false' or use one of: {}",
+                            ctx.state_list()
+                        ),
+                    )
+                })?;
+                if ty != Ty::Bool {
+                    return Err(ctx.err(
+                        *cond_pos,
+                        format!(
+                            "'if' requires a bool state, found {} state '{cond}'",
+                            ty.name()
+                        ),
+                        "use a bool state for the condition".to_string(),
+                    ));
+                }
+                let block = node.block.as_ref().ok_or_else(|| {
+                    ctx.err(node.pos, "'if' needs a block", "write 'if (dark) { ... }'")
+                })?;
+                if let Some(stmt) = block.stmts.first() {
+                    return Err(ctx.err(
+                        stmt.pos,
+                        "an 'if' block cannot contain statements".to_string(),
+                        "put state changes inside a Button { ... } tap handler".to_string(),
+                    ));
+                }
+                out.extend(lower_node_list(ctx, &block.nodes, Some(cond))?);
+            }
+            NodeKind::For {
+                var,
+                count,
+                count_pos,
+            } => {
+                if *count > 64 {
+                    return Err(ctx.err(
+                        *count_pos,
+                        format!("'for' count must be at most 64, found {count}"),
+                        "unroll at most 64 copies; split the work into two blocks".to_string(),
+                    ));
+                }
+                let block = node.block.as_ref().ok_or_else(|| {
+                    ctx.err(
+                        node.pos,
+                        "'for' needs a block",
+                        "write 'for (i in 3) { ... }'",
+                    )
+                })?;
+                if let Some(stmt) = block.stmts.first() {
+                    return Err(ctx.err(
+                        stmt.pos,
+                        "a 'for' block cannot contain statements".to_string(),
+                        "put state changes inside a Button { ... } tap handler".to_string(),
+                    ));
+                }
+                for i in 0..*count {
+                    ctx.loops.push((var.clone(), i as i64));
+                    let lowered = lower_node_list(ctx, &block.nodes, when);
+                    ctx.loops.pop();
+                    out.extend(lowered?);
+                }
+            }
+            NodeKind::Widget(_) => out.push(lower_node(ctx, node, when)?),
         }
     }
-    Ok(json!({
-        "id": id,
-        "kind": node.kind,
-        "props": Json::Object(props),
-        "children": children,
-        "events": Json::Object(events),
-    }))
+    Ok(out)
+}
+
+// ---------------------------------------------------------- full-stack ------
+
+fn model_types(program: &Program) -> Vec<String> {
+    program.models.iter().map(|m| m.name.clone()).collect()
+}
+
+fn lower_models(program: &Program, ctx: &Ctx) -> DResult<Vec<Json>> {
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for model in &program.models {
+        if !seen.insert(model.name.clone()) {
+            return Err(ctx.err(
+                model.pos,
+                format!("duplicate model '{}'", model.name),
+                format!(
+                    "declare every model once; declared models are: {}",
+                    model_types(program).join(", ")
+                ),
+            ));
+        }
+        let mut primaries = 0usize;
+        let mut fields = Vec::new();
+        let mut field_names: HashSet<String> = HashSet::new();
+        for field in &model.fields {
+            if !field_names.insert(field.name.clone()) {
+                return Err(ctx.err(
+                    field.pos,
+                    format!("duplicate field '{}' in model '{}'", field.name, model.name),
+                    "declare every field once per model".to_string(),
+                ));
+            }
+            let ty = match field.ty.as_str() {
+                "int" | "string" | "bool" => field.ty.as_str(),
+                other => {
+                    return Err(ctx.err(
+                        field.pos,
+                        format!("unknown field type '{other}' in model '{}'", model.name),
+                        "field types are int, string or bool".to_string(),
+                    ))
+                }
+            };
+            if field.primary {
+                primaries += 1;
+                if primaries > 1 {
+                    return Err(ctx.err(
+                        field.pos,
+                        format!("model '{}' has more than one primary field", model.name),
+                        "mark at most one field as 'primary'".to_string(),
+                    ));
+                }
+            }
+            if let Some(default) = &field.default {
+                let given = match default {
+                    Lit::Int(_) => "int",
+                    Lit::Float(_) => "number",
+                    Lit::Bool(_) => "bool",
+                    Lit::Str(_) => "string",
+                };
+                if given != ty {
+                    return Err(ctx.err(
+                        field.pos,
+                        format!(
+                            "default value of field '{}' must be {ty}, found {given}",
+                            field.name
+                        ),
+                        format!("write a {ty} default or drop '= {given}'"),
+                    ));
+                }
+            }
+            fields.push(json!({
+                "name": field.name,
+                "type": ty,
+                "primary": field.primary,
+                "default": match &field.default {
+                    Some(d) => json_lit(d),
+                    None => Json::Null,
+                },
+            }));
+        }
+        out.push(json!({"name": model.name, "fields": fields}));
+    }
+    Ok(out)
+}
+
+fn lower_apis(program: &Program, ctx: &Ctx) -> DResult<Vec<Json>> {
+    let mut out = Vec::new();
+    let models = model_types(program);
+    for api in &program.apis {
+        if api.handlers.is_empty() {
+            return Err(ctx.err(
+                api.pos,
+                format!("api '{}' has no handler", api.path),
+                "write at least one handler such as 'list Todo'".to_string(),
+            ));
+        }
+        let mut model = String::new();
+        let mut verbs = Vec::new();
+        for handler in &api.handlers {
+            if !HANDLER_VERBS.contains(&handler.verb.as_str()) {
+                return Err(ctx.err(
+                    handler.pos,
+                    format!("unknown handler verb '{}'", handler.verb),
+                    format!("use one of: {}", HANDLER_VERBS.join(", ")),
+                ));
+            }
+            if !models.contains(&handler.model) {
+                return Err(ctx.err(
+                    handler.pos,
+                    format!("unknown model '{}' in api '{}'", handler.model, api.path),
+                    format!(
+                        "declare it with 'model {} {{ ... }}' or use one of: {}",
+                        handler.model,
+                        if models.is_empty() {
+                            "(no models declared)".to_string()
+                        } else {
+                            models.join(", ")
+                        }
+                    ),
+                ));
+            }
+            if model.is_empty() {
+                model = handler.model.clone();
+            } else if model != handler.model {
+                return Err(ctx.err(
+                    handler.pos,
+                    format!(
+                        "api '{}' mixes models '{}' and '{}'",
+                        api.path, model, handler.model
+                    ),
+                    "one api block serves one model; declare a second api block for the other model"
+                        .to_string(),
+                ));
+            }
+            if matches!(handler.verb.as_str(), "get" | "update" | "delete")
+                && !api.path.contains(':')
+            {
+                return Err(ctx.err(
+                    handler.pos,
+                    format!(
+                        "api '{}' needs a path parameter for '{}'",
+                        api.path, handler.verb
+                    ),
+                    "write a path such as '/todos/:id'".to_string(),
+                ));
+            }
+            verbs.push(handler.verb.clone());
+        }
+        out.push(json!({"path": api.path, "model": model, "handlers": verbs}));
+    }
+    Ok(out)
 }
 
 fn lower(program: &Program, path: &str) -> DResult<Json> {
@@ -559,6 +1276,7 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         types: HashMap::new(),
         order: Vec::new(),
         next_id: 0,
+        loops: Vec::new(),
     };
     let mut state_json = Vec::new();
     for s in &program.states {
@@ -576,12 +1294,22 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             Lit::Int(n) => (Ty::Int, json!(*n)),
             Lit::Bool(b) => (Ty::Bool, json!(*b)),
             Lit::Str(v) => (Ty::Str, json!(v)),
+            Lit::Float(_) => {
+                return Err(ctx.err(
+                    s.pos,
+                    format!("state '{}' cannot be a decimal", s.name),
+                    "declare numbers as integers, such as 'state count = 0'".to_string(),
+                ))
+            }
         };
         ctx.types.insert(s.name.clone(), ty);
         ctx.order.push(s.name.clone());
         state_json.push(json!({"name": s.name, "type": ty.name(), "init": init}));
     }
-    if program.nodes.is_empty() {
+    let models = lower_models(program, &ctx)?;
+    let apis = lower_apis(program, &ctx)?;
+    let total = count_expanded(&program.nodes);
+    if total == 0 {
         return Err(Diagnostic::new(
             path,
             1,
@@ -590,27 +1318,48 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             "add a root node such as Column(gap: 8) { Text(\"hi\") }",
         ));
     }
-    let tree = if program.nodes.len() == 1 {
-        lower_node(&mut ctx, &program.nodes[0])?
+    let tree = if total == 1 {
+        let mut nodes = lower_node_list(&mut ctx, &program.nodes, None)?;
+        nodes.remove(0)
     } else {
         let root_id = ctx.take_id();
-        let mut children = Vec::new();
-        for n in &program.nodes {
-            children.push(lower_node(&mut ctx, n)?);
-        }
+        let nodes = lower_node_list(&mut ctx, &program.nodes, None)?;
         json!({
             "id": root_id,
             "kind": "Column",
             "props": {},
-            "children": children,
+            "children": nodes,
             "events": {},
         })
     };
-    Ok(json!({
-        "ir": "0.1",
-        "app": program.app,
-        "state": state_json,
-        "tree": tree,
-        "theme": {"mode": "system", "accent": "#4F46E5", "radius": 12},
-    }))
+    let theme = match &program.theme {
+        Some(t) => {
+            let mode = t.mode.clone().unwrap_or_else(|| "system".to_string());
+            let accent = t.accent.clone().unwrap_or_else(|| "#4F46E5".to_string());
+            check_color(&ctx, t.pos, "accent", &accent)?;
+            let radius = t.radius.unwrap_or(12);
+            if radius < 0 {
+                return Err(ctx.err(
+                    t.pos,
+                    format!("theme radius must not be negative, found {radius}"),
+                    "write a radius such as 'radius: 8'".to_string(),
+                ));
+            }
+            json!({"mode": mode, "accent": accent, "radius": radius})
+        }
+        None => json!({"mode": "system", "accent": "#4F46E5", "radius": 12}),
+    };
+    let mut out = JsonMap::new();
+    out.insert("ir".to_string(), json!("0.1"));
+    out.insert("app".to_string(), json!(program.app));
+    out.insert("state".to_string(), Json::Array(state_json));
+    out.insert("tree".to_string(), tree);
+    out.insert("theme".to_string(), theme);
+    if !models.is_empty() {
+        out.insert("models".to_string(), Json::Array(models));
+    }
+    if !apis.is_empty() {
+        out.insert("api".to_string(), Json::Array(apis));
+    }
+    Ok(Json::Object(out))
 }
