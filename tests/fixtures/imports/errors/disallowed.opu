@@ -1,0 +1,5 @@
+import "with_node.opu"
+
+app Disallowed {
+  Text("x")
+}

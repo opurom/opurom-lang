@@ -1,0 +1,6 @@
+import "dup_a.opu"
+import "dup_b.opu"
+
+app Duplicate {
+  Text("{shared}")
+}

@@ -1,0 +1,5 @@
+app Bad {
+  Button("Load") async async {
+    await delay(50)
+  }
+}

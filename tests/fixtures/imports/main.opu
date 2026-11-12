@@ -1,0 +1,11 @@
+import "models/todo.opu"
+import "ui/cards.opu"
+import "rooted.opu"
+
+app Imported {
+  state local = 1
+  Column {
+    Text("{payload} {count} {nested} {rootValue} {local}")
+    Button("Go") { local += 1 }
+  }
+}

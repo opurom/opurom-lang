@@ -1,0 +1,10 @@
+app AsyncDemo {
+  state count = 0
+  state payload = "idle"
+
+  Button("Load") async {
+    await delay(50)
+    await fetch("/todos", payload)
+    count += 1
+  }
+}

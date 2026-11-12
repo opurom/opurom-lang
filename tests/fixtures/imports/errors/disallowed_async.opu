@@ -1,0 +1,5 @@
+import "with_async.opu"
+
+app DisallowedAsync {
+  Text("x")
+}

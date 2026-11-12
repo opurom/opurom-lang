@@ -95,6 +95,23 @@ fn parse_catalog(text: &str) -> Result<Catalog, String> {
             props: props.clone(),
         });
     }
+    if let Some(count) = doc.get("count").and_then(Json::as_u64) {
+        if count != components.len() as u64 {
+            return Err(format!(
+                "catalog count {count} does not match {} components",
+                components.len()
+            ));
+        }
+    }
+    if let Some(primitives) = doc.get("primitives").and_then(Json::as_u64) {
+        let found: HashSet<&str> = components.iter().map(|c| c.primitive.as_str()).collect();
+        if primitives != found.len() as u64 || primitives != KINDS.len() as u64 {
+            return Err(format!(
+                "catalog declares {primitives} primitives but has {} distinct kinds",
+                found.len()
+            ));
+        }
+    }
     Ok(Catalog { components })
 }
 
@@ -129,8 +146,16 @@ mod tests {
     #[test]
     fn vendored_catalog_is_valid_and_large() {
         let catalog = parse_catalog(CATALOG_JSON).expect("vendored catalog");
-        assert!(catalog.components.len() >= 100);
+        assert_eq!(catalog.components.len(), 116);
+        let unique: HashSet<&str> = catalog
+            .components
+            .iter()
+            .map(|c| c.primitive.as_str())
+            .collect();
+        assert_eq!(unique.len(), 32);
         assert_eq!(catalog.get("VStack").unwrap().primitive, "Column");
+        assert_eq!(catalog.get("DataTable").unwrap().primitive, "Table");
+        assert_eq!(catalog.get("Hint").unwrap().primitive, "Tooltip");
         assert_eq!(
             catalog.get("PrimaryButton").unwrap().props["color"],
             "#4F46E5"

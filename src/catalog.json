@@ -1,7 +1,7 @@
 {
   "version": "0.3",
-  "count": 108,
-  "primitives": 24,
+  "count": 116,
+  "primitives": 32,
   "components": [
     [
       "VStack",
@@ -809,6 +809,65 @@
       {
         "size": 16
       }
+    ],
+    [
+      "DataTable",
+      "Table",
+      "data",
+      {
+        "columns": 3,
+        "rows": 3
+      }
+    ],
+    [
+      "BarChart",
+      "Chart",
+      "data",
+      {
+        "height": 120
+      }
+    ],
+    [
+      "MonthCalendar",
+      "Calendar",
+      "data",
+      {}
+    ],
+    [
+      "Article",
+      "RichText",
+      "typography",
+      {
+        "size": 16
+      }
+    ],
+    [
+      "MediaPlayer",
+      "Player",
+      "media",
+      {
+        "height": 180
+      }
+    ],
+    [
+      "MapView",
+      "Map",
+      "media",
+      {
+        "height": 200
+      }
+    ],
+    [
+      "ContextMenu",
+      "Menu",
+      "navigation",
+      {}
+    ],
+    [
+      "Hint",
+      "Tooltip",
+      "overlay",
+      {}
     ]
   ]
 }

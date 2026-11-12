@@ -1,0 +1,6 @@
+app Bad {
+  state payload = "idle"
+  Button("Load") async {
+    await pause(5)
+  }
+}
