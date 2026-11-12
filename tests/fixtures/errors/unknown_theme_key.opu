@@ -1,0 +1,4 @@
+app Bad {
+  theme { spacing: 8 }
+  Text("x")
+}

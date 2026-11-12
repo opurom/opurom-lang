@@ -1,0 +1,3 @@
+app Bad {
+  Text("x", color: "4F46E5")
+}

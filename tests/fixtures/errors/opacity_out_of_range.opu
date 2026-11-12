@@ -1,0 +1,3 @@
+app Bad {
+  Text("x", opacity: 1.5)
+}

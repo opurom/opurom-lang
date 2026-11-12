@@ -1,0 +1,9 @@
+app Bad {
+  model Todo {
+    id: int primary
+  }
+  api "/todos" {
+    list Missing
+  }
+  Text("x")
+}

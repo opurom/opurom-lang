@@ -1,5 +1,5 @@
 app Bad {
   state a = 0
-  state b = 0
+  state b = "text"
   Button("x") { a = b }
 }
