@@ -1,10 +1,10 @@
 use crate::diag::{DResult, Diagnostic};
 
-// capability promotes `async`, `await` and `import` to real syntax; capability promotes `else`.
-// `fn` stays reserved. Other capability constructs are rejected at lex time so they can
-// never be silently miscompiled.
+// capability promotes `async`, `await` and `import` to real syntax; capability promotes `else`;
+// capability promotes `component`. `fn` stays reserved. Other capability constructs are rejected at
+// lex time so they can never be silently miscompiled.
 const RESERVED_V01: &[&str] = &["fn"];
-const RESERVED_V02: &[&str] = &["component", "module", "units", "dp", "rem", "let", "var"];
+const RESERVED_V02: &[&str] = &["module", "units", "dp", "rem", "let", "var"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
