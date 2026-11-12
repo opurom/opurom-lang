@@ -1,0 +1,6 @@
+app Bad {
+  state count = 0
+  state doubled = 0
+  computed doubled = count * 2
+  Text("x")
+}

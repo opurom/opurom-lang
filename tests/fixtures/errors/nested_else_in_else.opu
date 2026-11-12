@@ -1,0 +1,5 @@
+app Bad {
+  state outer = false
+  state inner = false
+  if (outer) { Text("outer") } else { if (inner) { Text("inner") } else { Text("fallback") } }
+}

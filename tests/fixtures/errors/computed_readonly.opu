@@ -1,0 +1,5 @@
+app Bad {
+  state count = 0
+  computed doubled = count * 2
+  Button("go") { doubled += 1 }
+}

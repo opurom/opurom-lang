@@ -1,8 +1,6 @@
 app Bad {
   state dark = false
-  if (dark) {
-    Text("dark")
-  } else {
+  else {
     Text("light")
   }
 }
