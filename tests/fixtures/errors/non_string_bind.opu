@@ -1,0 +1,4 @@
+app Bad {
+  state n = 0
+  Input(bind: n)
+}

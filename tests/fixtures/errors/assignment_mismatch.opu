@@ -1,0 +1,4 @@
+app Bad {
+  state flag = true
+  Button("x") { flag = 1 }
+}

@@ -1,0 +1,4 @@
+app Bad {
+  state label = "hi"
+  Button("+") { label += 1 }
+}

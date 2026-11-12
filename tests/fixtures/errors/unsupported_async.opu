@@ -1,0 +1,3 @@
+app Bad {
+  async Text("x")
+}
