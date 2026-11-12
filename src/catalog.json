@@ -1,0 +1,814 @@
+{
+  "version": "0.3",
+  "count": 108,
+  "primitives": 24,
+  "components": [
+    [
+      "VStack",
+      "Column",
+      "layout",
+      {}
+    ],
+    [
+      "VBox",
+      "Column",
+      "layout",
+      {}
+    ],
+    [
+      "VerticalList",
+      "Column",
+      "layout",
+      {
+        "gap": 8
+      }
+    ],
+    [
+      "FormColumn",
+      "Column",
+      "layout",
+      {
+        "gap": 12
+      }
+    ],
+    [
+      "StepperColumn",
+      "Column",
+      "layout",
+      {
+        "gap": 16
+      }
+    ],
+    [
+      "HStack",
+      "Row",
+      "layout",
+      {}
+    ],
+    [
+      "HBox",
+      "Row",
+      "layout",
+      {}
+    ],
+    [
+      "ButtonBar",
+      "Row",
+      "layout",
+      {
+        "gap": 8
+      }
+    ],
+    [
+      "Toolbar",
+      "Row",
+      "layout",
+      {
+        "gap": 4
+      }
+    ],
+    [
+      "ActionRow",
+      "Row",
+      "layout",
+      {
+        "gap": 8,
+        "align": "end"
+      }
+    ],
+    [
+      "Box",
+      "Container",
+      "layout",
+      {}
+    ],
+    [
+      "Frame",
+      "Container",
+      "layout",
+      {}
+    ],
+    [
+      "Surface",
+      "Container",
+      "layout",
+      {
+        "color": "#FFFFFF"
+      }
+    ],
+    [
+      "Hero",
+      "Container",
+      "layout",
+      {
+        "padding": 32
+      }
+    ],
+    [
+      "SectionBox",
+      "Container",
+      "layout",
+      {
+        "padding": 16
+      }
+    ],
+    [
+      "Heading",
+      "Text",
+      "typography",
+      {
+        "size": 28,
+        "role": "heading"
+      }
+    ],
+    [
+      "Label",
+      "Text",
+      "typography",
+      {
+        "size": 14
+      }
+    ],
+    [
+      "Paragraph",
+      "Text",
+      "typography",
+      {
+        "size": 16
+      }
+    ],
+    [
+      "Caption",
+      "Text",
+      "typography",
+      {
+        "size": 12
+      }
+    ],
+    [
+      "Code",
+      "Text",
+      "typography",
+      {
+        "size": 14
+      }
+    ],
+    [
+      "Link",
+      "Text",
+      "typography",
+      {
+        "size": 16,
+        "color": "#4F46E5"
+      }
+    ],
+    [
+      "Overline",
+      "Text",
+      "typography",
+      {
+        "size": 11
+      }
+    ],
+    [
+      "PrimaryButton",
+      "Button",
+      "form",
+      {
+        "color": "#4F46E5"
+      }
+    ],
+    [
+      "SecondaryButton",
+      "Button",
+      "form",
+      {
+        "color": "#6B7280"
+      }
+    ],
+    [
+      "IconButton",
+      "Button",
+      "form",
+      {
+        "width": 40,
+        "height": 40
+      }
+    ],
+    [
+      "Fab",
+      "Button",
+      "form",
+      {
+        "radius": 28
+      }
+    ],
+    [
+      "GhostButton",
+      "Button",
+      "form",
+      {}
+    ],
+    [
+      "TextButton",
+      "Button",
+      "form",
+      {}
+    ],
+    [
+      "DangerButton",
+      "Button",
+      "form",
+      {
+        "color": "#DC2626"
+      }
+    ],
+    [
+      "TextField",
+      "Input",
+      "form",
+      {
+        "placeholder": "Enter text"
+      }
+    ],
+    [
+      "SearchField",
+      "Input",
+      "form",
+      {
+        "placeholder": "Search"
+      }
+    ],
+    [
+      "PasswordField",
+      "Input",
+      "form",
+      {
+        "placeholder": "Password"
+      }
+    ],
+    [
+      "TextArea",
+      "Input",
+      "form",
+      {
+        "height": 96
+      }
+    ],
+    [
+      "NumberField",
+      "Input",
+      "form",
+      {
+        "placeholder": "0"
+      }
+    ],
+    [
+      "EmailField",
+      "Input",
+      "form",
+      {
+        "placeholder": "name@example.com"
+      }
+    ],
+    [
+      "OtpField",
+      "Input",
+      "form",
+      {
+        "placeholder": "000000"
+      }
+    ],
+    [
+      "Picture",
+      "Image",
+      "media",
+      {}
+    ],
+    [
+      "Thumbnail",
+      "Image",
+      "media",
+      {
+        "width": 64,
+        "height": 64
+      }
+    ],
+    [
+      "Banner",
+      "Image",
+      "media",
+      {
+        "height": 160
+      }
+    ],
+    [
+      "BackgroundImage",
+      "Image",
+      "media",
+      {}
+    ],
+    [
+      "Gap",
+      "Spacer",
+      "layout",
+      {
+        "height": 8
+      }
+    ],
+    [
+      "DividerSpace",
+      "Spacer",
+      "layout",
+      {
+        "height": 16
+      }
+    ],
+    [
+      "FlexibleSpace",
+      "Spacer",
+      "layout",
+      {}
+    ],
+    [
+      "Inset",
+      "Spacer",
+      "layout",
+      {
+        "width": 16
+      }
+    ],
+    [
+      "Tile",
+      "Card",
+      "display",
+      {
+        "padding": 12,
+        "radius": 8
+      }
+    ],
+    [
+      "ElevationCard",
+      "Card",
+      "display",
+      {
+        "shadow": 2
+      }
+    ],
+    [
+      "InfoCard",
+      "Card",
+      "display",
+      {
+        "color": "#EEF2FF"
+      }
+    ],
+    [
+      "ProductCard",
+      "Card",
+      "display",
+      {
+        "radius": 12
+      }
+    ],
+    [
+      "ProfileCard",
+      "Card",
+      "display",
+      {
+        "padding": 20
+      }
+    ],
+    [
+      "Hr",
+      "Divider",
+      "display",
+      {}
+    ],
+    [
+      "Separator",
+      "Divider",
+      "display",
+      {
+        "color": "#E5E7EB"
+      }
+    ],
+    [
+      "Rule",
+      "Divider",
+      "display",
+      {
+        "height": 2
+      }
+    ],
+    [
+      "Glyph",
+      "Icon",
+      "media",
+      {
+        "size": 20
+      }
+    ],
+    [
+      "Symbol",
+      "Icon",
+      "media",
+      {
+        "size": 24
+      }
+    ],
+    [
+      "SVGIcon",
+      "Icon",
+      "media",
+      {
+        "size": 20
+      }
+    ],
+    [
+      "MaterialIcon",
+      "Icon",
+      "media",
+      {
+        "size": 24
+      }
+    ],
+    [
+      "Emoji",
+      "Icon",
+      "media",
+      {
+        "size": 24
+      }
+    ],
+    [
+      "Chip",
+      "Badge",
+      "display",
+      {
+        "radius": 16
+      }
+    ],
+    [
+      "Tag",
+      "Badge",
+      "display",
+      {}
+    ],
+    [
+      "Pill",
+      "Badge",
+      "display",
+      {
+        "radius": 999
+      }
+    ],
+    [
+      "CountBadge",
+      "Badge",
+      "display",
+      {}
+    ],
+    [
+      "LinearProgress",
+      "Progress",
+      "feedback",
+      {}
+    ],
+    [
+      "LoadingBar",
+      "Progress",
+      "feedback",
+      {}
+    ],
+    [
+      "StepProgress",
+      "Progress",
+      "feedback",
+      {}
+    ],
+    [
+      "CircularProgress",
+      "Progress",
+      "feedback",
+      {}
+    ],
+    [
+      "Toggle",
+      "Switch",
+      "form",
+      {}
+    ],
+    [
+      "ToggleSwitch",
+      "Switch",
+      "form",
+      {}
+    ],
+    [
+      "SettingSwitch",
+      "Switch",
+      "form",
+      {}
+    ],
+    [
+      "RangeSlider",
+      "Slider",
+      "form",
+      {
+        "min": 0,
+        "max": 100
+      }
+    ],
+    [
+      "VolumeSlider",
+      "Slider",
+      "form",
+      {
+        "min": 0,
+        "max": 11
+      }
+    ],
+    [
+      "BrightnessSlider",
+      "Slider",
+      "form",
+      {
+        "min": 0,
+        "max": 100
+      }
+    ],
+    [
+      "CheckBox",
+      "Checkbox",
+      "form",
+      {}
+    ],
+    [
+      "Check",
+      "Checkbox",
+      "form",
+      {}
+    ],
+    [
+      "MultiChoice",
+      "Checkbox",
+      "form",
+      {}
+    ],
+    [
+      "RadioButton",
+      "Radio",
+      "form",
+      {}
+    ],
+    [
+      "Option",
+      "Radio",
+      "form",
+      {}
+    ],
+    [
+      "SingleChoice",
+      "Radio",
+      "form",
+      {}
+    ],
+    [
+      "Modal",
+      "Dialog",
+      "overlay",
+      {}
+    ],
+    [
+      "Alert",
+      "Dialog",
+      "overlay",
+      {
+        "radius": 8
+      }
+    ],
+    [
+      "Sheet",
+      "Dialog",
+      "overlay",
+      {}
+    ],
+    [
+      "Popover",
+      "Dialog",
+      "overlay",
+      {}
+    ],
+    [
+      "TabBar",
+      "Tabs",
+      "navigation",
+      {}
+    ],
+    [
+      "SegmentedControl",
+      "Tabs",
+      "navigation",
+      {}
+    ],
+    [
+      "TabView",
+      "Tabs",
+      "navigation",
+      {}
+    ],
+    [
+      "Pivot",
+      "Tabs",
+      "navigation",
+      {}
+    ],
+    [
+      "ListView",
+      "List",
+      "layout",
+      {
+        "gap": 4
+      }
+    ],
+    [
+      "MenuList",
+      "List",
+      "layout",
+      {
+        "gap": 2
+      }
+    ],
+    [
+      "Feed",
+      "List",
+      "layout",
+      {
+        "gap": 12
+      }
+    ],
+    [
+      "Timeline",
+      "List",
+      "layout",
+      {
+        "gap": 16
+      }
+    ],
+    [
+      "TreeList",
+      "List",
+      "layout",
+      {
+        "gap": 4
+      }
+    ],
+    [
+      "GridView",
+      "Grid",
+      "layout",
+      {
+        "columns": 3
+      }
+    ],
+    [
+      "Gallery",
+      "Grid",
+      "layout",
+      {
+        "columns": 4
+      }
+    ],
+    [
+      "Masonry",
+      "Grid",
+      "layout",
+      {
+        "columns": 2
+      }
+    ],
+    [
+      "Dashboard",
+      "Grid",
+      "layout",
+      {
+        "columns": 4
+      }
+    ],
+    [
+      "CardGrid",
+      "Grid",
+      "layout",
+      {
+        "columns": 2,
+        "gap": 12
+      }
+    ],
+    [
+      "Kanban",
+      "Grid",
+      "layout",
+      {
+        "columns": 3,
+        "gap": 16
+      }
+    ],
+    [
+      "ScrollView",
+      "Scroll",
+      "layout",
+      {
+        "height": 400
+      }
+    ],
+    [
+      "HorizontalScroll",
+      "Scroll",
+      "layout",
+      {
+        "height": 120
+      }
+    ],
+    [
+      "InfiniteScroll",
+      "Scroll",
+      "layout",
+      {
+        "height": 600
+      }
+    ],
+    [
+      "ScrollArea",
+      "Scroll",
+      "layout",
+      {
+        "height": 320
+      }
+    ],
+    [
+      "UserAvatar",
+      "Avatar",
+      "media",
+      {
+        "size": 40
+      }
+    ],
+    [
+      "Initials",
+      "Avatar",
+      "media",
+      {
+        "size": 32
+      }
+    ],
+    [
+      "ProfilePhoto",
+      "Avatar",
+      "media",
+      {
+        "size": 64
+      }
+    ],
+    [
+      "AvatarGroup",
+      "Avatar",
+      "media",
+      {
+        "size": 28
+      }
+    ],
+    [
+      "Loader",
+      "Spinner",
+      "feedback",
+      {
+        "size": 24
+      }
+    ],
+    [
+      "LoadingIndicator",
+      "Spinner",
+      "feedback",
+      {
+        "size": 32
+      }
+    ],
+    [
+      "ActivityIndicator",
+      "Spinner",
+      "feedback",
+      {
+        "size": 20
+      }
+    ],
+    [
+      "RefreshIndicator",
+      "Spinner",
+      "feedback",
+      {
+        "size": 16
+      }
+    ]
+  ]
+}
