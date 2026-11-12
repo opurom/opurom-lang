@@ -96,6 +96,8 @@ opuromc check <src.opu>                                   # diagnostics only
 opuromc compile <src.opu> -o <out.opuir.json>             # lex -> parse -> typecheck -> IR
 opuromc target <ir.json> --target <name> -o <dir>         # lower IR into target source
 opuromc targets                                           # list all 9 targets
+opuromc components                                        # list the 108 catalog names
+opuromc optimize <ir.json> -o <out.json>                  # dead-state elimination
 opuromc --version                                         # 0.2.0
 ```
 
@@ -128,12 +130,45 @@ action may read another state through `valueFrom`, a node may carry `when`, and 
 consumer does not know renders as a `Container` (with children) or a `Text`
 (label/value/title/name) — the documented fallback, not an error.
 
+### R3 component catalog
+
+[components.json](../opurom-spec/components.json) is vendored as
+[src/catalog.json](src/catalog.json) and embedded with `include_str!`, so the crate builds
+standalone. Its 108 tuples are `[name, primitive, category, defaultProps]`. A source `Kind` that
+is a catalog name lowers to the named primitive: the IR node keeps `kind` = primitive and gains
+`"component": "<name>"`. Consumers that ignore `component` still read valid v0.1 IR.
+
+`defaultProps` are injected **after** explicitly written props are validated, so explicit values
+win and preset keys need not be props that the primitive declares. The catalog is validated at
+compile time: duplicate names, unknown primitives and malformed (non-flat/non-scalar) defaults
+are rejected. Expansion is deterministic and compile-time only; no component registry ships in a
+build. `opuromc components` prints `name | primitive | category` rows and a final
+`108 components` line. Unknown kinds remain a diagnostic.
+
+The R3 accessibility keys `label`, `role`, `fontScale` and `highContrast` are accepted on any
+node and preserved in IR props. This crate only produces them; rendering them belongs to
+`opurom-render`.
+
+### R3 optimizer
+
+`opuromc optimize <ir.json> -o <out.json>` performs dead-state elimination: it removes `state`
+entries that no interpolation (`{name}` in any string prop), `bind`, event action `target` or
+`valueFrom`, or `when` can observe. It drops props whose value is `null` and keeps empty
+`children`/`events` objects (the schema requires them). It never removes nodes, folds `when`,
+changes ids, reorders state, or strips the optional `component` field. IR versions other than
+`0.1` and fields outside the IR schema are rejected with a diagnostic and exit code 1.
+
+Measured byte counts are printed to stdout as `optimize: <in> bytes in, <out> bytes out` — both
+numbers come from the actual input and output files, not estimates. A golden IR with no dead state
+optimizes to a deep-equal IR. Optimization is opt-in: default `compile` output stays byte-identical
+to R2.
+
 ## Verify
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
 cd /Users/mac/work/opurom/opurom-lang
-cargo test --offline                 # 16 integration tests
+cargo test --offline                 # 26 integration + 4 unit tests
 RUSTFLAGS="-D warnings" cargo test --offline   # zero compiler warnings
 ```
 
@@ -141,14 +176,16 @@ The test harness drives the CLI binary from `tests/fixtures/`, compares the gold
 equality, checks `node --check` on web + six mini `index.js`/`app.js` files plus the wasm
 `host.js`, runs `cargo build --release --offline` inside the generated native crate followed by
 a piped-stdin session, and builds the generated wasm crate for `wasm32-unknown-unknown` before
-instantiating it in Node's `WebAssembly` runtime with an empty import object.
+instantiating it in Node's `WebAssembly` runtime with an empty import object. R3 tests cover
+catalog/spec parity, catalog expansion with explicit-props-win, the `component` field, all 24
+primitive kinds, the `components` count, and optimizer no-op/shrink/id-order/bad-IR cases.
 
 ## Honest status
 
 **Verified in this round**
 
-- `cargo test --offline`: 16/16 tests pass, including the golden `counter.opu` →
-  `counter.opuir.json` parsed-JSON deep-equality assertion.
+- `cargo test --offline`: 30/30 tests pass (26 integration + 4 unit), including the golden
+  `counter.opu` → `counter.opuir.json` parsed-JSON deep-equality assertion.
 - UI-only programs (`counter.opu`, `profile.opu`) compile to **byte-identical** IR compared
   with the R1 compiler; no empty `models`/`api` arrays are added.
 - 36 negative fixtures: the 21 v0.1 classes plus the R2 classes (model type, two primaries,
@@ -165,10 +202,25 @@ instantiating it in Node's `WebAssembly` runtime with an empty import object.
   stdin (`state ...` and `patch ...` lines verified).
 - `RUSTFLAGS="-D warnings" cargo test --offline` is clean.
 
+### R3 status
+
+- **108 named components map onto the 24 primitives.** There are no distinct renderer
+  implementations per component: a component is a compile-time name plus preset props, resolved
+  to a primitive before any emitter sees the tree.
+- **The optimizer is dead-state elimination only, not full tree shaking.** It does not prune
+  nodes, fold conditionals, remove events or reorder anything; it only removes unreachable state
+  entries and null-valued props. No byte counts are estimated — both numbers are measured from
+  the input and output files.
+- Verified: catalog/spec parity, compile-time catalog validation (duplicates, unknown
+  primitives, malformed props), explicit-props-win expansion, `component` field presence only
+  on catalog nodes, `opuromc components` count >= 100, all 24 primitive kinds unchanged,
+  golden IR optimizing to a deep-equal IR, dead-state shrinking, id/order/`when`/`component`
+  preservation, and bad-IR diagnostics.
+
 **Planned / not verified (later rounds)**
 
-- GPU/ANGLE/Metal/Vulkan backend, LSP + debugger, custom components, plugin sandboxing,
-  perf harness — R3+.
+- GPU/ANGLE/Metal/Vulkan backend, LSP, user-defined custom components, plugin sandboxing,
+  perf harness — R4+.
 - `async`/`await`, `fn`, modules/imports, `else`: rejected by design.
 - Event handlers with local variables and list-valued state are out of scope for R2.
 - The wasm host renders with Canvas 2D and forwards taps; there is no DOM/WASM hybrid

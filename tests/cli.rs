@@ -676,3 +676,405 @@ fn usage_error_is_a_diagnostic() {
     assert!(err.contains(": error: "), "{err}");
     assert!(err.contains("  help: "), "{err}");
 }
+
+// ------------------------------------------------------------------ R3 ----
+
+fn optimize(ir: &Path, out: &Path) -> Output {
+    bin()
+        .arg("optimize")
+        .arg(ir)
+        .arg("-o")
+        .arg(out)
+        .output()
+        .expect("run opuromc optimize")
+}
+
+fn pretty_ir(v: &Json) -> String {
+    serde_json::to_string_pretty(v).unwrap() + "\n"
+}
+
+fn state_names(ir: &Json) -> Vec<&str> {
+    ir["state"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect()
+}
+
+fn node_ids(ir: &Json) -> Vec<u64> {
+    nodes_of(ir)
+        .iter()
+        .map(|n| n["id"].as_u64().unwrap())
+        .collect()
+}
+
+#[test]
+fn catalog_components_resolve_with_explicit_props_winning() {
+    let dir = out_dir("r3-catalog");
+    let src = dir.join("catalog.opu");
+    fs::write(
+        &src,
+        r##"app Catalog {
+  state count = 0
+  Column {
+    PrimaryButton("Go", color: "#000000")
+    Heading("Title", size: 40)
+    IconButton("X")
+    Tile(padding: 4) { Text("Hi") }
+  }
+}
+"##,
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let children = ir["tree"]["children"].as_array().unwrap();
+
+    let button = &children[0];
+    assert_eq!(button["kind"], "Button");
+    assert_eq!(button["props"]["label"], "Go");
+    assert_eq!(
+        button["props"]["color"], "#000000",
+        "explicit prop must beat the #4F46E5 default"
+    );
+
+    let heading = &children[1];
+    assert_eq!(heading["kind"], "Text");
+    assert_eq!(heading["props"]["size"], 40, "explicit size beats 28");
+    assert_eq!(heading["props"]["role"], "heading", "default stays");
+
+    // IconButton defaults are not props the Button primitive knows: they must bypass validation.
+    let icon = &children[2];
+    assert_eq!(icon["kind"], "Button");
+    assert_eq!(icon["props"]["width"], 40);
+    assert_eq!(icon["props"]["height"], 40);
+
+    let tile = &children[3];
+    assert_eq!(tile["kind"], "Card");
+    assert_eq!(tile["props"]["padding"], 4, "explicit padding beats 12");
+    assert_eq!(tile["props"]["radius"], 8, "default stays");
+}
+
+#[test]
+fn component_field_is_added_only_for_catalog_names() {
+    let dir = out_dir("r3-component");
+    let src = dir.join("component.opu");
+    fs::write(
+        &src,
+        "app Catalog {\n  VStack(gap: 2) { Label(\"hi\", size: 9) }\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    assert_eq!(ir["tree"]["component"], "VStack");
+    assert_eq!(ir["tree"]["kind"], "Column");
+    assert_eq!(ir["tree"]["props"]["gap"], 2);
+    let child = &ir["tree"]["children"][0];
+    assert_eq!(child["component"], "Label");
+    assert_eq!(child["kind"], "Text");
+    assert_eq!(
+        child["props"]["size"], 9,
+        "explicit size beats Label default 14"
+    );
+
+    let plain = compile_ok(&spec("counter.opu"));
+    for node in nodes_of(&plain) {
+        assert!(
+            node.get("component").is_none(),
+            "primitive kinds must not gain a component field"
+        );
+    }
+}
+
+#[test]
+fn all_r2_primitives_stay_unchanged() {
+    let dir = out_dir("r3-primitives");
+    let src = dir.join("primitives.opu");
+    fs::write(
+        &src,
+        r#"app Primitives {
+  state b = false
+  state i = 0
+  state s = ""
+  Column {
+    Row { }
+    Container { }
+    Text("t")
+    Button("b") { i += 1 }
+    Input(bind: s)
+    Image(src: "a.png")
+    Spacer(width: 1)
+    Card { }
+    Divider()
+    Icon(name: "star")
+    Badge(label: "x")
+    Progress(value: 1)
+    Switch(bind: b)
+    Slider(bind: i, min: 0, max: 10)
+    Checkbox(bind: b)
+    Radio(bind: s, value: "a")
+    Dialog(title: "d") { }
+    Tabs(labels: "a,b", bind: s)
+    List { }
+    Grid(columns: 2) { }
+    Scroll(height: 100) { }
+    Avatar(label: "a")
+    Spinner()
+  }
+}
+"#,
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let nodes = nodes_of(&ir);
+    assert_eq!(nodes.len(), 24, "expected all 24 primitive kinds");
+    let mut kinds: Vec<&str> = nodes.iter().map(|n| n["kind"].as_str().unwrap()).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    assert_eq!(kinds.len(), 24, "all 24 kinds must be distinct: {kinds:?}");
+    for node in &nodes {
+        assert!(node.get("component").is_none());
+    }
+}
+
+#[test]
+fn components_lists_at_least_100_rows() {
+    let r = bin().arg("components").output().expect("run components");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let text = String::from_utf8_lossy(&r.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    let last = *lines.last().expect("count line");
+    assert!(last.ends_with(" components"), "final count line: {last}");
+    let count: usize = last.split_whitespace().next().unwrap().parse().unwrap();
+    assert!(count >= 100, "catalog count: {count}");
+    assert_eq!(lines.len(), count + 1, "one row per component plus count");
+    for row in &lines[..count] {
+        let parts: Vec<&str> = row.split(" | ").collect();
+        assert_eq!(parts.len(), 3, "row format: {row}");
+        assert!(parts.iter().all(|p| !p.is_empty()), "empty row cell: {row}");
+    }
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("PrimaryButton | Button | form")),
+        "missing known catalog row"
+    );
+}
+
+#[test]
+fn vendored_catalog_matches_spec_when_present() {
+    let upstream = spec("components.json");
+    if !upstream.is_file() {
+        return; // standalone checkout: the sibling spec repo is optional
+    }
+    let vendored: Json =
+        serde_json::from_slice(&fs::read(workspace().join("src/catalog.json")).unwrap()).unwrap();
+    let expected: Json = serde_json::from_slice(&fs::read(&upstream).unwrap()).unwrap();
+    assert_eq!(
+        vendored, expected,
+        "vendored catalog drifted from opurom-spec"
+    );
+}
+
+#[test]
+fn unknown_component_kind_is_a_diagnostic() {
+    let dir = out_dir("r3-unknown");
+    let src = dir.join("unknown.opu");
+    fs::write(&src, "app Bad {\n  NotAComponent(\"x\")\n}\n").unwrap();
+    let r = bin().arg("check").arg(&src).output().expect("run check");
+    assert_eq!(r.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(err.contains("unknown node kind 'NotAComponent'"), "{err}");
+    assert_diag(&err, &src);
+
+    let out = dir.join("out.opuir.json");
+    assert_eq!(compile(&src, &out).status.code(), Some(1));
+    assert!(!out.exists(), "no IR may be written on error");
+}
+
+#[test]
+fn optimizer_is_a_no_op_on_golden_counter_ir() {
+    let golden = spec("counter.opuir.json");
+    let out = out_dir("r3-opt-golden").join("counter.opuir.json");
+    let r = optimize(&golden, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let expected: Json = serde_json::from_slice(&fs::read(&golden).unwrap()).unwrap();
+    let got: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(got, expected, "golden IR has no dead state to remove");
+    assert_eq!(state_names(&got), vec!["count"]);
+    assert_shape(&got["tree"]);
+
+    let in_bytes = fs::metadata(&golden).unwrap().len();
+    let out_bytes = fs::metadata(&out).unwrap().len();
+    assert_eq!(
+        String::from_utf8_lossy(&r.stdout).trim().to_string(),
+        format!("optimize: {in_bytes} bytes in, {out_bytes} bytes out"),
+        "byte counts must come from the real files"
+    );
+}
+
+#[test]
+fn optimizer_removes_dead_state_and_null_props() {
+    let dir = out_dir("r3-opt-dead");
+    let ir_path = dir.join("dead.opuir.json");
+    let out = dir.join("optimized.opuir.json");
+    let ir = json!({
+        "ir": "0.1",
+        "app": "DeadState",
+        "state": [
+            {"name": "count", "type": "int", "init": 0},
+            {"name": "dead1", "type": "int", "init": 9},
+            {"name": "name", "type": "string", "init": ""},
+            {"name": "visible", "type": "bool", "init": false},
+            {"name": "dead2", "type": "string", "init": "x"},
+            {"name": "source", "type": "int", "init": 3}
+        ],
+        "tree": {
+            "id": 0, "kind": "Column", "component": "VStack",
+            "props": {"gap": 8, "shadow": null},
+            "children": [
+                {"id": 1, "kind": "Text", "props": {"value": "{count}", "label": null},
+                 "children": [], "events": {}},
+                {"id": 2, "kind": "Input", "props": {"bind": "name"}, "children": [],
+                 "events": {"input": {"op": "set", "target": "name"}}},
+                {"id": 3, "kind": "Text", "component": "Label", "when": "visible",
+                 "props": {"value": "conditional"}, "children": [], "events": {}},
+                {"id": 4, "kind": "Button", "props": {"label": "copy"}, "children": [],
+                 "events": {"tap": {"actions": [
+                     {"op": "set", "target": "count", "valueFrom": "source"}
+                 ]}}}
+            ],
+            "events": {}
+        },
+        "theme": {"mode": "system", "accent": "#4F46E5", "radius": 12}
+    });
+    let text = pretty_ir(&ir);
+    fs::write(&ir_path, &text).unwrap();
+    let r = optimize(&ir_path, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let got: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+
+    assert_eq!(
+        state_names(&got),
+        vec!["count", "name", "visible", "source"]
+    );
+    assert!(
+        fs::metadata(&out).unwrap().len() < text.len() as u64,
+        "optimized IR must shrink"
+    );
+    assert_eq!(node_ids(&got), node_ids(&ir));
+    assert_eq!(got["tree"]["props"]["gap"], 8);
+    assert!(
+        got["tree"]["props"].get("shadow").is_none(),
+        "null prop dropped"
+    );
+    assert!(got["tree"]["children"][0]["props"].get("label").is_none());
+    assert_eq!(got["tree"]["component"], "VStack", "component preserved");
+    assert_eq!(got["tree"]["children"][2]["component"], "Label");
+    assert_eq!(
+        got["tree"]["children"][2]["when"], "visible",
+        "when not folded"
+    );
+    assert_eq!(
+        got["tree"]["children"][3]["events"]["tap"]["actions"][0]["valueFrom"],
+        "source"
+    );
+}
+
+#[test]
+fn optimizer_preserves_node_ids_and_state_order() {
+    let dir = out_dir("r3-opt-order");
+    let ir_path = dir.join("order.opuir.json");
+    let out = dir.join("optimized.opuir.json");
+    let ir = json!({
+        "ir": "0.1",
+        "app": "Order",
+        "state": [
+            {"name": "a", "type": "int", "init": 0},
+            {"name": "b", "type": "int", "init": 0},
+            {"name": "c", "type": "bool", "init": false},
+            {"name": "d", "type": "int", "init": 0},
+            {"name": "e", "type": "int", "init": 1}
+        ],
+        "tree": {
+            "id": 0, "kind": "Column", "props": {}, "children": [
+                {"id": 1, "kind": "Row", "props": {}, "children": [
+                    {"id": 2, "kind": "Text", "props": {"value": "{a}"},
+                     "children": [], "events": {}},
+                    {"id": 3, "kind": "Text", "when": "c", "props": {"value": "{e}"},
+                     "children": [], "events": {}}
+                ], "events": {}},
+                {"id": 4, "kind": "Button", "props": {"label": "go"}, "children": [],
+                 "events": {"tap": {"op": "set", "target": "a", "valueFrom": "e"}}}
+            ], "events": {}
+        },
+        "theme": {"mode": "system", "accent": "#4F46E5", "radius": 12}
+    });
+    fs::write(&ir_path, pretty_ir(&ir)).unwrap();
+    let r = optimize(&ir_path, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let got: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+
+    assert_eq!(
+        state_names(&got),
+        vec!["a", "c", "e"],
+        "surviving states keep their order"
+    );
+    assert_eq!(
+        node_ids(&got),
+        node_ids(&ir),
+        "no nodes removed, no ids changed"
+    );
+    assert_eq!(nodes_of(&got).len(), 5);
+    assert_eq!(got["tree"]["children"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        got["tree"]["children"][0]["children"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(got["tree"]["children"][0]["children"][1]["when"], "c");
+}
+
+#[test]
+fn optimizer_rejects_bad_ir() {
+    let dir = out_dir("r3-opt-bad");
+    let tree = json!({"id": 0, "kind": "Column", "props": {}, "children": [], "events": {}});
+    let base = json!({"ir": "0.1", "app": "X", "state": [], "tree": tree, "theme": {}});
+    let mut version = base.clone();
+    version["ir"] = json!("9.9");
+    let mut field = base.clone();
+    field["stat"] = json!([]);
+    let mut node_field = base.clone();
+    node_field["tree"]["bogus"] = json!(1);
+    let mut state_field = base.clone();
+    state_field["state"] = json!([{"name": "a", "bogus": 1}]);
+    let mut missing_tree = base.clone();
+    missing_tree.as_object_mut().unwrap().remove("tree");
+
+    let cases: &[(&str, Json, &str)] = &[
+        ("version", version, "unsupported IR version '9.9'"),
+        ("field", field, "unknown IR field 'stat'"),
+        ("node-field", node_field, "unknown IR node field 'bogus'"),
+        ("state-field", state_field, "unknown IR state field 'bogus'"),
+        (
+            "missing-tree",
+            missing_tree,
+            "IR is missing the 'tree' field",
+        ),
+    ];
+    for &(name, ref ir, expected) in cases {
+        let ir_path = dir.join(format!("{name}.json"));
+        fs::write(&ir_path, pretty_ir(ir)).unwrap();
+        let out = dir.join(format!("{name}.out.json"));
+        let r = optimize(&ir_path, &out);
+        assert_eq!(r.status.code(), Some(1), "{name} must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            err.contains(expected),
+            "{name}: unexpected diagnostic: {err}"
+        );
+        assert_diag(&err, &ir_path);
+        assert!(!out.exists(), "{name}: no output may be written on error");
+    }
+}

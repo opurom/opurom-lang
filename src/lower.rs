@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Map as JsonMap, Value as Json};
 
+use crate::catalog;
 use crate::diag::{DResult, Diagnostic};
 use crate::lexer::lex;
 use crate::parser::{
@@ -35,10 +36,22 @@ pub const KINDS: &[&str] = &[
     "Spinner",
 ];
 
-/// Visual props every kind accepts (canonical R2 names).
+/// Generic props every kind accepts: canonical R2 visual props plus R3 accessibility keys.
 const GENERIC_PROPS: &[&str] = &[
-    "padding", "margin", "color", "radius", "shadow", "gradient", "glass", "opacity", "border",
+    "padding",
+    "margin",
+    "color",
+    "radius",
+    "shadow",
+    "gradient",
+    "glass",
+    "opacity",
+    "border",
     "animate",
+    "label",
+    "role",
+    "fontScale",
+    "highContrast",
 ];
 
 /// Atomic source shortcuts and the canonical prop they lower to.
@@ -153,6 +166,8 @@ pub fn offset_pos(base: Pos, s: &str, offset: usize) -> Pos {
 }
 
 pub fn compile_source(src: &str, path: &str) -> DResult<Json> {
+    // Validate the vendored catalog once per compiler run, before any source is lowered.
+    catalog::catalog()?;
     let toks = lex(src, path)?;
     let program = parser::parse(toks, path)?;
     lower(&program, path)
@@ -815,15 +830,25 @@ fn lower_actions(ctx: &Ctx, stmts: &[Stmt]) -> DResult<Vec<Json>> {
 
 fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
     let id = ctx.take_id();
-    let kind = match &node.kind {
+    let source_kind = match &node.kind {
         NodeKind::Widget(k) => k.as_str(),
         _ => unreachable!("conditional nodes are expanded before lowering"),
     };
+    // A catalog name expands to its primitive at compile time; the 24 primitives stay unchanged.
+    let component = if KINDS.contains(&source_kind) {
+        None
+    } else {
+        catalog::catalog()?.get(source_kind)
+    };
+    let kind = component.map_or(source_kind, |c| c.primitive.as_str());
     let info = kind_info(kind).ok_or_else(|| {
         ctx.err(
             node.pos,
-            format!("unknown node kind '{kind}'"),
-            format!("use one of: {}", KINDS.join(", ")),
+            format!("unknown node kind '{source_kind}'"),
+            format!(
+                "use one of: {}; see 'opuromc components' for catalog names",
+                KINDS.join(", ")
+            ),
         )
     })?;
     let mut props = JsonMap::new();
@@ -846,10 +871,10 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
                     None => {
                         return Err(ctx.err(
                             arg.pos,
-                            format!("'{kind}' does not accept a positional argument"),
+                            format!("'{source_kind}' does not accept a positional argument"),
                             format!(
                                 "write props explicitly, e.g. {}({}: value)",
-                                kind,
+                                source_kind,
                                 info.props.first().copied().unwrap_or("value")
                             ),
                         ));
@@ -865,9 +890,9 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
         if !info.props.contains(&key.as_str()) && !GENERIC_PROPS.contains(&key.as_str()) {
             return Err(ctx.err(
                 arg.pos,
-                format!("unknown prop '{raw_key}' on {kind}"),
+                format!("unknown prop '{raw_key}' on {source_kind}"),
                 format!(
-                    "{kind} accepts: {}; remove '{raw_key}'",
+                    "{source_kind} accepts: {}; remove '{raw_key}'",
                     info.props.join(", ")
                 ),
             ));
@@ -875,7 +900,7 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
         if !seen.insert(key.clone()) {
             return Err(ctx.err(
                 arg.pos,
-                format!("duplicate prop '{key}' on {kind}"),
+                format!("duplicate prop '{key}' on {source_kind}"),
                 format!("keep one '{key}' prop per node"),
             ));
         }
@@ -889,12 +914,20 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
         };
         props.insert(key, val);
     }
+    // Defaults are compiler-supplied: inject them after explicit validation, explicit wins.
+    if let Some(c) = component {
+        for (key, value) in &c.props {
+            if !props.contains_key(key) {
+                props.insert(key.clone(), value.clone());
+            }
+        }
+    }
     for req in info.required {
         if !props.contains_key(*req) {
             return Err(ctx.err(
                 node.pos,
-                format!("{kind} requires the '{req}' prop"),
-                format!("write {kind}({req}: ...) with every required prop"),
+                format!("{source_kind} requires the '{req}' prop"),
+                format!("write {source_kind}({req}: ...) with every required prop"),
             ));
         }
     }
@@ -949,7 +982,7 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
             if let Some(stmt) = block.stmts.first() {
                 return Err(ctx.err(
                     stmt.pos,
-                    format!("a {kind} block cannot contain statements"),
+                    format!("a {source_kind} block cannot contain statements"),
                     "put state changes inside a Button { ... } tap handler".to_string(),
                 ));
             }
@@ -957,7 +990,7 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
         } else {
             return Err(ctx.err(
                 block.pos,
-                format!("'{kind}' does not support children or tap handlers"),
+                format!("'{source_kind}' does not support children or tap handlers"),
                 "remove the trailing block; only container kinds and Button accept blocks"
                     .to_string(),
             ));
@@ -1010,6 +1043,9 @@ fn lower_node(ctx: &mut Ctx, node: &Node, when: Option<&str>) -> DResult<Json> {
     let mut node_json = JsonMap::new();
     node_json.insert("id".to_string(), json!(id));
     node_json.insert("kind".to_string(), json!(kind));
+    if let Some(c) = component {
+        node_json.insert("component".to_string(), json!(c.name));
+    }
     node_json.insert("props".to_string(), Json::Object(props));
     node_json.insert("children".to_string(), Json::Array(children));
     node_json.insert("events".to_string(), Json::Object(events));

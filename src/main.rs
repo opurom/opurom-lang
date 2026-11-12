@@ -1,7 +1,9 @@
+mod catalog;
 mod diag;
 mod emit;
 mod lexer;
 mod lower;
+mod optimize;
 mod parser;
 mod wasm;
 
@@ -11,7 +13,7 @@ use std::path::Path;
 use diag::{DResult, Diagnostic};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const USAGE: &str = "usage: opuromc check <src.opu> | compile <src.opu> -o <out.opuir.json> | target <ir.json> --target <name> -o <dir> | targets | --version";
+const USAGE: &str = "usage: opuromc check <src.opu> | compile <src.opu> -o <out.opuir.json> | target <ir.json> --target <name> -o <dir> | optimize <ir.json> -o <out.json> | targets | components | --version";
 
 fn main() {
     if let Err(e) = run() {
@@ -103,6 +105,35 @@ fn run() -> DResult<()> {
                 )
             })?;
             emit::emit(&target, &text, ir_path, Path::new(&out))
+        }
+        Some("components") => {
+            let catalog = catalog::catalog()?;
+            if catalog.components.len() < 100 {
+                return Err(Diagnostic::file(
+                    "opuromc",
+                    format!(
+                        "catalog has only {} components, expected >= 100",
+                        catalog.components.len()
+                    ),
+                    "update the vendored catalog in src/catalog.json",
+                ));
+            }
+            for c in &catalog.components {
+                println!("{} | {} | {}", c.name, c.primitive, c.category);
+            }
+            println!("{} components", catalog.components.len());
+            Ok(())
+        }
+        Some("optimize") => {
+            let ir_path = need(&args, 1, "IR file for 'optimize'")?;
+            let out = flag_value(&args[2..], "-o").ok_or_else(|| {
+                Diagnostic::file(
+                    "opuromc",
+                    "optimize needs '-o <out.json>'",
+                    USAGE.to_string(),
+                )
+            })?;
+            optimize::run(ir_path, Path::new(&out))
         }
         Some("targets") => {
             for (name, artifacts) in emit::TARGETS {
