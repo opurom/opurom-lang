@@ -1,0 +1,8 @@
+// Adding a state reference must keep the "add" action op.
+app AddState {
+  state total = 10
+  state step = 3
+  Column {
+    Button("add") { total += step }
+  }
+}

@@ -438,7 +438,6 @@ Optimization is opt-in: default `compile` output stays byte-identical.
 ## Verify
 
 ```sh
-export PATH="$HOME/.cargo/bin:$PATH"
 cd opurom-lang
 cargo fmt --all
 cargo fmt --all -- --check

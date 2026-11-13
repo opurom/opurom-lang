@@ -925,7 +925,13 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
                     }
                 }
                 AstValue::Ident(name) => {
-                    return Ok(json!({"op": "add", "target": stmt.target, "valueFrom": name}));
+                    // A state reference cannot be negated, so '-=' needs its own op.
+                    let op = if matches!(stmt.kind, StmtKind::Sub(..)) {
+                        "sub"
+                    } else {
+                        "add"
+                    };
+                    return Ok(json!({"op": op, "target": stmt.target, "valueFrom": name}));
                 }
                 other => {
                     return Err(ctx.err(

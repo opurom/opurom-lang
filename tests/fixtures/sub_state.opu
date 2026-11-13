@@ -1,0 +1,8 @@
+// Subtracting a state reference must lower to the "sub" action op.
+app SubState {
+  state total = 10
+  state step = 3
+  Column {
+    Button("sub") { total -= step }
+  }
+}

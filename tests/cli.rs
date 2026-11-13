@@ -2798,3 +2798,181 @@ fn example_programs_keep_byte_identical_ir() {
         );
     }
 }
+
+// ---------------------------------------------- state-reference arithmetic ----
+
+/// A state reference cannot be negated in place, so `-=` lowers to the "sub"
+/// action while `+=` keeps "add"; both read the value at event time.
+#[test]
+fn state_subtraction_lowers_to_sub_and_addition_to_add() {
+    let sub = compile_ok(&fixture("sub_state.opu"));
+    let nodes = nodes_of(&sub);
+    assert_eq!(
+        nodes[1]["events"]["tap"],
+        json!({"op": "sub", "target": "total", "valueFrom": "step"})
+    );
+
+    let add = compile_ok(&fixture("add_state.opu"));
+    let nodes = nodes_of(&add);
+    assert_eq!(
+        nodes[1]["events"]["tap"],
+        json!({"op": "add", "target": "total", "valueFrom": "step"})
+    );
+}
+
+const WEB_ACTION_DRIVER: &str = r#"
+const fs = require('node:fs');
+const src = fs.readFileSync(process.argv[1], 'utf8');
+const ctx = new Proxy({}, { get: () => () => {}, set: () => true });
+const canvas = { width: 800, height: 600, getContext: () => ctx,
+  addEventListener: () => {}, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+const stub = { getElementById: () => canvas };
+const load = new Function('document', src + '\nreturn { state, applyTap };');
+const { state, applyTap } = load(stub);
+applyTap(Number(process.argv[2]));
+console.log('total=' + state.total);
+"#;
+
+fn run_web_action(app_js: &Path, tap_id: u64) -> String {
+    let r = Command::new("node")
+        .arg("-e")
+        .arg(WEB_ACTION_DRIVER)
+        .arg(app_js)
+        .arg(tap_id.to_string())
+        .output()
+        .expect("run node web action driver");
+    assert!(
+        r.status.success(),
+        "web action driver failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    String::from_utf8_lossy(&r.stdout).to_string()
+}
+
+fn find_tap_id(ir: &Json) -> u64 {
+    nodes_of(ir)
+        .into_iter()
+        .find(|n| n["events"].get("tap").is_some())
+        .and_then(|n| n["id"].as_u64())
+        .expect("tap node id")
+}
+
+#[test]
+fn every_emitter_lowers_the_sub_action() {
+    let ir = out_dir("sub-emit-ir").join("sub.opuir.json");
+    let r = compile(&fixture("sub_state.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let native = out_dir("sub-native");
+    let r = emit(&ir, "native", &native);
+    assert!(
+        r.status.success(),
+        "native emit failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let native_rs = fs::read_to_string(native.join("src/main.rs")).unwrap();
+    assert!(
+        native_rs.contains("_state.total = _state.total.saturating_sub(_state.step);"),
+        "native source missing saturating_sub: {native_rs}"
+    );
+
+    let web = out_dir("sub-web");
+    let r = emit(&ir, "web", &web);
+    assert!(
+        r.status.success(),
+        "web emit failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let app_js = fs::read_to_string(web.join("app.js")).unwrap();
+    assert!(app_js.contains("state.total -= state.step;"), "{app_js}");
+    node_check(&web.join("app.js"));
+
+    for target in ["wechat", "alipay", "qq", "douyin", "baidu", "kuaishou"] {
+        let dir = out_dir(&format!("sub-{target}"));
+        let r = emit(&ir, target, &dir);
+        assert!(
+            r.status.success(),
+            "{target} emit failed: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let js = fs::read_to_string(dir.join("pages/index/index.js")).unwrap();
+        assert!(
+            js.contains("this.data.total - (this.data.step)"),
+            "{target} index.js missing subtraction: {js}"
+        );
+        node_check(&dir.join("pages/index/index.js"));
+    }
+
+    let wasm = out_dir("sub-wasm");
+    let r = emit(&ir, "wasm", &wasm);
+    assert!(
+        r.status.success(),
+        "wasm emit failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let lib_rs = fs::read_to_string(wasm.join("src/lib.rs")).unwrap();
+    assert!(
+        lib_rs.contains("state(0).saturating_sub(state(1))"),
+        "wasm lib.rs missing SubFrom: {lib_rs}"
+    );
+    let host_js = fs::read_to_string(wasm.join("host.js")).unwrap();
+    assert!(host_js.contains("action.op === \"sub\""), "{host_js}");
+    node_check(&wasm.join("host.js"));
+}
+
+#[test]
+fn native_sub_and_add_state_values_apply_at_tap() {
+    // One process per fixture: 10 - 3 = 7 and 10 + 3 = 13 from the initial state.
+    for (name, expected_state, expected_patch) in [
+        ("sub_state.opu", "state total=7 step=3", "patch total=7"),
+        ("add_state.opu", "state total=13 step=3", "patch total=13"),
+    ] {
+        let ir = out_dir("arith-ir").join("out.opuir.json");
+        let r = compile(&fixture(name), &ir);
+        assert!(
+            r.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let tap_id = find_tap_id(&serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap());
+        let dir = out_dir("arith-native");
+        let r = emit(&ir, "native", &dir);
+        assert!(
+            r.status.success(),
+            "{name}: native emit failed: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let (built, stderr) = build_native(&dir);
+        assert!(built, "{name}: cargo build --release failed:\n{stderr}");
+        let (ran, stdout) = run_native(
+            &dir.join("target/release/opurom_native"),
+            &format!("tap {tap_id}\nstate\nquit\n"),
+        );
+        assert!(ran, "{name}: native binary exited nonzero");
+        assert!(stdout.contains(expected_state), "{name}: {stdout}");
+        assert!(stdout.contains(expected_patch), "{name}: {stdout}");
+    }
+}
+
+#[test]
+fn web_sub_and_add_state_values_apply_at_tap() {
+    for (name, expected) in [("sub_state.opu", "total=7"), ("add_state.opu", "total=13")] {
+        let ir = out_dir("web-arith-ir").join("out.opuir.json");
+        let r = compile(&fixture(name), &ir);
+        assert!(
+            r.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let tap_id = find_tap_id(&serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap());
+        let dir = out_dir("web-arith");
+        let r = emit(&ir, "web", &dir);
+        assert!(
+            r.status.success(),
+            "{name}: web emit failed: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let stdout = run_web_action(&dir.join("app.js"), tap_id);
+        assert!(stdout.contains(expected), "{name}: {stdout}");
+    }
+}

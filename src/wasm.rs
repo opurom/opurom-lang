@@ -37,7 +37,9 @@ fn collect<'a>(n: &'a ENode, out: &mut Vec<&'a ENode>) {
 enum Step {
     Set { target: usize, value: i64 },
     Add { target: usize, value: i64 },
+    Sub { target: usize, value: i64 },
     AddFrom { target: usize, from: usize },
+    SubFrom { target: usize, from: usize },
     SetFrom { target: usize, from: usize },
 }
 
@@ -96,6 +98,23 @@ fn steps_of(event: &Json, states: &[WasmState], ir_path: &str) -> DResult<Vec<St
                     });
                 }
             }
+            "sub" => {
+                if let Some(from) = action.get("valueFrom").and_then(Json::as_str) {
+                    // A non-int source is mirrored in the host, not in the wasm.
+                    if let Some(from_index) = int_index(states, from) {
+                        out.push(Step::SubFrom {
+                            target: target_index,
+                            from: from_index,
+                        });
+                    }
+                } else {
+                    let value = action.get("value").and_then(Json::as_i64).unwrap_or(0);
+                    out.push(Step::Sub {
+                        target: target_index,
+                        value,
+                    });
+                }
+            }
             // A toggle targets a bool state, which lives in the host mirror.
             "toggle" => {}
             other => {
@@ -116,8 +135,14 @@ fn emit_steps(steps: &[Step], indent: &str) -> String {
             Step::Add { target, value } => out.push_str(&format!(
                 "{indent}set_state({target}, state({target}).saturating_add({value}));\n"
             )),
+            Step::Sub { target, value } => out.push_str(&format!(
+                "{indent}set_state({target}, state({target}).saturating_sub({value}));\n"
+            )),
             Step::AddFrom { target, from } => out.push_str(&format!(
                 "{indent}set_state({target}, state({target}).saturating_add(state({from})));\n"
+            )),
+            Step::SubFrom { target, from } => out.push_str(&format!(
+                "{indent}set_state({target}, state({target}).saturating_sub(state({from})));\n"
             )),
             Step::SetFrom { target, from } => {
                 out.push_str(&format!("{indent}set_state({target}, state({from}));\n"))
@@ -515,6 +540,9 @@ fn host_source(
         "    } else if (action.op === \"add\") {\n",
         "      const from = action.valueFrom !== undefined ? mirror[action.valueFrom] : action.value;\n",
         "      mirror[target] = Number(mirror[target]) + Number(from);\n",
+        "    } else if (action.op === \"sub\") {\n",
+        "      const from = action.valueFrom !== undefined ? mirror[action.valueFrom] : action.value;\n",
+        "      mirror[target] = Number(mirror[target]) - Number(from);\n",
         "    }\n",
         "  }\n",
         "}\n\n",

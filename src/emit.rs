@@ -940,18 +940,22 @@ fn native_action(action: &Json, states: &[EState], ir_path: &str) -> DResult<(St
         patch_value(states, target)
     );
     let mutation = match op {
-        "add" => {
+        op @ ("add" | "sub") => {
             let rhs = match action.get("valueFrom").and_then(Json::as_str) {
                 Some(from) => format!("_state.{from}"),
                 None => {
-                    let n = action
-                        .get("value")
-                        .and_then(Json::as_i64)
-                        .ok_or_else(|| bad_ir(ir_path, "'add' action needs an integer 'value'"))?;
+                    let n = action.get("value").and_then(Json::as_i64).ok_or_else(|| {
+                        bad_ir(ir_path, format!("'{op}' action needs an integer 'value'"))
+                    })?;
                     format!("{n}i64")
                 }
             };
-            format!("_state.{target} = _state.{target}.saturating_add({rhs});")
+            let method = if op == "sub" {
+                "saturating_sub"
+            } else {
+                "saturating_add"
+            };
+            format!("_state.{target} = _state.{target}.{method}({rhs});")
         }
         "toggle" => format!("_state.{target} = !_state.{target};"),
         "set" => match action.get("valueFrom").and_then(Json::as_str) {
@@ -1576,18 +1580,18 @@ fn js_action(action: &Json, ir_path: &str) -> DResult<String> {
     let op = action_str(action, "op", ir_path)?;
     let target = action_str(action, "target", ir_path)?;
     Ok(match op {
-        "add" => {
+        op @ ("add" | "sub") => {
             let rhs = match action.get("valueFrom").and_then(Json::as_str) {
                 Some(from) => format!("state.{from}"),
                 None => {
-                    let n = action
-                        .get("value")
-                        .and_then(Json::as_i64)
-                        .ok_or_else(|| bad_ir(ir_path, "'add' action needs an integer 'value'"))?;
+                    let n = action.get("value").and_then(Json::as_i64).ok_or_else(|| {
+                        bad_ir(ir_path, format!("'{op}' action needs an integer 'value'"))
+                    })?;
                     n.to_string()
                 }
             };
-            format!("state.{target} += {rhs};")
+            let sign = if op == "sub" { "-=" } else { "+=" };
+            format!("state.{target} {sign} {rhs};")
         }
         "toggle" => format!("state.{target} = !state.{target};"),
         "set" => match action.get("valueFrom").and_then(Json::as_str) {
@@ -1948,18 +1952,18 @@ fn mini_action(action: &Json, p: &Platform, ir_path: &str) -> DResult<String> {
     let target = action_str(action, "target", ir_path)?;
     let set = &p.state_set;
     Ok(match op {
-        "add" => {
+        op @ ("add" | "sub") => {
             let rhs = match action.get("valueFrom").and_then(Json::as_str) {
                 Some(from) => format!("this.data.{from}"),
                 None => {
-                    let n = action
-                        .get("value")
-                        .and_then(Json::as_i64)
-                        .ok_or_else(|| bad_ir(ir_path, "'add' action needs an integer 'value'"))?;
+                    let n = action.get("value").and_then(Json::as_i64).ok_or_else(|| {
+                        bad_ir(ir_path, format!("'{op}' action needs an integer 'value'"))
+                    })?;
                     n.to_string()
                 }
             };
-            format!("this.{set}({{\"{target}\": this.data.{target} + ({rhs})}});")
+            let sign = if op == "sub" { '-' } else { '+' };
+            format!("this.{set}({{\"{target}\": this.data.{target} {sign} ({rhs})}});")
         }
         "toggle" => format!("this.{set}({{\"{target}\": !this.data.{target}}});"),
         "set" => match action.get("valueFrom").and_then(Json::as_str) {
