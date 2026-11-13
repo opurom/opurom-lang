@@ -1608,6 +1608,61 @@ fn js_interp(s: &str, ir_path: &str) -> DResult<String> {
     })
 }
 
+/// The Canvas 2D fill/effect statements for a node's bg/gradient/shadow/glass/border
+/// props, mirroring the native renderer and the web-dom emitter. `gradient` is a
+/// vertical two-stop fill (top -> bottom) and wins over `bg`; `shadow` (0..8) is a
+/// soft drop shadow on the fill; `glass` is a translucent overlay; `border` strokes
+/// the rect. Emits nothing when the node has no effect prop.
+fn canvas_effect_fill(n: &ENode, x: &str, y: &str, w: &str, h: &str, out: &mut String) {
+    let bg = n.props.get("bg").and_then(Json::as_str);
+    let grad = n
+        .props
+        .get("gradient")
+        .and_then(Json::as_str)
+        .and_then(|s| s.split_once(','));
+    let shadow = n.props.get("shadow").and_then(Json::as_i64).unwrap_or(0);
+    let glass = n
+        .props
+        .get("glass")
+        .and_then(Json::as_bool)
+        .unwrap_or(false);
+    let border = n.props.get("border").and_then(Json::as_str);
+    if grad.is_none() && bg.is_none() && shadow <= 0 && !glass && border.is_none() {
+        return;
+    }
+    if shadow > 0 {
+        out.push_str(&format!(
+            "  ctx.save();\n  ctx.shadowColor = \"rgba(0, 0, 0, 0.15)\";\n  ctx.shadowBlur = {shadow};\n  ctx.shadowOffsetY = {shadow};\n"
+        ));
+    }
+    if let Some((a, b)) = grad {
+        out.push_str(&format!(
+            "  var g = ctx.createLinearGradient({x}, {y}, {x}, {y} + {h});\n  g.addColorStop(0, {});\n  g.addColorStop(1, {});\n  ctx.fillStyle = g;\n  ctx.fillRect({x}, {y}, {w}, {h});\n",
+            js_lit(&Json::String(a.trim().to_string())),
+            js_lit(&Json::String(b.trim().to_string()))
+        ));
+    } else if let Some(c) = bg {
+        out.push_str(&format!(
+            "  ctx.fillStyle = {};\n  ctx.fillRect({x}, {y}, {w}, {h});\n",
+            js_lit(&Json::String(c.to_string()))
+        ));
+    }
+    if shadow > 0 {
+        out.push_str("  ctx.restore();\n");
+    }
+    if glass {
+        out.push_str(&format!(
+            "  ctx.fillStyle = \"rgba(255, 255, 255, 0.7)\";\n  ctx.fillRect({x}, {y}, {w}, {h});\n"
+        ));
+    }
+    if let Some(c) = border {
+        out.push_str(&format!(
+            "  ctx.strokeStyle = {};\n  ctx.lineWidth = 1;\n  ctx.strokeRect({x}, {y}, {w}, {h});\n",
+            js_lit(&Json::String(c.to_string()))
+        ));
+    }
+}
+
 fn draw_node(
     n: &ENode,
     boxes: &HashMap<u64, Box2>,
@@ -1631,6 +1686,7 @@ fn draw_node(
     let y = fmt_num(b.y);
     let w = fmt_num(b.w);
     let h = fmt_num(b.h);
+    canvas_effect_fill(n, &x, &y, &w, &h, out);
     match n.kind.as_str() {
         "Text" => {
             let size = fmt_num(prop_num(&n.props, "size", 16.0));
@@ -2017,8 +2073,17 @@ fn emit_web(
     write(out, "app.js", &app_js, ir_path)?;
 
     let title = html_attr(app);
+    // Entry animation: when any node carries an `animate` curve, the canvas
+    // fades/scales in once on load, mirroring the native per-node entry.
+    let web_anim = nodes.iter().any(|n| !anim_class(&n.props).is_empty());
+    let anim_css = if web_anim {
+        "@keyframes opurom-entry { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } } canvas.opu-anim { transform-origin: center; animation: opurom-entry 480ms ease-out both; }"
+    } else {
+        ""
+    };
+    let canvas_cls = if web_anim { " class=\"opu-anim\"" } else { "" };
     let html = format!(
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>{title}</title>\n<style>body {{ font-family: sans-serif; margin: 0; padding: 16px; }} canvas {{ background: #fff; border: 1px solid #ddd; }} #inputs {{ margin-top: 12px; }}</style>\n</head>\n<body>\n<canvas id=\"app\" width=\"800\" height=\"600\"></canvas>\n<div id=\"inputs\">\n{input_html}</div>\n<script src=\"app.js\"></script>\n</body>\n</html>\n"
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>{title}</title>\n<style>body {{ font-family: sans-serif; margin: 0; padding: 16px; }} canvas {{ background: #fff; border: 1px solid #ddd; }} #inputs {{ margin-top: 12px; }}{anim_css}</style>\n</head>\n<body>\n<canvas id=\"app\" width=\"800\" height=\"600\"{canvas_cls}></canvas>\n<div id=\"inputs\">\n{input_html}</div>\n<script src=\"app.js\"></script>\n</body>\n</html>\n"
     );
     write(out, "index.html", &html, ir_path)
 }
@@ -2049,7 +2114,53 @@ fn style_of(props: &JsonMap<String, Json>, background: bool) -> String {
         };
         parts.push(format!("{key}:{c}"));
     }
+    // Visual effects, mirroring the native renderer and the web-dom emitter.
+    // `bg` is a solid fill; `gradient` ("#A,#B") is a vertical two-stop fill and
+    // wins over `bg`; `shadow` (0..8) is a soft box-shadow; `glass` is a
+    // frosted translucent fill; `border` is a 1px outline.
+    let bg = props.get("bg").and_then(Json::as_str);
+    let grad = props
+        .get("gradient")
+        .and_then(Json::as_str)
+        .and_then(|s| s.split_once(','));
+    if let Some((a, b)) = grad {
+        parts.push(format!(
+            "background:linear-gradient(to bottom, {}, {})",
+            a.trim(),
+            b.trim()
+        ));
+    } else if let Some(c) = bg {
+        parts.push(format!("background-color:{c}"));
+    }
+    if let Some(n) = props.get("shadow").and_then(Json::as_i64) {
+        if n > 0 {
+            parts.push(format!("box-shadow:0 {n}px {n}px rgba(0, 0, 0, 0.15)"));
+        }
+    }
+    if props.get("glass").and_then(Json::as_bool).unwrap_or(false) {
+        parts.push("backdrop-filter:blur(6px)".to_string());
+        parts.push("background:rgba(255, 255, 255, 0.7)".to_string());
+    }
+    if let Some(Json::String(c)) = props.get("border") {
+        parts.push(format!("border:1px solid {c}"));
+    }
     parts.join(";")
+}
+
+/// The entry-animation CSS class for a node's `animate` prop, mirroring the
+/// native renderer and the web-dom emitter: spring/ease/inertia animate in from
+/// the centre, `none`/absent is static. The curve is mapped to a CSS timing
+/// function (spring is a documented cubic-bezier approximation).
+fn anim_class(props: &JsonMap<String, Json>) -> String {
+    let Some(Json::String(curve)) = props.get("animate") else {
+        return String::new();
+    };
+    match curve.as_str() {
+        "spring" => " anim-entry anim-spring".to_string(),
+        "ease" => " anim-entry anim-ease".to_string(),
+        "inertia" => " anim-entry anim-inertia".to_string(),
+        _ => String::new(),
+    }
 }
 
 fn markup_interp(s: &str, p: &Platform, ir_path: &str) -> DResult<String> {
@@ -2090,6 +2201,7 @@ fn markup_node(
     let pad = "  ".repeat(depth);
     let id = n.id;
     let style = style_of(&n.props, n.kind == "Container");
+    let anim = anim_class(&n.props);
     let style_attr = if style.is_empty() {
         String::new()
     } else {
@@ -2110,7 +2222,7 @@ fn markup_node(
         "Text" => {
             let value = markup_interp(&prop_str(&n.props, "value", ""), p, ir_path)?;
             out.push_str(&format!(
-                "{pad}<text class=\"n{id}\"{style_attr}{cond_attr}>{value}</text>\n"
+                "{pad}<text class=\"n{id}{anim}\"{style_attr}{cond_attr}>{value}</text>\n"
             ));
         }
         "Button" => {
@@ -2121,7 +2233,7 @@ fn markup_node(
                 String::new()
             };
             out.push_str(&format!(
-                "{pad}<button class=\"n{id}\"{style_attr}{cond_attr}{tap}>{label}</button>\n"
+                "{pad}<button class=\"n{id}{anim}\"{style_attr}{cond_attr}{tap}>{label}</button>\n"
             ));
         }
         "Input" => {
@@ -2137,18 +2249,18 @@ fn markup_node(
                 String::new()
             };
             out.push_str(&format!(
-                "{pad}<input class=\"n{id}\"{style_attr}{cond_attr} placeholder=\"{placeholder}\"{value}{input} />\n"
+                "{pad}<input class=\"n{id}{anim}\"{style_attr}{cond_attr} placeholder=\"{placeholder}\"{value}{input} />\n"
             ));
         }
         "Image" => {
             let src = html_attr(&prop_str(&n.props, "src", ""));
             out.push_str(&format!(
-                "{pad}<image class=\"n{id}\"{style_attr}{cond_attr} src=\"{src}\" />\n"
+                "{pad}<image class=\"n{id}{anim}\"{style_attr}{cond_attr} src=\"{src}\" />\n"
             ));
         }
         "Spacer" => {
             out.push_str(&format!(
-                "{pad}<view class=\"spacer n{id}\"{style_attr}{cond_attr}></view>\n"
+                "{pad}<view class=\"spacer n{id}{anim}\"{style_attr}{cond_attr}></view>\n"
             ));
         }
         "Badge" | "Avatar" | "Progress" | "Switch" | "Slider" | "Checkbox" | "Radio" | "Tabs" => {
@@ -2159,7 +2271,7 @@ fn markup_node(
                 String::new()
             };
             out.push_str(&format!(
-                "{pad}<view class=\"n{id}\"{style_attr}{cond_attr}{tap}><text>{label}</text></view>\n"
+                "{pad}<view class=\"n{id}{anim}\"{style_attr}{cond_attr}{tap}><text>{label}</text></view>\n"
             ));
         }
         "Icon" => {
@@ -2192,14 +2304,14 @@ fn markup_node(
                         format!(" style=\"{}\"", html_attr(&style))
                     };
                     out.push_str(&format!(
-                        "{pad}<image class=\"n{id}\"{style_attr}{cond_attr}{tap} src=\"data:image/svg+xml;base64,{b64}\" />\n"
+                        "{pad}<image class=\"n{id}{anim}\"{style_attr}{cond_attr}{tap} src=\"data:image/svg+xml;base64,{b64}\" />\n"
                     ));
                 }
                 // An unknown name keeps the previous text fallback.
                 None => {
                     let label = markup_text(&fallback_text(n));
                     out.push_str(&format!(
-                        "{pad}<view class=\"n{id}\"{style_attr}{cond_attr}{tap}><text>{label}</text></view>\n"
+                        "{pad}<view class=\"n{id}{anim}\"{style_attr}{cond_attr}{tap}><text>{label}</text></view>\n"
                     ));
                 }
             }
@@ -2212,7 +2324,7 @@ fn markup_node(
                 format!("<text>{label}</text>")
             };
             out.push_str(&format!(
-                "{pad}<view class=\"n{id}\"{style_attr}{cond_attr}>{inner}</view>\n"
+                "{pad}<view class=\"n{id}{anim}\"{style_attr}{cond_attr}>{inner}</view>\n"
             ));
         }
         kind => {
@@ -2220,7 +2332,7 @@ fn markup_node(
             // showing its label, so gallery exhibits stay visible in pages.
             let cls = if kind == "Row" { "row" } else { "col" };
             out.push_str(&format!(
-                "{pad}<view class=\"{cls} n{id}\"{style_attr}{cond_attr}>\n"
+                "{pad}<view class=\"{cls} n{id}{anim}\"{style_attr}{cond_attr}>\n"
             ));
             if n.children.is_empty() {
                 let label = markup_text(&fallback_text(n));
@@ -2396,7 +2508,7 @@ fn emit_mini(
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
     let mut style = String::from(
-        ".col { display: flex; flex-direction: column; }\n.row { display: flex; flex-direction: row; }\n",
+        ".col { display: flex; flex-direction: column; }\n.row { display: flex; flex-direction: row; }\n@keyframes opurom-entry { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }\n.anim-entry { transform-origin: center; animation: opurom-entry 480ms ease-out both; }\n.anim-spring { animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }\n.anim-ease { animation-timing-function: ease-out; }\n.anim-inertia { animation-timing-function: ease-in-out; }\n",
     );
     for n in &nodes {
         let s = style_of(&n.props, n.kind == "Container");
