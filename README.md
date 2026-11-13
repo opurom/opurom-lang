@@ -383,6 +383,9 @@ The six mini-program targets share one lowering pass and one small per-platform 
 (extensions, loop/key directives, tap/input directives, state-set API, request API, window title
 key and binding delimiters). All emitters generate code, not an IR parser. They understand the
 the interactive UI and async IR plus `when`, `unless`, `computed` and `list` state entries.
+`Icon` nodes render the canonical 24x24 stroke path on every target: the `web` target strokes it
+with Canvas 2D `Path2D`, and the six mini targets emit an inline SVG data URI on an `<image>`
+element, so the glyph matches the native renderer instead of showing its name as text.
 
 `web-dom` is an additional build target that is not part of the nine-emitter matrix, so
 `opuromc targets` stays at nine. It delegates to the sibling `opurom-web` DOM emitter, which
