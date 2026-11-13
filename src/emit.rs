@@ -1419,6 +1419,14 @@ fn js_interp(s: &str, ir_path: &str) -> DResult<String> {
         match part {
             Part::Lit(t) => exprs.push(js_lit(&Json::String(t))),
             Part::Var(name, _) => exprs.push(format!("String(state.{name})")),
+            Part::Index { off, .. } => {
+                return Err(interp_error(
+                    s,
+                    off,
+                    "list index survives lowering".to_string(),
+                    ir_path,
+                ))
+            }
         }
     }
     Ok(if exprs.is_empty() {
@@ -1821,6 +1829,14 @@ fn markup_interp(s: &str, p: &Platform, ir_path: &str) -> DResult<String> {
                 out.push_str(p.open);
                 out.push_str(&name);
                 out.push_str(p.close);
+            }
+            Part::Index { off, .. } => {
+                return Err(interp_error(
+                    s,
+                    off,
+                    "list index survives lowering".to_string(),
+                    ir_path,
+                ))
             }
         }
     }

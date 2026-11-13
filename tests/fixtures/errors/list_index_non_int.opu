@@ -1,0 +1,8 @@
+app Bad {
+  state items = ["a", "b"]
+  Column {
+    for (v in items) {
+      Text("{items[v]}")
+    }
+  }
+}

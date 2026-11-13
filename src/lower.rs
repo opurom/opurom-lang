@@ -246,6 +246,20 @@ impl Ty {
 pub enum Part {
     Lit(String),
     Var(String, usize),
+    /// A list state read by position: `{name[index]}`. The index is an integer
+    /// literal or a loop variable that resolves to an integer.
+    Index {
+        list: String,
+        index: IndexExpr,
+        off: usize,
+    },
+}
+
+/// The subscript of a list read, kept unresolved so each pass can check scope.
+#[derive(Clone, Debug)]
+pub enum IndexExpr {
+    Int(i64),
+    Var(String),
 }
 
 fn valid_ident(s: &str) -> bool {
@@ -279,6 +293,39 @@ pub fn interp_parts(s: &str) -> Result<Vec<Part>, (usize, String)> {
                 return Err((i, "unterminated '{name}' interpolation".to_string()));
             }
             let name: String = cs[i + 1..j].iter().collect();
+            // `{items[i]}` reads a list state; the subscript is an int literal or
+            // a declared name, resolved by the caller against its scope.
+            if let Some(open) = name.find('[') {
+                let head = &name[..open];
+                let close = name.rfind(']');
+                let Some(close) = close else {
+                    return Err((i, format!("invalid interpolation '{{{name}}}'")));
+                };
+                if close != name.len() - 1 || close <= open + 1 {
+                    return Err((i, format!("invalid interpolation '{{{name}}}'")));
+                }
+                if !valid_ident(head) {
+                    return Err((i, format!("invalid interpolation '{{{name}}}'")));
+                }
+                let subscript = &name[open + 1..close];
+                let index = if let Ok(n) = subscript.parse::<i64>() {
+                    IndexExpr::Int(n)
+                } else if valid_ident(subscript) {
+                    IndexExpr::Var(subscript.to_string())
+                } else {
+                    return Err((i, format!("invalid interpolation '{{{name}}}'")));
+                };
+                if !lit.is_empty() {
+                    parts.push(Part::Lit(std::mem::take(&mut lit)));
+                }
+                parts.push(Part::Index {
+                    list: head.to_string(),
+                    index,
+                    off: i + 1,
+                });
+                i = j + 1;
+                continue;
+            }
             if !valid_ident(&name) {
                 return Err((i, format!("invalid interpolation '{{{name}}}'")));
             }
@@ -670,6 +717,20 @@ impl<'a> Ctx<'a> {
             .find(|(v, _)| v == name)
             .map(|(_, value)| value.text())
     }
+
+    /// Resolve a list subscript to an integer position. A literal stands alone; a
+    /// name must be a loop variable bound to an integer copy.
+    fn index_value(&self, index: &IndexExpr) -> Option<i64> {
+        match index {
+            IndexExpr::Int(n) => Some(*n),
+            IndexExpr::Var(name) => self.loops.iter().rev().find(|(v, _)| v == name).and_then(
+                |(_, value)| match value {
+                    LoopValue::Int(n) => Some(*n),
+                    LoopValue::Str(_) => None,
+                },
+            ),
+        }
+    }
 }
 
 fn json_lit(l: &Lit) -> Json {
@@ -693,39 +754,63 @@ fn value_desc(v: &AstValue) -> &'static str {
     }
 }
 
-/// Replace `{i}` with the loop index for every enclosing `for` variable.
-fn substitute_loops(ctx: &Ctx, s: &str) -> String {
-    if ctx.loops.is_empty() {
-        return s.to_string();
+/// Replace `{i}` and `{items[i]}` with their compile-time values. List reads are
+/// resolved here so the IR only ever carries literal text.
+fn substitute_loops(ctx: &Ctx, pos: Pos, s: &str) -> DResult<String> {
+    if ctx.loops.is_empty() && !s.contains('[') {
+        return Ok(s.to_string());
     }
-    let cs: Vec<char> = s.chars().collect();
+    let parts = interp_parts(s).map_err(|(off, msg)| {
+        let p = offset_pos(pos, s, off);
+        ctx.err(
+            p,
+            msg,
+            "close it with '}' or write '{{' for a literal '{'".to_string(),
+        )
+    })?;
     let mut out = String::new();
-    let mut i = 0usize;
-    while i < cs.len() {
-        if cs[i] == '{' {
-            if i + 1 < cs.len() && cs[i + 1] == '{' {
-                out.push('{');
-                out.push('{');
-                i += 2;
-                continue;
-            }
-            let mut j = i + 1;
-            while j < cs.len() && cs[j] != '}' && cs[j] != '{' {
-                j += 1;
-            }
-            if j < cs.len() && cs[j] == '}' {
-                let name: String = cs[i + 1..j].iter().collect();
-                if let Some(v) = ctx.loop_value(&name) {
-                    out.push_str(&v);
-                    i = j + 1;
-                    continue;
-                }
+    for part in parts {
+        match part {
+            Part::Lit(t) => out.push_str(&t),
+            Part::Var(name, _) => match ctx.loop_value(&name) {
+                Some(v) => out.push_str(&v),
+                // A plain state reference stays for the emitter to resolve.
+                None => out.push_str(&format!("{{{name}}}")),
+            },
+            Part::Index { list, index, off } => {
+                let p = offset_pos(pos, s, off);
+                let Some(values) = ctx.lists.get(&list) else {
+                    return Err(ctx.err(
+                        p,
+                        format!("unknown list state '{list}' in interpolation"),
+                        format!("declare it with 'state {list} = [\"a\", \"b\"]'"),
+                    ));
+                };
+                let Some(idx) = ctx.index_value(&index) else {
+                    return Err(ctx.err(
+                        p,
+                        format!("list index '{list}[...]' must be an integer"),
+                        "index with an integer literal or a 'for' count loop variable".to_string(),
+                    ));
+                };
+                let value = usize::try_from(idx)
+                    .ok()
+                    .and_then(|i| values.get(i))
+                    .ok_or_else(|| {
+                        ctx.err(
+                            p,
+                            format!(
+                                "list index {idx} is out of range for '{list}' with {} values",
+                                values.len()
+                            ),
+                            format!("use an index from 0 to {}", values.len().saturating_sub(1)),
+                        )
+                    })?;
+                out.push_str(value);
             }
         }
-        out.push(cs[i]);
-        i += 1;
     }
-    out
+    Ok(out)
 }
 
 fn is_color(s: &str) -> bool {
@@ -1189,7 +1274,7 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
         }
         let val = prop_value(ctx, kind, &key, arg, &info)?;
         let val = match val {
-            Json::String(s) => Json::String(substitute_loops(ctx, &s)),
+            Json::String(s) => Json::String(substitute_loops(ctx, arg.pos, &s)?),
             other => other,
         };
         props.insert(key, val);

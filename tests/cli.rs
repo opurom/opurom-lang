@@ -1782,6 +1782,53 @@ fn computed_and_list_lower_to_documented_ir() {
 }
 
 #[test]
+fn list_state_indexing_lowers_to_literals() {
+    let ir = compile_ok(&fixture("list_index_state.opu"));
+    assert_eq!(
+        ir["state"][0],
+        json!({"name": "items", "type": "list", "init": ["alpha", "beta", "gamma"]})
+    );
+    let values: Vec<&str> = nodes_of(&ir)
+        .into_iter()
+        .filter_map(|n| n["props"]["value"].as_str())
+        .collect();
+    // A count loop indexes by position; a literal reads one element.
+    assert_eq!(values, vec!["alpha", "beta", "gamma", "first=alpha"]);
+}
+
+#[test]
+fn list_index_renders_through_the_web_emitter() {
+    let ir = out_dir("index-ir").join("index.opuir.json");
+    let r = compile(&fixture("list_index_state.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = out_dir("index-web");
+    let e = emit(&ir, "web", &out);
+    assert!(e.status.success(), "{}", String::from_utf8_lossy(&e.stderr));
+    let app_js = fs::read_to_string(out.join("app.js")).unwrap();
+    // Each element resolved at compile time, so the canvas draws its text.
+    for text in ["alpha", "beta", "gamma", "first=alpha"] {
+        assert!(
+            app_js.contains(&format!("fillText(\"{text}\"")),
+            "missing rendered '{text}' in web output: {app_js}"
+        );
+    }
+    assert!(
+        !app_js.contains("{{"),
+        "unresolved interpolation in web output: {app_js}"
+    );
+    let check = Command::new("node")
+        .arg("--check")
+        .arg(out.join("app.js"))
+        .output()
+        .expect("run node --check");
+    assert!(
+        check.status.success(),
+        "emitted JS is invalid: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+}
+
+#[test]
 fn language_diagnostics_are_friendly() {
     let dir = out_dir("diag");
     let fixture_cases: &[(&str, &str)] = &[
@@ -1832,6 +1879,18 @@ fn language_diagnostics_are_friendly() {
         (
             "for_unknown_list.opu",
             "unknown list state 'items' in 'for'",
+        ),
+        (
+            "list_index_out_of_range.opu",
+            "list index 5 is out of range for 'items' with 2 values",
+        ),
+        (
+            "list_index_non_list.opu",
+            "'count[...]' reads a list, found int state 'count'",
+        ),
+        (
+            "list_index_non_int.opu",
+            "list index 'v' must be an int, found string",
         ),
     ];
     let mut cases: Vec<(String, PathBuf, &str)> = Vec::new();

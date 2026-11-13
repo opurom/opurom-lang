@@ -1,0 +1,4 @@
+app Bad {
+  state count = 3
+  Text("{count[0]}")
+}

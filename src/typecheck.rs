@@ -4,7 +4,7 @@ use serde_json::{json, Value as Json};
 
 use crate::catalog;
 use crate::diag::{DResult, Diagnostic};
-use crate::lower::{interp_parts, offset_pos, Part, Ty, KINDS};
+use crate::lower::{interp_parts, offset_pos, IndexExpr, Part, Ty, KINDS};
 use crate::parser::{
     Arg, Block, Effect, Expr, ExprKind, ForIter, Lit, Node, NodeKind, Pos, Program, Stmt, StmtKind,
     Value as AstValue,
@@ -642,21 +642,94 @@ impl<'a> Checker<'a> {
             )
         })?;
         for part in parts {
-            if let Part::Var(name, off) = part {
-                let pos = offset_pos(base, text, off);
-                let ty = self.interpolation_ty(&name).ok_or_else(|| {
-                    self.err(
-                        pos,
-                        format!("unknown state '{name}' in Text interpolation"),
-                        "a declared scalar state or loop variable",
-                        "unknown",
-                        format!("declare '{name}' or use one of: {}", self.env.state_list()),
-                    )
-                })?;
-                if !ty.is_scalar() {
-                    return Err(self.list_only(&name, pos));
+            match part {
+                Part::Var(name, off) => {
+                    let pos = offset_pos(base, text, off);
+                    let ty = self.interpolation_ty(&name).ok_or_else(|| {
+                        self.err(
+                            pos,
+                            format!("unknown state '{name}' in Text interpolation"),
+                            "a declared scalar state or loop variable",
+                            "unknown",
+                            format!("declare '{name}' or use one of: {}", self.env.state_list()),
+                        )
+                    })?;
+                    if !ty.is_scalar() {
+                        return Err(self.list_only(&name, pos));
+                    }
                 }
+                Part::Index { list, index, off } => {
+                    let pos = offset_pos(base, text, off);
+                    self.list_index(&list, &index, pos)?;
+                }
+                Part::Lit(_) => {}
             }
+        }
+        Ok(())
+    }
+
+    /// `{items[i]}` reads one element: the target must be a list state and the
+    /// subscript must resolve to an integer. Bounds for a literal are checked
+    /// here; a symbolic subscript is checked when lowering knows its value.
+    fn list_index(&self, list: &str, index: &IndexExpr, pos: Pos) -> DResult<()> {
+        let ty = self.state_of(list).ok_or_else(|| {
+            self.err(
+                pos,
+                format!("unknown list state '{list}' in Text interpolation"),
+                "a declared list state",
+                "unknown",
+                format!("declare '{list}' or use one of: {}", self.env.state_list()),
+            )
+        })?;
+        if ty != ValueTy::List {
+            return Err(self.err(
+                pos,
+                format!(
+                    "'{}[...]' reads a list, found {} state '{list}'",
+                    list,
+                    ty.name()
+                ),
+                "list",
+                ty.name(),
+                "declare the state as a list or drop the subscript",
+            ));
+        }
+        let n = match index {
+            IndexExpr::Int(n) => *n,
+            IndexExpr::Var(name) => {
+                return match self.interpolation_ty(name) {
+                    Some(ValueTy::Int) => Ok(()),
+                    Some(other) => Err(self.err(
+                        pos,
+                        format!("list index '{name}' must be an int, found {}", other.name()),
+                        "int",
+                        other.name(),
+                        "index with an integer literal or a 'for' count loop variable".to_string(),
+                    )),
+                    None => Err(self.err(
+                        pos,
+                        format!("unknown list index '{name}'"),
+                        "an integer loop variable",
+                        "unknown",
+                        "index with an integer literal or a 'for' count loop variable".to_string(),
+                    )),
+                };
+            }
+        };
+        let len = self
+            .env
+            .inits
+            .get(list)
+            .and_then(|v| v.as_array())
+            .map_or(0, Vec::len);
+        if n < 0 || n as usize >= len {
+            return Err(self.err(
+                pos,
+                format!("list index {n} is out of range for '{list}' with {len} values"),
+                "an index inside the list",
+                "out-of-range index",
+                format!("use an index from 0 to {}", len.saturating_sub(1)),
+            ));
         }
         Ok(())
     }
