@@ -1,7 +1,7 @@
 {
   "version": "0.3",
-  "count": 116,
-  "primitives": 32,
+  "count": 216,
+  "primitives": 100,
   "components": [
     [
       "VStack",
@@ -868,6 +868,906 @@
       "Tooltip",
       "overlay",
       {}
+    ],
+    [
+      "Gauge",
+      "Gauge",
+      "data",
+      {
+        "value": 17,
+        "segments": 2
+      }
+    ],
+    [
+      "Sparkline",
+      "Sparkline",
+      "data",
+      {
+        "value": 30,
+        "segments": 3
+      }
+    ],
+    [
+      "AreaChart",
+      "AreaChart",
+      "data",
+      {
+        "value": 43,
+        "segments": 4
+      }
+    ],
+    [
+      "PieChart",
+      "PieChart",
+      "data",
+      {
+        "value": 56,
+        "segments": 5
+      }
+    ],
+    [
+      "DonutChart",
+      "DonutChart",
+      "data",
+      {
+        "value": 69,
+        "segments": 6
+      }
+    ],
+    [
+      "ScatterPlot",
+      "ScatterPlot",
+      "data",
+      {
+        "value": 82,
+        "segments": 7
+      }
+    ],
+    [
+      "StackedBar",
+      "StackedBar",
+      "data",
+      {
+        "value": 95,
+        "segments": 8
+      }
+    ],
+    [
+      "Histogram",
+      "Histogram",
+      "data",
+      {
+        "value": 8,
+        "segments": 2
+      }
+    ],
+    [
+      "Heatmap",
+      "Heatmap",
+      "data",
+      {
+        "value": 21,
+        "segments": 3
+      }
+    ],
+    [
+      "Treemap",
+      "Treemap",
+      "data",
+      {
+        "value": 34,
+        "segments": 4
+      }
+    ],
+    [
+      "Waterfall",
+      "Waterfall",
+      "data",
+      {
+        "value": 47,
+        "segments": 5
+      }
+    ],
+    [
+      "BulletChart",
+      "BulletChart",
+      "data",
+      {
+        "value": 60,
+        "segments": 6
+      }
+    ],
+    [
+      "FunnelChart",
+      "FunnelChart",
+      "data",
+      {
+        "value": 73,
+        "segments": 7
+      }
+    ],
+    [
+      "Waveform",
+      "Waveform",
+      "data",
+      {
+        "value": 86,
+        "segments": 8
+      }
+    ],
+    [
+      "Equalizer",
+      "Equalizer",
+      "data",
+      {
+        "value": 99,
+        "segments": 2
+      }
+    ],
+    [
+      "Candlestick",
+      "Candlestick",
+      "data",
+      {
+        "value": 12,
+        "segments": 3
+      }
+    ],
+    [
+      "BubbleChart",
+      "BubbleChart",
+      "data",
+      {
+        "value": 25,
+        "segments": 4
+      }
+    ],
+    [
+      "PolarChart",
+      "PolarChart",
+      "data",
+      {
+        "value": 38,
+        "segments": 5
+      }
+    ],
+    [
+      "Breadcrumbs",
+      "Breadcrumbs",
+      "navigation",
+      {
+        "value": 51,
+        "segments": 6
+      }
+    ],
+    [
+      "Pagination",
+      "Pagination",
+      "navigation",
+      {
+        "value": 64,
+        "segments": 7
+      }
+    ],
+    [
+      "Stepper",
+      "Stepper",
+      "navigation",
+      {
+        "value": 77,
+        "segments": 8
+      }
+    ],
+    [
+      "Sidebar",
+      "Sidebar",
+      "navigation",
+      {
+        "value": 90,
+        "segments": 2
+      }
+    ],
+    [
+      "TabStrip",
+      "TabStrip",
+      "navigation",
+      {
+        "value": 3,
+        "segments": 3
+      }
+    ],
+    [
+      "NavRail",
+      "NavRail",
+      "navigation",
+      {
+        "value": 16,
+        "segments": 4
+      }
+    ],
+    [
+      "AnchorBar",
+      "AnchorBar",
+      "navigation",
+      {
+        "value": 29,
+        "segments": 5
+      }
+    ],
+    [
+      "ProgressSteps",
+      "ProgressSteps",
+      "navigation",
+      {
+        "value": 42,
+        "segments": 6
+      }
+    ],
+    [
+      "MenuBar",
+      "MenuBar",
+      "navigation",
+      {
+        "value": 55,
+        "segments": 7
+      }
+    ],
+    [
+      "TocTree",
+      "TocTree",
+      "navigation",
+      {
+        "value": 68,
+        "segments": 8
+      }
+    ],
+    [
+      "Rating",
+      "Rating",
+      "form",
+      {
+        "value": 81,
+        "segments": 2
+      }
+    ],
+    [
+      "Dial",
+      "Dial",
+      "form",
+      {
+        "value": 94,
+        "segments": 3
+      }
+    ],
+    [
+      "Knob",
+      "Knob",
+      "form",
+      {
+        "value": 7,
+        "segments": 4
+      }
+    ],
+    [
+      "ColorWell",
+      "ColorWell",
+      "form",
+      {
+        "value": 20,
+        "segments": 5
+      }
+    ],
+    [
+      "DateField",
+      "DateField",
+      "form",
+      {
+        "value": 33,
+        "segments": 6
+      }
+    ],
+    [
+      "TimeField",
+      "TimeField",
+      "form",
+      {
+        "value": 46,
+        "segments": 7
+      }
+    ],
+    [
+      "SelectBox",
+      "SelectBox",
+      "form",
+      {
+        "value": 59,
+        "segments": 8
+      }
+    ],
+    [
+      "ComboBox",
+      "ComboBox",
+      "form",
+      {
+        "value": 72,
+        "segments": 2
+      }
+    ],
+    [
+      "SearchBar",
+      "SearchBar",
+      "form",
+      {
+        "value": 85,
+        "segments": 3
+      }
+    ],
+    [
+      "PinInput",
+      "PinInput",
+      "form",
+      {
+        "value": 98,
+        "segments": 4
+      }
+    ],
+    [
+      "SegmentedInput",
+      "SegmentedInput",
+      "form",
+      {
+        "value": 11,
+        "segments": 5
+      }
+    ],
+    [
+      "UploadZone",
+      "UploadZone",
+      "form",
+      {
+        "value": 24,
+        "segments": 6
+      }
+    ],
+    [
+      "WaveformPlayer",
+      "WaveformPlayer",
+      "media",
+      {
+        "value": 37,
+        "segments": 7
+      }
+    ],
+    [
+      "Spectrogram",
+      "Spectrogram",
+      "media",
+      {
+        "value": 50,
+        "segments": 8
+      }
+    ],
+    [
+      "Filmstrip",
+      "Filmstrip",
+      "media",
+      {
+        "value": 63,
+        "segments": 2
+      }
+    ],
+    [
+      "ThumbnailGrid",
+      "ThumbnailGrid",
+      "media",
+      {
+        "value": 76,
+        "segments": 3
+      }
+    ],
+    [
+      "QrGlyph",
+      "QrGlyph",
+      "media",
+      {
+        "value": 89,
+        "segments": 4
+      }
+    ],
+    [
+      "BarcodeGlyph",
+      "BarcodeGlyph",
+      "media",
+      {
+        "value": 2,
+        "segments": 5
+      }
+    ],
+    [
+      "ColorPalette",
+      "ColorPalette",
+      "media",
+      {
+        "value": 15,
+        "segments": 6
+      }
+    ],
+    [
+      "ZoomLens",
+      "ZoomLens",
+      "media",
+      {
+        "value": 28,
+        "segments": 7
+      }
+    ],
+    [
+      "LevelMeter",
+      "LevelMeter",
+      "feedback",
+      {
+        "value": 41,
+        "segments": 8
+      }
+    ],
+    [
+      "SignalBars",
+      "SignalBars",
+      "feedback",
+      {
+        "value": 54,
+        "segments": 2
+      }
+    ],
+    [
+      "BatteryMeter",
+      "BatteryMeter",
+      "feedback",
+      {
+        "value": 67,
+        "segments": 3
+      }
+    ],
+    [
+      "Thermometer",
+      "Thermometer",
+      "feedback",
+      {
+        "value": 80,
+        "segments": 4
+      }
+    ],
+    [
+      "Speedometer",
+      "Speedometer",
+      "feedback",
+      {
+        "value": 93,
+        "segments": 5
+      }
+    ],
+    [
+      "Compass",
+      "Compass",
+      "feedback",
+      {
+        "value": 6,
+        "segments": 6
+      }
+    ],
+    [
+      "ProgressRing",
+      "ProgressRing",
+      "feedback",
+      {
+        "value": 19,
+        "segments": 7
+      }
+    ],
+    [
+      "ActivityRing",
+      "ActivityRing",
+      "feedback",
+      {
+        "value": 32,
+        "segments": 8
+      }
+    ],
+    [
+      "KpiTile",
+      "KpiTile",
+      "feedback",
+      {
+        "value": 45,
+        "segments": 2
+      }
+    ],
+    [
+      "StatCard",
+      "StatCard",
+      "feedback",
+      {
+        "value": 58,
+        "segments": 3
+      }
+    ],
+    [
+      "CornerFrame",
+      "CornerFrame",
+      "layout",
+      {
+        "value": 71,
+        "segments": 4
+      }
+    ],
+    [
+      "CrosshairMark",
+      "CrosshairMark",
+      "layout",
+      {
+        "value": 84,
+        "segments": 5
+      }
+    ],
+    [
+      "LadderDivider",
+      "LadderDivider",
+      "layout",
+      {
+        "value": 97,
+        "segments": 6
+      }
+    ],
+    [
+      "ChevronDivider",
+      "ChevronDivider",
+      "layout",
+      {
+        "value": 10,
+        "segments": 7
+      }
+    ],
+    [
+      "GridOverlay",
+      "GridOverlay",
+      "layout",
+      {
+        "value": 23,
+        "segments": 8
+      }
+    ],
+    [
+      "CheckerBackdrop",
+      "CheckerBackdrop",
+      "layout",
+      {
+        "value": 36,
+        "segments": 2
+      }
+    ],
+    [
+      "DotPattern",
+      "DotPattern",
+      "layout",
+      {
+        "value": 49,
+        "segments": 3
+      }
+    ],
+    [
+      "RingBadge",
+      "RingBadge",
+      "layout",
+      {
+        "value": 62,
+        "segments": 4
+      }
+    ],
+    [
+      "StairDivider",
+      "StairDivider",
+      "layout",
+      {
+        "value": 75,
+        "segments": 5
+      }
+    ],
+    [
+      "BracketPanel",
+      "BracketPanel",
+      "layout",
+      {
+        "value": 88,
+        "segments": 6
+      }
+    ],
+    [
+      "GaugeMini",
+      "Gauge",
+      "data",
+      {
+        "value": 41,
+        "segments": 2
+      }
+    ],
+    [
+      "SparklineCompact",
+      "Sparkline",
+      "data",
+      {
+        "value": 70,
+        "segments": 3
+      }
+    ],
+    [
+      "AreaChartWide",
+      "AreaChart",
+      "data",
+      {
+        "value": 99,
+        "segments": 4
+      }
+    ],
+    [
+      "PieChartOutline",
+      "PieChart",
+      "data",
+      {
+        "value": 28,
+        "segments": 5
+      }
+    ],
+    [
+      "DonutChartDense",
+      "DonutChart",
+      "data",
+      {
+        "value": 57,
+        "segments": 6
+      }
+    ],
+    [
+      "ScatterPlotTall",
+      "ScatterPlot",
+      "data",
+      {
+        "value": 86,
+        "segments": 2
+      }
+    ],
+    [
+      "StackedBarFlat",
+      "StackedBar",
+      "data",
+      {
+        "value": 15,
+        "segments": 3
+      }
+    ],
+    [
+      "HistogramRounded",
+      "Histogram",
+      "data",
+      {
+        "value": 44,
+        "segments": 4
+      }
+    ],
+    [
+      "HeatmapMini",
+      "Heatmap",
+      "data",
+      {
+        "value": 73,
+        "segments": 5
+      }
+    ],
+    [
+      "TreemapCompact",
+      "Treemap",
+      "data",
+      {
+        "value": 2,
+        "segments": 6
+      }
+    ],
+    [
+      "WaterfallWide",
+      "Waterfall",
+      "data",
+      {
+        "value": 31,
+        "segments": 2
+      }
+    ],
+    [
+      "BulletChartOutline",
+      "BulletChart",
+      "data",
+      {
+        "value": 60,
+        "segments": 3
+      }
+    ],
+    [
+      "FunnelChartDense",
+      "FunnelChart",
+      "data",
+      {
+        "value": 89,
+        "segments": 4
+      }
+    ],
+    [
+      "WaveformTall",
+      "Waveform",
+      "data",
+      {
+        "value": 18,
+        "segments": 5
+      }
+    ],
+    [
+      "EqualizerFlat",
+      "Equalizer",
+      "data",
+      {
+        "value": 47,
+        "segments": 6
+      }
+    ],
+    [
+      "CandlestickRounded",
+      "Candlestick",
+      "data",
+      {
+        "value": 76,
+        "segments": 2
+      }
+    ],
+    [
+      "BubbleChartMini",
+      "BubbleChart",
+      "data",
+      {
+        "value": 5,
+        "segments": 3
+      }
+    ],
+    [
+      "PolarChartCompact",
+      "PolarChart",
+      "data",
+      {
+        "value": 34,
+        "segments": 4
+      }
+    ],
+    [
+      "BreadcrumbsWide",
+      "Breadcrumbs",
+      "navigation",
+      {
+        "value": 63,
+        "segments": 5
+      }
+    ],
+    [
+      "PaginationOutline",
+      "Pagination",
+      "navigation",
+      {
+        "value": 92,
+        "segments": 6
+      }
+    ],
+    [
+      "StepperDense",
+      "Stepper",
+      "navigation",
+      {
+        "value": 21,
+        "segments": 2
+      }
+    ],
+    [
+      "SidebarTall",
+      "Sidebar",
+      "navigation",
+      {
+        "value": 50,
+        "segments": 3
+      }
+    ],
+    [
+      "TabStripFlat",
+      "TabStrip",
+      "navigation",
+      {
+        "value": 79,
+        "segments": 4
+      }
+    ],
+    [
+      "NavRailRounded",
+      "NavRail",
+      "navigation",
+      {
+        "value": 8,
+        "segments": 5
+      }
+    ],
+    [
+      "AnchorBarMini",
+      "AnchorBar",
+      "navigation",
+      {
+        "value": 37,
+        "segments": 6
+      }
+    ],
+    [
+      "ProgressStepsCompact",
+      "ProgressSteps",
+      "navigation",
+      {
+        "value": 66,
+        "segments": 2
+      }
+    ],
+    [
+      "MenuBarWide",
+      "MenuBar",
+      "navigation",
+      {
+        "value": 95,
+        "segments": 3
+      }
+    ],
+    [
+      "TocTreeOutline",
+      "TocTree",
+      "navigation",
+      {
+        "value": 24,
+        "segments": 4
+      }
+    ],
+    [
+      "RatingDense",
+      "Rating",
+      "form",
+      {
+        "value": 53,
+        "segments": 5
+      }
+    ],
+    [
+      "DialTall",
+      "Dial",
+      "form",
+      {
+        "value": 82,
+        "segments": 6
+      }
+    ],
+    [
+      "KnobFlat",
+      "Knob",
+      "form",
+      {
+        "value": 11,
+        "segments": 2
+      }
+    ],
+    [
+      "ColorWellRounded",
+      "ColorWell",
+      "form",
+      {
+        "value": 40,
+        "segments": 3
+      }
     ]
   ]
 }

@@ -863,20 +863,47 @@ fn all_r2_primitives_stay_unchanged() {
 }
 
 #[test]
-fn components_lists_116_rows() {
+fn components_lists_216_rows() {
     let r = bin().arg("components").output().expect("run components");
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let text = String::from_utf8_lossy(&r.stdout);
     let lines: Vec<&str> = text.lines().collect();
     let last = *lines.last().expect("count line");
-    assert_eq!(last, "116 components", "final count line: {last}");
+    assert_eq!(last, "216 components", "final count line: {last}");
     let count: usize = last.split_whitespace().next().unwrap().parse().unwrap();
-    assert_eq!(count, 116, "catalog count: {count}");
+    assert_eq!(count, 216, "catalog count: {count}");
     assert_eq!(lines.len(), count + 1, "one row per component plus count");
     for row in &lines[..count] {
         let parts: Vec<&str> = row.split(" | ").collect();
         assert_eq!(parts.len(), 3, "row format: {row}");
         assert!(parts.iter().all(|p| !p.is_empty()), "empty row cell: {row}");
+    }
+    assert_eq!(
+        lines
+            .iter()
+            .filter_map(|l| {
+                let p: Vec<&str> = l.split(" | ").collect();
+                if p.len() == 3 {
+                    Some(p[1])
+                } else {
+                    None
+                }
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        100,
+        "components must cover 100 distinct primitives"
+    );
+    for row in [
+        "Gauge | Gauge | data",
+        "Histogram | Histogram | data",
+        "Breadcrumbs | Breadcrumbs | navigation",
+        "Rating | Rating | form",
+        "Spectrogram | Spectrogram | media",
+        "LevelMeter | LevelMeter | feedback",
+        "BracketPanel | BracketPanel | layout",
+    ] {
+        assert!(lines.contains(&row), "missing R10 catalog row: {row}");
     }
     assert!(
         lines
@@ -916,8 +943,8 @@ fn vendored_catalog_matches_spec_when_present() {
         vendored, expected,
         "vendored catalog drifted from opurom-spec"
     );
-    assert_eq!(vendored["count"], 116);
-    assert_eq!(vendored["primitives"], 32);
+    assert_eq!(vendored["count"], 216);
+    assert_eq!(vendored["primitives"], 100);
 }
 
 #[test]
@@ -2222,7 +2249,7 @@ fn r6_expanded_ir_keeps_emitters_catalog_and_optimizer() {
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     assert_eq!(
         String::from_utf8_lossy(&r.stdout).lines().last().unwrap(),
-        "116 components",
+        "216 components",
         "the built-in catalog is unchanged"
     );
 }
@@ -2254,5 +2281,102 @@ fn r6_plain_ir_stays_byte_identical() {
         assert!(ir.get("components").is_none());
         assert!(ir.get("computed").is_none());
         assert!(ir.get("imports").is_none());
+    }
+}
+
+// ------------------------------------------------------------------ R10 ----
+
+/// The 68 canonical R10 primitive names, derived from `opuromc components` rows
+/// where the component name equals its primitive (the R10 catalog convention).
+fn r10_canonical_kinds() -> Vec<String> {
+    let r = bin().arg("components").output().expect("run components");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let text = String::from_utf8_lossy(&r.stdout);
+    let kinds: Vec<String> = text
+        .lines()
+        .filter_map(|l| {
+            let p: Vec<&str> = l.split(" | ").collect();
+            if p.len() == 3 && p[0] == p[1] {
+                Some(p[0].to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        kinds.len(),
+        68,
+        "expected 68 canonical R10 kinds: {kinds:?}"
+    );
+    kinds
+}
+
+#[test]
+fn r10_primitives_and_catalog_names_are_accepted() {
+    let kinds = r10_canonical_kinds();
+    let dir = out_dir("r10-kinds");
+    let src_path = dir.join("kinds.opu");
+    let mut src = String::from("app R10Kinds {\n  Column {\n");
+    for k in &kinds {
+        src.push_str(&format!(
+            "    {k}(value: 42, segments: 4, labels: \"a,b\")\n"
+        ));
+    }
+    // Secondary catalog names expand to their primitive and gain `component`.
+    src.push_str("    GaugeMini(value: 10)\n    HistogramRounded()\n  }\n}\n");
+    fs::write(&src_path, &src).unwrap();
+    let ir = compile_ok(&src_path);
+    let nodes = nodes_of(&ir);
+    assert_eq!(nodes.len(), 1 + kinds.len() + 2);
+    let lowered: Vec<&str> = nodes.iter().map(|n| n["kind"].as_str().unwrap()).collect();
+    for k in &kinds {
+        assert!(lowered.contains(&k.as_str()), "missing primitive kind {k}");
+    }
+    for name in ["GaugeMini", "HistogramRounded"] {
+        let node = nodes
+            .iter()
+            .find(|n| n.get("component").and_then(Json::as_str) == Some(name))
+            .unwrap_or_else(|| panic!("missing catalog component {name}"));
+        let expected = if name == "GaugeMini" {
+            "Gauge"
+        } else {
+            "Histogram"
+        };
+        assert_eq!(node["kind"], expected);
+    }
+    // Explicit props win over catalog defaults; unknown props stay a diagnostic.
+    let explicit = nodes
+        .iter()
+        .find(|n| n["kind"] == "Gauge" && n.get("component").is_none())
+        .unwrap();
+    assert_eq!(explicit["props"]["value"], 42);
+    assert_eq!(explicit["props"]["segments"], 4);
+}
+
+#[test]
+fn r10_all_nine_emitters_keep_working() {
+    let kinds = r10_canonical_kinds();
+    let dir = out_dir("r10-emit");
+    let src_path = dir.join("kinds.opu");
+    let mut src = String::from("app R10Emit {\n  state n = 0\n  Column {\n");
+    for k in kinds.iter().take(12) {
+        src.push_str(&format!("    {k}(value: 7)\n"));
+    }
+    src.push_str("    Button(\"go\") { n += 1 }\n  }\n}\n");
+    fs::write(&src_path, &src).unwrap();
+    let ir_path = dir.join("kinds.opuir.json");
+    let r = compile(&src_path, &ir_path);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    for target in [
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
+    ] {
+        let out = dir.join(format!("out-{target}"));
+        let e = emit(&ir_path, target, &out);
+        assert!(
+            e.status.success(),
+            "{target} emit failed: {}",
+            String::from_utf8_lossy(&e.stderr)
+        );
+        assert!(out.is_dir(), "{target}: no output dir");
     }
 }
