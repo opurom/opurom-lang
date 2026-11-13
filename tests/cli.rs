@@ -866,6 +866,68 @@ fn empty_state_program_emits_warning_free_native() {
 }
 
 #[test]
+fn native_emitter_renders_and_writes_a_frame() {
+    let ir = out_dir("native-frame-ir").join("counter.opuir.json");
+    let r = compile(&spec("counter.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let dir = out_dir("native-frame");
+    let r = emit(&ir, "native", &dir);
+    assert!(
+        r.status.success(),
+        "native emit failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    // The generated app renders the embedded IR and writes the frame.
+    let native_rs = fs::read_to_string(dir.join("src/main.rs")).unwrap();
+    for marker in [
+        "opurom_render::Renderer",
+        "render_frame()",
+        "opurom_platform::frame_to_png",
+        "write_ppm",
+    ] {
+        assert!(native_rs.contains(marker), "native source missing {marker}");
+    }
+
+    let (built, stderr) = build_native(&dir);
+    assert!(built, "cargo build --release failed:\n{stderr}");
+    assert!(
+        !stderr.contains("warning:"),
+        "generated Rust must be warning-free:\n{stderr}"
+    );
+
+    let exe = dir.join("target/release/opurom_native");
+    let frame = dir.join("frame.ppm");
+    let mut child = Command::new(&exe)
+        .arg(frame.to_str().expect("utf8 frame path"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn generated native binary");
+    {
+        let mut pipe = child.stdin.take().expect("stdin pipe");
+        pipe.write_all(b"quit\n").expect("write stdin");
+    }
+    let out = child.wait_with_output().expect("wait for native binary");
+    assert!(
+        out.status.success(),
+        "native frame render failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("frame: 800x600 wrote"), "{stdout}");
+    assert!(frame.is_file(), "the rendered frame file was not written");
+    let bytes = fs::read(&frame).expect("read rendered frame");
+    assert!(bytes.len() > 1000, "frame too small: {} bytes", bytes.len());
+    let header = String::from_utf8_lossy(&bytes[..bytes.len().min(20)]);
+    assert!(
+        header.starts_with("P6\n800 600\n255\n"),
+        "unexpected PPM header: {header}"
+    );
+}
+
+#[test]
 fn usage_error_is_a_diagnostic() {
     let r = bin().output().expect("run opuromc with no args");
     assert_eq!(r.status.code(), Some(1));
