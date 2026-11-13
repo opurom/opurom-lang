@@ -20,6 +20,10 @@ fn spec(name: &str) -> PathBuf {
     workspace().join("..").join("opurom-spec").join(name)
 }
 
+fn example(name: &str) -> PathBuf {
+    workspace().join("..").join("opurom-examples").join(name)
+}
+
 fn fixture(name: &str) -> PathBuf {
     workspace().join("tests/fixtures").join(name)
 }
@@ -2373,5 +2377,307 @@ fn all_nine_emitters_keep_working() {
             String::from_utf8_lossy(&e.stderr)
         );
         assert!(out.is_dir(), "{target}: no output dir");
+    }
+}
+
+// ------------------------------------------------- static types and inference ---
+
+#[test]
+fn every_type_error_class_is_a_friendly_diagnostic() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "state_annotation_mismatch.opu",
+            "state 'count' does not match its declared type: expected int, found string",
+        ),
+        (
+            "state_annotation_unknown_type.opu",
+            "unknown state type 'number'",
+        ),
+        (
+            "assign_int_to_string.opu",
+            "cannot assign int to string state 'name': expected string, found int",
+        ),
+        (
+            "assign_string_to_int.opu",
+            "cannot assign string to int state 'count': expected int, found string",
+        ),
+        (
+            "value_from_int_to_string.opu",
+            "cannot assign int to string state 'b': expected string, found int",
+        ),
+        (
+            "add_string_state.opu",
+            "'+=' / '-=' requires an int state, found string state 'label'",
+        ),
+        (
+            "condition_on_int_state.opu",
+            "'if' requires a bool state, found int state 'count': expected bool, found int",
+        ),
+        (
+            "condition_on_string_state.opu",
+            "'if' requires a bool state, found string state 'name': expected bool, found string",
+        ),
+        (
+            "computed_arithmetic_on_string.opu",
+            "computed expression '+' requires int operands: expected int, found string",
+        ),
+        (
+            "computed_arithmetic_on_bool.opu",
+            "computed expression '*' requires int operands: expected int, found bool",
+        ),
+        (
+            "component_param_conflict.opu",
+            "parameter 'title' of component 'Card' expects string, found int",
+        ),
+        (
+            "component_param_inferred_first.opu",
+            "parameter 'title' of component 'Card' expects int, found string",
+        ),
+        (
+            "unknown_state_in_interpolation.opu",
+            "unknown state 'nope' in Text interpolation",
+        ),
+    ];
+    for &(file, message) in cases {
+        let path = error_fixture(file);
+        let r = bin().arg("check").arg(&path).output().expect("run check");
+        assert_eq!(r.status.code(), Some(1), "{file} must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            err.contains(message),
+            "{file}: unexpected diagnostic: {err}"
+        );
+        assert_diag(&err, &path);
+        let out = out_dir("type-reject").join(format!("{file}.opuir.json"));
+        let r2 = compile(&path, &out);
+        assert_eq!(r2.status.code(), Some(1), "{file}: compile must fail");
+        assert!(!out.exists(), "{file}: no IR may be written on error");
+    }
+}
+
+#[test]
+fn type_diagnostics_name_expected_found_and_position() {
+    let path = error_fixture("assign_string_to_int.opu");
+    let r = bin().arg("check").arg(&path).output().expect("run check");
+    let err = String::from_utf8_lossy(&r.stderr);
+    let first = err.lines().next().unwrap_or("");
+    assert!(
+        first.contains(
+            ": error: cannot assign string to int state 'count': expected int, found string"
+        ),
+        "{first}"
+    );
+    assert!(
+        err.contains("  help: use an int literal or change the state initializer"),
+        "{err}"
+    );
+    // The position points at the offending value, not at the declaration.
+    let head = first.split(": error: ").next().unwrap_or("");
+    let pieces: Vec<&str> = head.split(':').collect();
+    let line: usize = pieces[pieces.len() - 2].parse().expect("numeric line");
+    assert_eq!(line, 3, "the error points at the statement line: {first}");
+}
+
+#[test]
+fn typed_and_untyped_source_lower_to_identical_ir() {
+    let typed = compile_ok(&fixture("typed_program.opu"));
+    assert_eq!(
+        typed["state"][0],
+        json!({"name": "count", "type": "int", "init": 2})
+    );
+    assert_eq!(
+        typed["state"][1],
+        json!({"name": "step", "type": "int", "init": 3})
+    );
+    assert_eq!(
+        typed["state"][2],
+        json!({"name": "flag", "type": "bool", "init": true})
+    );
+    assert_eq!(
+        typed["state"][3],
+        json!({"name": "name", "type": "string", "init": "Ada"})
+    );
+    // The computed values are inferred from their expressions.
+    assert_eq!(
+        typed["computed"],
+        json!([
+            {"name": "doubled", "type": "int", "expr": "count * 2"},
+            {"name": "total", "type": "int", "expr": "count * 2 + step - 1"},
+            {"name": "visible", "type": "bool", "expr": "flag"},
+            {"name": "label", "type": "string", "expr": "name"},
+        ])
+    );
+    // The same program without annotations lowers to the same IR.
+    let dir = out_dir("typed-vs-untyped");
+    let untyped = dir.join("untyped.opu");
+    fs::write(
+        &untyped,
+        r#"app TypedProgram {
+  state count = 2
+  state step = 3
+  state flag = true
+  state name = "Ada"
+
+  computed doubled = count * 2
+  computed total = count * 2 + step - 1
+  computed visible = flag
+  computed label = name
+
+  Column(gap: 8) {
+    Text("Count: {count} doubled: {doubled} total: {total}")
+    Text("Label: {label}")
+    if (visible) {
+      Text("visible")
+    } else {
+      Text("hidden")
+    }
+    Button("+") { count += step }
+    Button("copy") { count = total }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let typed_ir = compile_ok(&fixture("typed_program.opu"));
+    let untyped_ir = compile_ok(&untyped);
+    assert_eq!(
+        typed_ir, untyped_ir,
+        "a type annotation must not change the lowered IR"
+    );
+}
+
+#[test]
+fn types_are_inferred_across_nested_expressions_and_components() {
+    let ir = compile_ok(&fixture("typed_program.opu"));
+    // A nested computed expression keeps the int type of its operands.
+    let total = ir["state"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "total")
+        .unwrap();
+    assert_eq!(*total, json!({"name": "total", "type": "int", "init": 6}));
+    // A computed value that reads a bool state stays bool and drives the condition.
+    let visible = ir["state"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "visible")
+        .unwrap();
+    assert_eq!(
+        *visible,
+        json!({"name": "visible", "type": "bool", "init": true})
+    );
+    let nodes = nodes_of(&ir);
+    let find = |value: &str| {
+        nodes
+            .iter()
+            .find(|n| (**n)["props"]["value"].as_str() == Some(value))
+            .copied()
+            .unwrap()
+    };
+    assert_eq!(find("visible")["when"], "visible");
+    assert_eq!(find("hidden")["unless"], "visible");
+
+    // A declared component parameter keeps its type through expansion.
+    let component = compile_ok(&fixture("typed_component.opu"));
+    let values: Vec<&str> = nodes_of(&component)
+        .iter()
+        .filter_map(|n| n["props"]["value"].as_str())
+        .collect();
+    assert!(values.contains(&"CPU"), "{values:?}");
+    assert!(values.contains(&"on: true"), "{values:?}");
+    // The inferred parameter of Plain reaches the expanded node.
+    let inferred = compile_ok(&fixture("inferred_component.opu"));
+    let texts: Vec<&str> = nodes_of(&inferred)
+        .iter()
+        .filter_map(|n| n["props"]["value"].as_str())
+        .collect();
+    assert_eq!(texts, vec!["hello", "world"]);
+}
+
+#[test]
+fn component_parameter_types_come_from_the_first_call_site() {
+    // The first use site fixes the type of an unannotated parameter.
+    let dir = out_dir("component-infer");
+    let src = dir.join("infer.opu");
+    fs::write(
+        &src,
+        r#"component Plain(title) {
+  Text("{title}")
+}
+
+app Infer {
+  Plain("hello")
+  Plain("world")
+}
+"#,
+    )
+    .unwrap();
+    assert!(compile(&src, &dir.join("infer.opuir.json"))
+        .status
+        .success());
+
+    // A conflicting later use site is rejected with the inferred type.
+    let bad = dir.join("conflict.opu");
+    fs::write(
+        &bad,
+        r#"component Plain(title) {
+  Text("{title}")
+}
+
+app Conflict {
+  Plain("hello")
+  Plain(7)
+}
+"#,
+    )
+    .unwrap();
+    let r = bin().arg("check").arg(&bad).output().expect("run check");
+    assert_eq!(
+        r.status.code(),
+        Some(1),
+        "the conflicting use site must fail"
+    );
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        err.contains("parameter 'title' of component 'Plain' expects string, found int"),
+        "{err}"
+    );
+    assert!(
+        err.contains("was inferred as string from the first use"),
+        "{err}"
+    );
+}
+
+#[test]
+fn example_programs_keep_byte_identical_ir() {
+    let cases = [
+        (spec("counter.opu"), fixture("golden/counter.opuir.json")),
+        (example("profile.opu"), fixture("golden/profile.opuir.json")),
+        (example("todo.opu"), fixture("golden/todo.opuir.json")),
+        (
+            example("showcase.opu"),
+            fixture("golden/showcase.opuir.json"),
+        ),
+        (example("gallery.opu"), fixture("golden/gallery.opuir.json")),
+    ];
+    for (src, golden) in cases {
+        if !src.is_file() {
+            continue; // standalone checkout: the sibling example repo is optional
+        }
+        let out = out_dir("example-golden").join("out.opuir.json");
+        let r = compile(&src, &out);
+        assert!(
+            r.status.success(),
+            "compile failed: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        assert_eq!(
+            fs::read(&out).unwrap(),
+            fs::read(&golden).unwrap(),
+            "the program changed its IR bytes: {}",
+            src.display()
+        );
     }
 }

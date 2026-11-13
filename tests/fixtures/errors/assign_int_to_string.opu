@@ -1,0 +1,4 @@
+app Bad {
+  state name = "world"
+  Button("x") { name = 1 }
+}

@@ -17,7 +17,7 @@ component_decl = "component" IDENT "(" [ params ] ")" "{" { node } "}" ;
 params        = param { "," param } [ "," ] ;
 param         = IDENT [ ":" ( "int" | "bool" | "string" ) ] ;
 import_decl   = "import" STRING [";"] ;
-state_decl    = "state" IDENT "=" ( literal | string_list ) [";"] ;
+state_decl    = "state" IDENT [ ":" ( "int" | "bool" | "string" | "list" ) ] "=" ( literal | string_list ) [";"] ;
 computed_decl = "computed" IDENT "=" computed_expr [";"] ;
 model_decl    = "model" IDENT "{" { field_decl } "}" ;
 field_decl    = IDENT ":" ( "int" | "string" | "bool" ) [ "primary" ] [ "=" literal ] [";"] ;
@@ -50,7 +50,9 @@ computed_factor = [ "-" ] INT | IDENT ;
   Catalog names are also accepted and lower to one of these 100 primitives.
   `Text("x")` and `Button("OK")` are the positional forms of `Text(value: "x")` /
   `Button(label: "OK")`.
-- Types are inferred from the initializer: `int` (i64), `bool`, `string` and `list`.
+- Types are inferred from the initializer: `int` (i64), `bool`, `string` and `list`. A state may
+  declare its type explicitly (`state count: int = 0`); the annotation is optional and is checked
+  against the initializer.
   `Text` values interpolate `{name}` against state; `{{` is a literal `{` (and `}}` a
   literal `}`). Computed names are readable in interpolation; list states are not.
 - `Input(bind: name)` lowers to an `input` event whose `set` action omits `value`; the runtime
@@ -178,6 +180,63 @@ app EffectsDemo {
 
 Plain programs gain no `computed` array, no `unless` fields and no `list` state entries. Byte-level
 golden IR fixtures cover `counter.opu`, `profile.opu` and `todo.opu`.
+
+### Static types and inference
+
+The compiler runs one shared type checker over the whole program before it lowers anything. The
+type of every value is resolved at compile time; no runtime type tags reach the IR.
+
+| Type | Where it comes from | Stored in IR state |
+| --- | --- | --- |
+| `int` | `state n = 0`, an integer literal, an `int` arithmetic result | yes |
+| `bool` | `state b = false`, `true`/`false`, a `bool` state read | yes |
+| `string` | `state s = "x"`, a string literal, a `string` state read | yes |
+| `number` | a decimal literal (`opacity: 0.95`) | no |
+| `list` | `state items = ["a", "b"]` | no, compile-time only |
+
+A state declaration may declare its type explicitly. The annotation is optional and is checked
+against the initializer, so typed and untyped source lower to the same IR:
+
+```opu
+app Typed {
+  state count: int = 0
+  state name: string = "world"
+  state dark: bool = false
+
+  Column {
+    Text("Count: {count}")
+    Button("+") { count += 1 }
+  }
+}
+```
+
+- `state count: int = 0` and `state count = 0` produce byte-identical IR.
+- A declaration whose annotation disagrees with its initializer is a diagnostic.
+
+The checker resolves and checks:
+
+- every `state` declaration, from its initializer;
+- every local value in an event statement, a computed expression, a list initializer and a
+  `{state}` interpolation;
+- action assignments (`count += 1`, `count = x`), `valueFrom` sources, `bind` targets, `toggle()`,
+  `fetch` targets and computed-expression operands;
+- `if` conditions, which must be `bool`; they become the `when` and `unless` IR fields, so both
+  are checked against the same inferred types;
+- component parameter types: a declared annotation is checked at every call site, and an omitted
+  annotation is inferred from the first call site and checked against every later one.
+
+Type diagnostics name the expected type, the found type and the source position:
+
+```text
+counter.opu:3:24: error: cannot assign int to bool state 'flag': expected bool, found int
+  help: use a bool literal or change the state initializer
+```
+
+Every error class has a negative fixture and a test: a mismatched state annotation, an unknown
+annotation, a literal assigned to a state of another type, a `valueFrom` source of another type,
+arithmetic on a string or bool state, a non-`bool` condition, arithmetic on a string or bool in a
+computed expression, a conflicting component parameter type and an unknown state in an
+interpolation.
 
 ### Custom components (compile-time expansion)
 
@@ -383,7 +442,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 cd opurom-lang
 cargo fmt --all
 cargo fmt --all -- --check
-cargo test --offline                 # 55 tests: 4 unit + 45 CLI + 6 wasm
+cargo test --offline                 # 62 tests: 5 unit + 51 CLI + 6 wasm
 RUSTFLAGS="-D warnings" cargo test --offline   # zero compiler warnings
 ```
 
@@ -400,14 +459,17 @@ plain IR, and the wasm ABI on a component-expanded tree.
 
 ## Verified status
 
-- `cargo test --offline`: 55/55 tests pass (4 unit + 45 CLI + 6 wasm); `RUSTFLAGS="-D warnings"`
+- `cargo test --offline`: 62/62 tests pass (5 unit + 51 CLI + 6 wasm); `RUSTFLAGS="-D warnings"`
   is clean and `cargo fmt --all -- --check` passes.
 - UI-only programs (`counter.opu`, `profile.opu`, `todo.opu`) compile to **byte-identical** IR;
   no `imports`, `async`, `effects`, `computed`, `unless` or component keys are added to plain IR.
   The 216/100 vendored catalog is byte-identical to the spec catalog.
 - Negative fixtures cover the v0.1 classes, the interactive UI classes, the async/import
-  classes, the `else`/computed/list classes and fifteen component classes. No panics, no stack
-  traces.
+  classes, the `else`/computed/list classes, fifteen component classes and thirteen type classes.
+  No panics, no stack traces.
+- The type checker runs before lowering: state, computed, list, interpolation, action, `valueFrom`,
+  `bind`, condition and component parameter types are all resolved at compile time. Typed and
+  untyped source lower to identical IR, and the golden programs keep byte-identical IR.
 - Components expand in the frontend: one, two, nested and in-app uses produce ordinary IR
   with pre-order ids, and all 9 emitters, the optimizer and the wasm ABI accept that IR.
 - The wasm target builds with `cargo build --release --target wasm32-unknown-unknown` and the

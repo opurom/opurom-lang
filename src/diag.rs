@@ -32,6 +32,30 @@ impl Diagnostic {
         Self::new(path, 1, 1, message, help)
     }
 
+    /// A type diagnostic keeps the original message and names both sides of the mismatch.
+    pub fn type_error(
+        path: &str,
+        line: usize,
+        col: usize,
+        message: impl Into<String>,
+        expected: impl Into<String>,
+        found: impl Into<String>,
+        help: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            path,
+            line,
+            col,
+            format!(
+                "{}: expected {}, found {}",
+                message.into(),
+                expected.into(),
+                found.into()
+            ),
+            help,
+        )
+    }
+
     pub fn render(&self) -> String {
         format!(
             "{}:{}:{}: error: {}\n  help: {}\n",

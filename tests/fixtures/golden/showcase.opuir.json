@@ -1,0 +1,265 @@
+{
+  "app": "Showcase",
+  "ir": "0.1",
+  "state": [
+    {
+      "init": 0,
+      "name": "count",
+      "type": "int"
+    },
+    {
+      "init": false,
+      "name": "dark",
+      "type": "bool"
+    }
+  ],
+  "theme": {
+    "accent": "#4F46E5",
+    "mode": "light",
+    "radius": 12
+  },
+  "tree": {
+    "children": [
+      {
+        "children": [],
+        "component": "Heading",
+        "events": {},
+        "id": 1,
+        "kind": "Text",
+        "props": {
+          "role": "heading",
+          "size": 26,
+          "value": "OPUROM Components"
+        }
+      },
+      {
+        "children": [],
+        "component": "Paragraph",
+        "events": {},
+        "id": 2,
+        "kind": "Text",
+        "props": {
+          "size": 14,
+          "value": "One catalog, 216 named components, 100 distinct primitive kinds"
+        }
+      },
+      {
+        "children": [],
+        "component": "DividerSpace",
+        "events": {},
+        "id": 3,
+        "kind": "Spacer",
+        "props": {
+          "height": 16
+        }
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "children": [],
+                "component": "Label",
+                "events": {},
+                "id": 6,
+                "kind": "Text",
+                "props": {
+                  "size": 16,
+                  "value": "Counter"
+                }
+              },
+              {
+                "children": [],
+                "component": "Gap",
+                "events": {},
+                "id": 7,
+                "kind": "Spacer",
+                "props": {
+                  "height": 8
+                }
+              },
+              {
+                "children": [],
+                "component": "CountBadge",
+                "events": {},
+                "id": 8,
+                "kind": "Badge",
+                "props": {
+                  "label": "{count}",
+                  "radius": 8
+                }
+              }
+            ],
+            "component": "Tile",
+            "events": {},
+            "id": 5,
+            "kind": "Card",
+            "props": {
+              "padding": 12,
+              "radius": 8,
+              "shadow": 2
+            }
+          },
+          {
+            "children": [
+              {
+                "children": [],
+                "component": "Label",
+                "events": {},
+                "id": 10,
+                "kind": "Text",
+                "props": {
+                  "size": 16,
+                  "value": "Actions"
+                }
+              },
+              {
+                "children": [
+                  {
+                    "children": [],
+                    "component": "PrimaryButton",
+                    "events": {
+                      "tap": {
+                        "op": "add",
+                        "target": "count",
+                        "value": 1
+                      }
+                    },
+                    "id": 12,
+                    "kind": "Button",
+                    "props": {
+                      "color": "#4F46E5",
+                      "label": "+"
+                    }
+                  },
+                  {
+                    "children": [],
+                    "component": "DangerButton",
+                    "events": {
+                      "tap": {
+                        "op": "set",
+                        "target": "count",
+                        "value": 0
+                      }
+                    },
+                    "id": 13,
+                    "kind": "Button",
+                    "props": {
+                      "color": "#DC2626",
+                      "label": "Reset"
+                    }
+                  }
+                ],
+                "component": "ButtonBar",
+                "events": {},
+                "id": 11,
+                "kind": "Row",
+                "props": {
+                  "gap": 8
+                }
+              }
+            ],
+            "component": "ElevationCard",
+            "events": {},
+            "id": 9,
+            "kind": "Card",
+            "props": {
+              "padding": 12,
+              "shadow": 2
+            }
+          }
+        ],
+        "component": "CardGrid",
+        "events": {},
+        "id": 4,
+        "kind": "Grid",
+        "props": {
+          "columns": 2,
+          "gap": 12
+        }
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "component": "Caption",
+            "events": {},
+            "id": 15,
+            "kind": "Text",
+            "props": {
+              "fontScale": 1.25,
+              "size": 12,
+              "value": "High contrast is active"
+            },
+            "when": "dark"
+          }
+        ],
+        "component": "InfoCard",
+        "events": {},
+        "id": 14,
+        "kind": "Card",
+        "props": {
+          "color": "#EEF2FF",
+          "highContrast": true,
+          "label": "Dark mode details",
+          "padding": 12,
+          "role": "text"
+        },
+        "when": "dark"
+      },
+      {
+        "children": [],
+        "component": "ToggleSwitch",
+        "events": {
+          "tap": {
+            "op": "toggle",
+            "target": "dark"
+          }
+        },
+        "id": 16,
+        "kind": "Switch",
+        "props": {
+          "bind": "dark",
+          "label": "Dark mode",
+          "role": "checkbox"
+        }
+      },
+      {
+        "children": [],
+        "component": "LinearProgress",
+        "events": {},
+        "id": 17,
+        "kind": "Progress",
+        "props": {
+          "value": 40
+        }
+      },
+      {
+        "children": [],
+        "component": "UserAvatar",
+        "events": {},
+        "id": 18,
+        "kind": "Avatar",
+        "props": {
+          "label": "OP",
+          "size": 40
+        }
+      },
+      {
+        "children": [],
+        "events": {},
+        "id": 19,
+        "kind": "Spinner",
+        "props": {}
+      }
+    ],
+    "component": "ScrollView",
+    "events": {},
+    "id": 0,
+    "kind": "Scroll",
+    "props": {
+      "height": 480,
+      "padding": 16
+    }
+  }
+}

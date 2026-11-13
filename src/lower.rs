@@ -7,9 +7,10 @@ use crate::diag::{DResult, Diagnostic};
 use crate::lexer::lex;
 use crate::modules;
 use crate::parser::{
-    self, Arg, ComponentDecl, Effect, Expr, ExprKind, ForIter, Lit, Node, NodeKind, Pos, Program,
-    Stmt, StmtKind, Value as AstValue,
+    self, Arg, ComponentDecl, Effect, ForIter, Lit, Node, NodeKind, Pos, Program, Stmt, StmtKind,
+    Value as AstValue,
 };
+use crate::typecheck;
 
 pub const KINDS: &[&str] = &[
     "Column",
@@ -742,55 +743,10 @@ fn check_color(ctx: &Ctx, pos: Pos, key: &str, value: &str) -> DResult<()> {
     ))
 }
 
-fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> DResult<Json> {
+fn prop_value(ctx: &Ctx, _kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> DResult<Json> {
     if key == "bind" {
-        let expected = match kind {
-            "Switch" | "Checkbox" => Ty::Bool,
-            "Slider" => Ty::Int,
-            _ => Ty::Str,
-        };
         return match &arg.value {
-            AstValue::Ident(name) => {
-                let ty = ctx.types.get(name).copied().ok_or_else(|| {
-                    ctx.err(
-                        arg.pos,
-                        format!("unknown state '{name}' in 'bind'"),
-                        format!(
-                            "declare it with 'state {name} = \"\"' or bind one of: {}",
-                            ctx.state_list()
-                        ),
-                    )
-                })?;
-                if ctx.computed.contains(name) {
-                    return Err(ctx.err(
-                        arg.pos,
-                        format!("computed value '{name}' is read-only"),
-                        "bind a declared mutable state; computed values are recalculated from state",
-                    ));
-                }
-                if ty == Ty::List {
-                    return Err(ctx.err(
-                        arg.pos,
-                        format!("list state '{name}' is compile-time only"),
-                        "use 'for (item in items)' to unroll a list at compile time; runtime binding is not supported yet",
-                    ));
-                }
-                if ty != expected {
-                    return Err(ctx.err(
-                        arg.pos,
-                        format!(
-                            "'bind' requires a {} state, found {} state '{name}'",
-                            expected.name(),
-                            ty.name()
-                        ),
-                        format!(
-                            "declare the state with a {} initializer or remove 'bind'",
-                            expected.name()
-                        ),
-                    ));
-                }
-                Ok(json!(name))
-            }
+            AstValue::Ident(name) => Ok(json!(name)),
             _ => Err(ctx.err(
                 arg.pos,
                 format!(
@@ -949,50 +905,11 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
     })
 }
 
-/// Lower one event statement into an IR action.
+/// Lower one event statement into an IR action. The types are already checked
+/// by the shared type checker, so this pass only builds the IR.
 fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
-    let ty = ctx.types.get(&stmt.target).copied().ok_or_else(|| {
-        ctx.err(
-            stmt.pos,
-            format!("unknown state '{}' in event statement", stmt.target),
-            format!(
-                "declare it with 'state {} = 0' or use one of: {}",
-                stmt.target,
-                ctx.state_list()
-            ),
-        )
-    })?;
-    if ctx.computed.contains(&stmt.target) {
-        return Err(ctx.err(
-            stmt.pos,
-            format!("computed value '{}' is read-only", stmt.target),
-            "change a declared state instead; computed values are recalculated from state",
-        ));
-    }
-    if ty == Ty::List {
-        return Err(ctx.err(
-            stmt.pos,
-            format!("list state '{}' is compile-time only", stmt.target),
-            "use 'for (item in items)' to unroll a list at compile time; runtime mutation is not supported yet",
-        ));
-    }
     match &stmt.kind {
         StmtKind::Add(v, p) | StmtKind::Sub(v, p) => {
-            if ty != Ty::Int {
-                return Err(ctx.err(
-                    *p,
-                    format!(
-                        "'+=' / '-=' requires an int state, found {} state '{}'",
-                        ty.name(),
-                        stmt.target
-                    ),
-                    format!(
-                        "use '=' for a {} state or declare '{}' as int",
-                        ty.name(),
-                        stmt.target
-                    ),
-                ));
-            }
             let value = match v {
                 AstValue::Lit(Lit::Int(n)) => {
                     if matches!(stmt.kind, StmtKind::Sub(..)) {
@@ -1008,26 +925,6 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
                     }
                 }
                 AstValue::Ident(name) => {
-                    let src = ctx.types.get(name).copied().ok_or_else(|| {
-                        ctx.err(
-                            *p,
-                            format!("unknown state '{name}' in event expression"),
-                            format!(
-                                "declare it with 'state {name} = 0' or use one of: {}",
-                                ctx.state_list()
-                            ),
-                        )
-                    })?;
-                    if src != Ty::Int {
-                        return Err(ctx.err(
-                            *p,
-                            format!(
-                                "'+=' / '-=' requires an int state, found {} state '{name}'",
-                                src.name()
-                            ),
-                            "use a literal here or read an int state".to_string(),
-                        ));
-                    }
                     return Ok(json!({"op": "add", "target": stmt.target, "valueFrom": name}));
                 }
                 other => {
@@ -1043,69 +940,15 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
             };
             Ok(json!({"op": "add", "target": stmt.target, "value": value}))
         }
-        StmtKind::Set(v, p) => match v {
+        StmtKind::Set(v, _p) => match v {
             AstValue::Lit(l) => {
-                let given = value_desc(&AstValue::Lit(l.clone()));
-                if given != ty.name() {
-                    return Err(ctx.err(
-                        *p,
-                        format!(
-                            "cannot assign {} to {} state '{}'",
-                            given,
-                            ty.name(),
-                            stmt.target
-                        ),
-                        format!(
-                            "use a {} literal or change the state initializer",
-                            ty.name()
-                        ),
-                    ));
-                }
                 Ok(json!({"op": "set", "target": stmt.target, "value": json_lit(l)}))
             }
             AstValue::Ident(name) => {
-                let src = ctx.types.get(name).copied().ok_or_else(|| {
-                    ctx.err(
-                        *p,
-                        format!("unknown state '{name}' in event expression"),
-                        format!(
-                            "declare it with 'state {name} = 0' or use one of: {}",
-                            ctx.state_list()
-                        ),
-                    )
-                })?;
-                if src != ty {
-                    return Err(ctx.err(
-                        *p,
-                        format!(
-                            "cannot assign {} to {} state '{}'",
-                            src.name(),
-                            ty.name(),
-                            stmt.target
-                        ),
-                        format!(
-                            "read a {} state here or change the state initializer",
-                            ty.name()
-                        ),
-                    ));
-                }
                 Ok(json!({"op": "set", "target": stmt.target, "valueFrom": name}))
             }
         },
-        StmtKind::Toggle => {
-            if ty != Ty::Bool {
-                return Err(ctx.err(
-                    stmt.pos,
-                    format!(
-                        "'toggle()' requires a bool state, found {} state '{}'",
-                        ty.name(),
-                        stmt.target
-                    ),
-                    "declare the state with true/false or use '+=' / '=' instead".to_string(),
-                ));
-            }
-            Ok(json!({"op": "toggle", "target": stmt.target}))
-        }
+        StmtKind::Toggle => Ok(json!({"op": "toggle", "target": stmt.target})),
     }
 }
 
@@ -1131,34 +974,7 @@ fn lower_effects(ctx: &Ctx, effects: &[Effect]) -> DResult<Vec<Json>> {
                 }
                 out.push(json!({"kind": "delay", "ms": ms}));
             }
-            Effect::Fetch { path, into, pos } => {
-                let ty = ctx.types.get(into).copied().ok_or_else(|| {
-                    ctx.err(
-                        *pos,
-                        format!("unknown state '{into}' in fetch target"),
-                        format!(
-                            "declare it with 'state {into} = \"\"' or use one of: {}",
-                            ctx.state_list()
-                        ),
-                    )
-                })?;
-                if ctx.computed.contains(into) {
-                    return Err(ctx.err(
-                        *pos,
-                        format!("computed value '{into}' is read-only"),
-                        "fetch into a declared string state; computed values are recalculated from state",
-                    ));
-                }
-                if ty != Ty::Str {
-                    return Err(ctx.err(
-                        *pos,
-                        format!(
-                            "'fetch' requires a string state, found {} state '{into}'",
-                            ty.name()
-                        ),
-                        format!("declare '{into}' with a string initializer"),
-                    ));
-                }
+            Effect::Fetch { path, into, .. } => {
                 out.push(json!({"kind": "fetch", "path": path, "into": into}));
             }
         }
@@ -1270,7 +1086,9 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
         }
     }
     if let (Some(Json::String(s)), Some(base)) = (props.get("value"), value_pos) {
-        let parts = interp_parts(s).map_err(|(off, msg)| {
+        // The interpolation shape is checked here; the referenced states are
+        // checked by the shared type checker.
+        interp_parts(s).map_err(|(off, msg)| {
             let p = offset_pos(base, s, off);
             ctx.err(
                 p,
@@ -1278,32 +1096,6 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
                 "close it with '}' or write '{{' for a literal '{'".to_string(),
             )
         })?;
-        for part in parts {
-            if let Part::Var(name, off) = part {
-                match ctx.types.get(&name) {
-                    None => {
-                        let p = offset_pos(base, s, off);
-                        return Err(ctx.err(
-                            p,
-                            format!("unknown state '{name}' in Text interpolation"),
-                            format!(
-                                "declare it with 'state {name} = 0' or use one of: {}",
-                                ctx.state_list()
-                            ),
-                        ));
-                    }
-                    Some(Ty::List) => {
-                        let p = offset_pos(base, s, off);
-                        return Err(ctx.err(
-                            p,
-                            format!("list state '{name}' is compile-time only"),
-                            "use 'for (item in items)' to unroll list values; interpolation is not supported yet",
-                        ));
-                    }
-                    _ => {}
-                }
-            }
-        }
     }
 
     let mut events = JsonMap::new();
@@ -1516,26 +1308,7 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], cond: Cond) -> DResult<Vec<Jso
                 cond_pos,
                 else_block,
             } => {
-                let ty = ctx.types.get(name).copied().ok_or_else(|| {
-                    ctx.err(
-                        *cond_pos,
-                        format!("unknown state '{name}' in 'if'"),
-                        format!(
-                            "declare it with 'state {name} = false' or use one of: {}",
-                            ctx.state_list()
-                        ),
-                    )
-                })?;
-                if ty != Ty::Bool {
-                    return Err(ctx.err(
-                        *cond_pos,
-                        format!(
-                            "'if' requires a bool state, found {} state '{name}'",
-                            ty.name()
-                        ),
-                        "use a bool state for the condition".to_string(),
-                    ));
-                }
+                let _ = cond_pos;
                 let block = node.block.as_ref().ok_or_else(|| {
                     ctx.err(node.pos, "'if' needs a block", "write 'if (dark) { ... }'")
                 })?;
@@ -1898,7 +1671,7 @@ fn expand_nodes(
     path: &str,
     nodes: &[Node],
     comps: &HashMap<&str, &ComponentDecl>,
-    types: &mut HashMap<String, Vec<Option<Ty>>>,
+    types: &mut typecheck::ComponentTypes,
     stack: &mut Vec<String>,
     bindings: &HashMap<String, Lit>,
 ) -> DResult<Vec<Node>> {
@@ -1942,33 +1715,18 @@ fn expand_nodes(
                 }
                 let mut inner = HashMap::new();
                 {
-                    let declared = types
-                        .get_mut(name)
-                        .expect("component types are initialized");
                     for (idx, (arg, param)) in args.iter().zip(&decl.params).enumerate() {
                         let lit = component_lit(&arg.value, arg.pos, path, &param.name)?;
                         let got = component_lit_ty(&lit);
-                        let expected = match declared[idx] {
-                            Some(ty) => ty,
-                            None => {
-                                declared[idx] = Some(got);
-                                got
-                            }
-                        };
-                        if got != expected {
-                            return Err(Diagnostic::new(
-                                path,
-                                arg.pos.line,
-                                arg.pos.col,
-                                format!(
-                                    "parameter '{}' of component '{name}' expects {}, found {}",
-                                    param.name,
-                                    expected.name(),
-                                    got.name()
-                                ),
-                                format!("pass a {} literal to '{name}'", expected.name()),
-                            ));
-                        }
+                        typecheck::check_component_param(
+                            types,
+                            name,
+                            idx,
+                            &param.name,
+                            got,
+                            path,
+                            arg.pos,
+                        )?;
                         inner.insert(param.name.clone(), lit);
                     }
                 }
@@ -2214,69 +1972,6 @@ fn lower_apis(program: &Program, ctx: &Ctx) -> DResult<Vec<Json>> {
     Ok(out)
 }
 
-fn eval_computed_expr(
-    ctx: &Ctx,
-    expr: &Expr,
-    computed_names: &HashSet<String>,
-) -> DResult<(Ty, Json)> {
-    match &expr.kind {
-        ExprKind::Int(n) => Ok((Ty::Int, json!(*n))),
-        ExprKind::State(name) => {
-            if computed_names.contains(name) {
-                return Err(ctx.err(
-                    expr.pos,
-                    format!("computed expression cannot read computed value '{name}'"),
-                    "read a declared state; computed-to-computed references are not supported yet",
-                ));
-            }
-            let ty = ctx.types.get(name).copied().ok_or_else(|| {
-                ctx.err(
-                    expr.pos,
-                    format!("unknown state '{name}' in computed expression"),
-                    format!(
-                        "declare it with 'state {name} = 0' or use one of: {}",
-                        ctx.state_list()
-                    ),
-                )
-            })?;
-            if ty == Ty::List {
-                return Err(ctx.err(
-                    expr.pos,
-                    format!("list state '{name}' is compile-time only"),
-                    "use a declared int, bool or string state in a computed expression",
-                ));
-            }
-            Ok((ty, ctx.inits.get(name).cloned().unwrap_or(Json::Null)))
-        }
-        ExprKind::Add(lhs, rhs) | ExprKind::Sub(lhs, rhs) | ExprKind::Mul(lhs, rhs) => {
-            let op = match &expr.kind {
-                ExprKind::Add(..) => "+",
-                ExprKind::Sub(..) => "-",
-                ExprKind::Mul(..) => "*",
-                _ => unreachable!("binary expression variant"),
-            };
-            let (lhs_ty, lhs_value) = eval_computed_expr(ctx, lhs, computed_names)?;
-            let (rhs_ty, rhs_value) = eval_computed_expr(ctx, rhs, computed_names)?;
-            if lhs_ty != Ty::Int || rhs_ty != Ty::Int {
-                return Err(ctx.err(
-                    expr.pos,
-                    format!("computed expression '{op}' requires int operands"),
-                    "use only int states and integer literals with +, - and *",
-                ));
-            }
-            let a = lhs_value.as_i64().unwrap_or(0);
-            let b = rhs_value.as_i64().unwrap_or(0);
-            let value = match &expr.kind {
-                ExprKind::Add(..) => a.saturating_add(b),
-                ExprKind::Sub(..) => a.saturating_sub(b),
-                ExprKind::Mul(..) => a.saturating_mul(b),
-                _ => unreachable!("binary expression variant"),
-            };
-            Ok((Ty::Int, json!(value)))
-        }
-    }
-}
-
 fn lower(program: &Program, path: &str) -> DResult<Json> {
     let mut ctx = Ctx {
         path,
@@ -2289,33 +1984,13 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         loops: Vec::new(),
     };
     let mut state_json = Vec::new();
+    let (state_types, state_inits) = typecheck::infer_states(program, path)?;
     for s in &program.states {
-        if ctx.types.contains_key(&s.name) {
-            return Err(ctx.err(
-                s.pos,
-                format!("duplicate state '{}'", s.name),
-                format!(
-                    "rename the second declaration; declared states are: {}",
-                    ctx.state_list()
-                ),
-            ));
+        let ty = state_types[&s.name];
+        let init = state_inits[&s.name].clone();
+        if let Lit::List(values) = &s.init {
+            ctx.lists.insert(s.name.clone(), values.clone());
         }
-        let (ty, init) = match &s.init {
-            Lit::Int(n) => (Ty::Int, json!(*n)),
-            Lit::Bool(b) => (Ty::Bool, json!(*b)),
-            Lit::Str(v) => (Ty::Str, json!(v)),
-            Lit::List(values) => {
-                ctx.lists.insert(s.name.clone(), values.clone());
-                (Ty::List, json!(values))
-            }
-            Lit::Float(_) => {
-                return Err(ctx.err(
-                    s.pos,
-                    format!("state '{}' cannot be a decimal", s.name),
-                    "declare numbers as integers, such as 'state count = 0'".to_string(),
-                ))
-            }
-        };
         ctx.types.insert(s.name.clone(), ty);
         ctx.order.push(s.name.clone());
         ctx.inits.insert(s.name.clone(), init.clone());
@@ -2336,7 +2011,13 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
                 "rename the computed value or the conflicting declaration",
             ));
         }
-        let (ty, init) = eval_computed_expr(&ctx, &c.expr, &computed_names)?;
+        let env = typecheck::Env {
+            types: ctx.types.clone(),
+            inits: ctx.inits.clone(),
+            computed: ctx.computed.clone(),
+            order: ctx.order.clone(),
+        };
+        let (ty, init) = typecheck::infer_computed(&c.expr, &env, &computed_names, path)?;
         computed_json.push(json!({
             "name": c.name,
             "type": ty.name(),
@@ -2351,14 +2032,17 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
     let models = lower_models(program, &ctx)?;
     let apis = lower_apis(program, &ctx)?;
     let mut comps: HashMap<&str, &ComponentDecl> = HashMap::new();
-    let mut component_types: HashMap<String, Vec<Option<Ty>>> = HashMap::new();
+    let mut component_types: typecheck::ComponentTypes = HashMap::new();
     for decl in &program.components {
         comps.insert(decl.name.as_str(), decl);
         component_types.insert(
             decl.name.clone(),
             decl.params
                 .iter()
-                .map(|p| p.ty.as_deref().map(param_ty))
+                .map(|p| match p.ty.as_deref() {
+                    Some(name) => typecheck::ParamTy::Declared(param_ty(name)),
+                    None => typecheck::ParamTy::Unknown,
+                })
                 .collect(),
         );
     }
@@ -2371,6 +2055,13 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         &mut Vec::new(),
         &HashMap::new(),
     )?;
+    let env = typecheck::Env {
+        types: ctx.types.clone(),
+        inits: ctx.inits.clone(),
+        computed: ctx.computed.clone(),
+        order: ctx.order.clone(),
+    };
+    let conditions = typecheck::check_nodes(&expanded, env.clone(), path)?;
     let total = count_expanded(&expanded, &ctx)?;
     if total == 0 {
         return Err(Diagnostic::new(
@@ -2416,7 +2107,7 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
     out.insert("ir".to_string(), json!("0.1"));
     out.insert("app".to_string(), json!(program.app));
     out.insert("state".to_string(), Json::Array(state_json));
-    out.insert("tree".to_string(), tree);
+    out.insert("tree".to_string(), tree.clone());
     out.insert("theme".to_string(), theme);
     if !models.is_empty() {
         out.insert("models".to_string(), Json::Array(models));
@@ -2435,5 +2126,6 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
     if !computed_json.is_empty() {
         out.insert("computed".to_string(), Json::Array(computed_json));
     }
+    typecheck::check_ir_conditions(&tree, env, &conditions, path)?;
     Ok(Json::Object(out))
 }
