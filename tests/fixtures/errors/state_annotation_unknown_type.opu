@@ -1,0 +1,4 @@
+app Bad {
+  state count: number = 0
+  Text("x")
+}

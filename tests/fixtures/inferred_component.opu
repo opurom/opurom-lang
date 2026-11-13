@@ -1,0 +1,9 @@
+// The parameter type of Plain is inferred from its first call site.
+component Plain(title) {
+  Text("{title}")
+}
+
+app InferredComponent {
+  Plain("hello")
+  Plain("world")
+}

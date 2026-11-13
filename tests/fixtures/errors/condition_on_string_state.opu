@@ -1,0 +1,6 @@
+app Bad {
+  state name = "world"
+  if (name) {
+    Text("x")
+  }
+}

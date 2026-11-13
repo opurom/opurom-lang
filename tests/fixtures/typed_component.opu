@@ -1,0 +1,22 @@
+// A component whose parameter type is declared, plus an inferred one.
+component Metric(label: string, value: int, active: bool) {
+  Row {
+    Text(label)
+    Progress(value: value)
+    Text("on: {active}")
+  }
+}
+
+component Plain(title) {
+  Text("{title}")
+}
+
+app TypedComponent {
+  state total = 0
+  Column {
+    Metric("CPU", 42, true)
+    Metric("RAM", 8, false)
+    Plain("hello")
+    Button("bump") { total += 1 }
+  }
+}

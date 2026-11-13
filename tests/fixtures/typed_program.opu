@@ -1,0 +1,24 @@
+// Typed source: every state declares its type, every value is checked.
+app TypedProgram {
+  state count: int = 2
+  state step: int = 3
+  state flag: bool = true
+  state name: string = "Ada"
+
+  computed doubled = count * 2
+  computed total = count * 2 + step - 1
+  computed visible = flag
+  computed label = name
+
+  Column(gap: 8) {
+    Text("Count: {count} doubled: {doubled} total: {total}")
+    Text("Label: {label}")
+    if (visible) {
+      Text("visible")
+    } else {
+      Text("hidden")
+    }
+    Button("+") { count += step }
+    Button("copy") { count = total }
+  }
+}

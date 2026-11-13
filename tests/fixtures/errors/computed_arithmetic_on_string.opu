@@ -1,0 +1,5 @@
+app Bad {
+  state label = "hi"
+  computed bad = label + 1
+  Text("x")
+}

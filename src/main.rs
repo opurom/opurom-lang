@@ -6,6 +6,7 @@ mod lower;
 mod modules;
 mod optimize;
 mod parser;
+mod typecheck;
 mod wasm;
 
 use std::fs;

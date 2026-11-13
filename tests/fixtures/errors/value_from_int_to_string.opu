@@ -1,0 +1,5 @@
+app Bad {
+  state a = 0
+  state b = "text"
+  Button("x") { b = a }
+}

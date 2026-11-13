@@ -140,7 +140,10 @@ pub struct ImportDecl {
 #[derive(Clone, Debug)]
 pub struct StateDecl {
     pub name: String,
+    /// An optional annotation is checked against the inferred initializer type.
+    pub annotation: Option<(String, Pos)>,
     pub init: Lit,
+    pub init_pos: Pos,
     pub pos: Pos,
 }
 
@@ -1074,7 +1077,14 @@ impl<'a> Parser<'a> {
     fn state_decl(&mut self) -> DResult<StateDecl> {
         self.bump();
         let (name, pos) = self.expect_ident("a state name")?;
+        let annotation = if self.eat_sym(":") {
+            let (ty, ty_pos) = self.expect_ident("a state type")?;
+            Some((ty, ty_pos))
+        } else {
+            None
+        };
         self.expect_sym("=", "a state declaration needs '=' and an initializer")?;
+        let init_pos = self.pos();
         let init = if self.sym("[") {
             self.list_lit()?
         } else {
@@ -1093,7 +1103,13 @@ impl<'a> Parser<'a> {
             }
         };
         self.eat_sym(";");
-        Ok(StateDecl { name, init, pos })
+        Ok(StateDecl {
+            name,
+            annotation,
+            init,
+            init_pos,
+            pos,
+        })
     }
 
     fn theme_decl(&mut self) -> DResult<ThemeDecl> {

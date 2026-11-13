@@ -1,0 +1,8 @@
+component Card(title) { Text("{title}") }
+
+app Bad {
+  Column {
+    Card(7)
+    Card("Hi")
+  }
+}
