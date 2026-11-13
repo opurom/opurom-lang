@@ -603,6 +603,66 @@ fn web_and_mini_emitters_produce_valid_js() {
 }
 
 #[test]
+fn canvas_and_mini_emitters_draw_real_icon_glyphs() {
+    // The canvas web emitter and every mini-program emitter must paint the
+    // canonical icon glyph (not the bare name as text), matching the native
+    // renderer and the web-dom emitter.
+    let dir = out_dir("emit-icons");
+    let ir = dir.join("icons.opuir.json");
+    let src = dir.join("icons.opu");
+    fs::write(
+        &src,
+        "app IconEmit {\n  Column(gap: 8) {\n    Icon(name: \"home\")\n    Icon(name: \"star\")\n  }\n}\n",
+    )
+    .unwrap();
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    // Canvas web: the glyph is drawn with a Path2D stroke, not fillText.
+    let web = out_dir("emit-icons-web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let app_js = fs::read_to_string(web.join("app.js")).unwrap();
+    assert!(
+        app_js.contains("new Path2D"),
+        "canvas web must stroke the icon path"
+    );
+    // The canonical home glyph path is embedded, not the bare name.
+    assert!(
+        app_js.contains("M3 11 L12 3 L21 11"),
+        "canvas web must embed the canonical icon path"
+    );
+
+    // Each mini target: a real inline SVG data-URI <image>, no bare name text.
+    let cases: &[(&str, &str)] = &[
+        ("wechat", "pages/index/index.wxml"),
+        ("alipay", "pages/index/index.axml"),
+        ("qq", "pages/index/index.qml"),
+        ("douyin", "pages/index/index.ttml"),
+        ("baidu", "pages/index/index.swan"),
+        ("kuaishou", "pages/index/index.ksml"),
+    ];
+    for &(target, markup) in cases {
+        let out = out_dir(&format!("emit-icons-{target}"));
+        let r = emit(&ir, target, &out);
+        assert!(
+            r.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let html = fs::read_to_string(out.join(markup)).unwrap();
+        assert!(
+            html.contains("data:image/svg+xml"),
+            "{target}: must emit an inline SVG icon"
+        );
+        assert!(
+            !html.contains("<text>home</text>"),
+            "{target}: must not render the icon name as text"
+        );
+    }
+}
+
+#[test]
 fn web_layout_places_children_of_every_container_kind() {
     // Self-contained: CI clones only the sibling repos a check needs.
     let src = out_dir("containers").join("containers.opu");

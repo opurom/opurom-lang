@@ -6,6 +6,7 @@ use std::process::Command;
 use serde_json::{json, Map as JsonMap, Value as Json};
 
 use crate::diag::{DResult, Diagnostic};
+use crate::icons;
 use crate::lower::{interp_parts, offset_pos, Part};
 use crate::parser::Pos;
 
@@ -656,6 +657,33 @@ fn markup_text(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+/// Encode a string as standard base64 (RFC 4648, `+`/`/` and `=` padding), so a
+/// generated data URI needs no runtime and no extra crate.
+fn base64_encode(input: &str) -> String {
+    const CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = u32::from(chunk[0]);
+        let b1 = u32::from(*chunk.get(1).unwrap_or(&0));
+        let b2 = u32::from(*chunk.get(2).unwrap_or(&0));
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(CHARS[((n >> 18) & 63) as usize] as char);
+        out.push(CHARS[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            CHARS[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            CHARS[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 fn fmt_num(v: f64) -> String {
@@ -1609,11 +1637,35 @@ fn draw_node(
                 "  ctx.fillStyle = {color};\n  ctx.fillRect({x}, {y}, {w}, {h});\n"
             ));
         }
-        "Badge" | "Avatar" | "Icon" => {
+        "Badge" | "Avatar" => {
             let label = fallback_label(n);
             out.push_str(&format!(
                 "  ctx.fillStyle = \"#334155\";\n  ctx.font = \"14px sans-serif\";\n  ctx.fillText({label}, {x} + 6, {y} + 6);\n"
             ));
+        }
+        "Icon" => {
+            let color = js_lit(&Json::String(prop_str(&n.props, "color", "#334155")));
+            let name = prop_str(&n.props, "name", "");
+            match icons::icon_svg_path(&name) {
+                // Draw the canonical 24x24 path centred on the node rect and
+                // scaled to its smaller side, in the node's colour.
+                Some(path) => {
+                    let path_lit = js_lit(&Json::String(path.to_string()));
+                    let scale = fmt_num((b.w.min(b.h) / 24.0).max(0.0));
+                    let cx = fmt_num(b.x + b.w / 2.0);
+                    let cy = fmt_num(b.y + b.h / 2.0);
+                    out.push_str(&format!(
+                        "  ctx.save();\n  ctx.strokeStyle = {color};\n  ctx.lineWidth = 2;\n  ctx.lineCap = \"round\";\n  ctx.lineJoin = \"round\";\n  ctx.translate({cx}, {cy});\n  ctx.scale({scale}, {scale});\n  ctx.stroke(new Path2D({path_lit}));\n  ctx.restore();\n"
+                    ));
+                }
+                // An unknown name keeps the previous text fallback.
+                None => {
+                    let label = fallback_label(n);
+                    out.push_str(&format!(
+                        "  ctx.fillStyle = \"#334155\";\n  ctx.font = \"14px sans-serif\";\n  ctx.fillText({label}, {x} + 6, {y} + 6);\n"
+                    ));
+                }
+            }
         }
         "Divider" | "Spinner" => {
             out.push_str(&format!(
@@ -2073,8 +2125,7 @@ fn markup_node(
                 "{pad}<view class=\"spacer n{id}\"{style_attr}{cond_attr}></view>\n"
             ));
         }
-        "Badge" | "Avatar" | "Icon" | "Progress" | "Switch" | "Slider" | "Checkbox" | "Radio"
-        | "Tabs" => {
+        "Badge" | "Avatar" | "Progress" | "Switch" | "Slider" | "Checkbox" | "Radio" | "Tabs" => {
             let label = markup_text(&fallback_text(n));
             let tap = if n.events.contains_key("tap") {
                 format!(" {}=\"onTap{id}\"", p.tap_attr)
@@ -2084,6 +2135,48 @@ fn markup_node(
             out.push_str(&format!(
                 "{pad}<view class=\"n{id}\"{style_attr}{cond_attr}{tap}><text>{label}</text></view>\n"
             ));
+        }
+        "Icon" => {
+            let name = prop_str(&n.props, "name", "");
+            let tap = if n.events.contains_key("tap") {
+                format!(" {}=\"onTap{id}\"", p.tap_attr)
+            } else {
+                String::new()
+            };
+            match icons::icon_svg_path(&name) {
+                // A real icon element: an inline SVG data URI on an <image>, so
+                // no platform runtime is needed and every target draws the same
+                // canonical path the native renderer uses.
+                Some(path) => {
+                    let svg = format!(
+                        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"{path}\"/></svg>"
+                    );
+                    let b64 = base64_encode(&svg);
+                    let mut style = style_of(&n.props, false);
+                    if !style.contains("width:") {
+                        style = if style.is_empty() {
+                            "width:16px;height:16px".to_string()
+                        } else {
+                            format!("{style};width:16px;height:16px")
+                        };
+                    }
+                    let style_attr = if style.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" style=\"{}\"", html_attr(&style))
+                    };
+                    out.push_str(&format!(
+                        "{pad}<image class=\"n{id}\"{style_attr}{cond_attr}{tap} src=\"data:image/svg+xml;base64,{b64}\" />\n"
+                    ));
+                }
+                // An unknown name keeps the previous text fallback.
+                None => {
+                    let label = markup_text(&fallback_text(n));
+                    out.push_str(&format!(
+                        "{pad}<view class=\"n{id}\"{style_attr}{cond_attr}{tap}><text>{label}</text></view>\n"
+                    ));
+                }
+            }
         }
         "Divider" | "Spinner" => {
             let label = markup_text(&fallback_text(n));
