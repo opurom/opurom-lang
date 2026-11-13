@@ -1,0 +1,5 @@
+component Card(title) { Missing(title) }
+
+app Bad {
+  Card("Hi")
+}

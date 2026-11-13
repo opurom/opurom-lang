@@ -1,0 +1,13 @@
+app ComputedDemo {
+  state count = 2
+  state step = 3
+  state flag = true
+  state name = "Ada"
+  computed doubled = count * 2
+  computed total = count * 2 + step - 1
+  computed flagValue = flag
+  computed label = name
+  Column {
+    Text("{doubled} {total} {flagValue} {label}")
+  }
+}

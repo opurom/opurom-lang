@@ -1,0 +1,5 @@
+component Card(title: string, count: int) { Text("{title}") }
+
+app Bad {
+  Card("Hi")
+}

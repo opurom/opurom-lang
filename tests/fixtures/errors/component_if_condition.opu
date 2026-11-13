@@ -1,0 +1,8 @@
+component Card(flag) {
+  if (flag) { Text("y") } else { Text("n") }
+}
+
+app Bad {
+  state dark = false
+  Card(true)
+}

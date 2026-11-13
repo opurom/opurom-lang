@@ -1,0 +1,6 @@
+component Alpha(text: string) { Beta(text) }
+component Beta(text: string) { Alpha(text) }
+
+app Bad {
+  Alpha("x")
+}

@@ -1,0 +1,8 @@
+component Card(items) {
+  for (x in items) { Text("{x}") }
+}
+
+app Bad {
+  state i = 1
+  Card(3)
+}

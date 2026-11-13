@@ -113,7 +113,7 @@ fn assert_shape(node: &Json) {
 }
 
 fn compile_ok(src: &Path) -> Json {
-    let out = out_dir("capability").join("out.opuir.json");
+    let out = out_dir("ui").join("out.opuir.json");
     let r = compile(src, &out);
     assert!(
         r.status.success(),
@@ -198,7 +198,7 @@ fn each_error_class_is_a_friendly_diagnostic() {
             "unsupported_import.opu",
             "'import' is not yet supported in 0.1.0",
         ),
-        // capability diagnostics.
+        // Interactive UI diagnostics.
         ("model_bad_type.opu", "unknown field type 'text'"),
         ("model_two_primaries.opu", "more than one primary field"),
         ("model_default_mismatch.opu", "must be bool, found int"),
@@ -358,10 +358,10 @@ fn ui_only_program_has_no_models_or_api_arrays() {
 }
 
 #[test]
-fn capability_features_lower_to_the_documented_ir() {
-    let ir = compile_ok(&fixture("capability_features.opu"));
+fn features_additive_lower_to_the_documented_ir() {
+    let ir = compile_ok(&fixture("features_additive.opu"));
     assert_eq!(ir["ir"], "0.1.0");
-    assert_eq!(ir["app"], "CapabilityFeatures");
+    assert_eq!(ir["app"], "FeaturesAdditive");
     assert_eq!(
         ir["theme"],
         json!({"mode": "dark", "accent": "#FF4D6D", "radius": 8})
@@ -703,7 +703,7 @@ fn usage_error_is_a_diagnostic() {
     assert!(err.contains("  help: "), "{err}");
 }
 
-// ------------------------------------------------------------------ capability ----
+// ------------------------------------------------------- component catalog ----
 
 fn optimize(ir: &Path, out: &Path) -> Output {
     bin()
@@ -737,7 +737,7 @@ fn node_ids(ir: &Json) -> Vec<u64> {
 
 #[test]
 fn catalog_components_resolve_with_explicit_props_winning() {
-    let dir = out_dir("capability-catalog");
+    let dir = out_dir("catalog");
     let src = dir.join("catalog.opu");
     fs::write(
         &src,
@@ -783,7 +783,7 @@ fn catalog_components_resolve_with_explicit_props_winning() {
 
 #[test]
 fn component_field_is_added_only_for_catalog_names() {
-    let dir = out_dir("capability-component");
+    let dir = out_dir("catalog-component");
     let src = dir.join("component.opu");
     fs::write(
         &src,
@@ -812,8 +812,8 @@ fn component_field_is_added_only_for_catalog_names() {
 }
 
 #[test]
-fn all_capability_primitives_stay_unchanged() {
-    let dir = out_dir("capability-primitives");
+fn all_core_primitives_stay_unchanged() {
+    let dir = out_dir("catalog-primitives");
     let src = dir.join("primitives.opu");
     fs::write(
         &src,
@@ -903,7 +903,7 @@ fn components_lists_216_rows() {
         "LevelMeter | LevelMeter | feedback",
         "BracketPanel | BracketPanel | layout",
     ] {
-        assert!(lines.contains(&row), "missing capability catalog row: {row}");
+        assert!(lines.contains(&row), "missing extended catalog row: {row}");
     }
     assert!(
         lines
@@ -921,7 +921,7 @@ fn components_lists_216_rows() {
         "ContextMenu | Menu | navigation",
         "Hint | Tooltip | overlay",
     ] {
-        assert!(lines.contains(&row), "missing capability catalog row: {row}");
+        assert!(lines.contains(&row), "missing data catalog row: {row}");
     }
 }
 
@@ -949,7 +949,7 @@ fn vendored_catalog_matches_spec_when_present() {
 
 #[test]
 fn unknown_component_kind_is_a_diagnostic() {
-    let dir = out_dir("capability-unknown");
+    let dir = out_dir("catalog-unknown");
     let src = dir.join("unknown.opu");
     fs::write(&src, "app Bad {\n  NotAComponent(\"x\")\n}\n").unwrap();
     let r = bin().arg("check").arg(&src).output().expect("run check");
@@ -966,7 +966,7 @@ fn unknown_component_kind_is_a_diagnostic() {
 #[test]
 fn optimizer_is_a_no_op_on_golden_counter_ir() {
     let golden = contract("counter.opuir.json");
-    let out = out_dir("capability-opt-golden").join("counter.opuir.json");
+    let out = out_dir("opt-golden").join("counter.opuir.json");
     let r = optimize(&golden, &out);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let expected: Json = serde_json::from_slice(&fs::read(&golden).unwrap()).unwrap();
@@ -986,7 +986,7 @@ fn optimizer_is_a_no_op_on_golden_counter_ir() {
 
 #[test]
 fn optimizer_removes_dead_state_and_null_props() {
-    let dir = out_dir("capability-opt-dead");
+    let dir = out_dir("opt-dead");
     let ir_path = dir.join("dead.opuir.json");
     let out = dir.join("optimized.opuir.json");
     let ir = json!({
@@ -1054,7 +1054,7 @@ fn optimizer_removes_dead_state_and_null_props() {
 
 #[test]
 fn optimizer_preserves_node_ids_and_state_order() {
-    let dir = out_dir("capability-opt-order");
+    let dir = out_dir("opt-order");
     let ir_path = dir.join("order.opuir.json");
     let out = dir.join("optimized.opuir.json");
     let ir = json!({
@@ -1110,7 +1110,7 @@ fn optimizer_preserves_node_ids_and_state_order() {
 
 #[test]
 fn optimizer_rejects_bad_ir() {
-    let dir = out_dir("capability-opt-bad");
+    let dir = out_dir("opt-bad");
     let tree = json!({"id": 0, "kind": "Column", "props": {}, "children": [], "events": {}});
     let base = json!({"ir": "0.1.0", "app": "X", "state": [], "tree": tree, "theme": {}});
     let mut version = base.clone();
@@ -1165,7 +1165,7 @@ fn optimizer_rejects_bad_ir() {
     }
 }
 
-// ------------------------------------------------------------------ capability ----
+// ------------------------------------------------ async language layer ----
 
 fn node_check(file: &Path) {
     let r = Command::new("node")
@@ -1191,7 +1191,7 @@ fn golden_counter_and_profile_ir_are_byte_identical() {
         ),
     ];
     for (index, (src, golden)) in cases.iter().enumerate() {
-        let out = out_dir("capability-golden-bytes").join(format!("golden-{index}.opuir.json"));
+        let out = out_dir("golden-bytes").join(format!("golden-{index}.opuir.json"));
         let r = compile(src, &out);
         assert!(
             r.status.success(),
@@ -1203,7 +1203,7 @@ fn golden_counter_and_profile_ir_are_byte_identical() {
         assert_eq!(
             got,
             expected,
-            "plain program changed its capability-capability IR bytes: {}",
+            "plain program changed its earlier IR bytes: {}",
             src.display()
         );
         let ir: Json = serde_json::from_slice(&got).unwrap();
@@ -1271,7 +1271,7 @@ fn async_diagnostics_are_friendly() {
             "{file}: unexpected diagnostic: {err}"
         );
         assert_diag(&err, &path);
-        let out = out_dir("capability-reject").join("out.opuir.json");
+        let out = out_dir("async-reject").join("out.opuir.json");
         let capability = compile(&path, &out);
         assert_eq!(capability.status.code(), Some(1), "{file}: compile must fail");
         assert!(!out.exists(), "{file}: no IR may be written on error");
@@ -1340,7 +1340,7 @@ fn imports_reject_cycles_traversal_duplicates_and_bad_files() {
             "{file}: unexpected diagnostic: {err}"
         );
         assert_error_shape(&err);
-        let out = out_dir("capability-import-reject").join("out.opuir.json");
+        let out = out_dir("import-reject").join("out.opuir.json");
         let capability = compile(&path, &out);
         assert_eq!(capability.status.code(), Some(1), "{file}: compile must fail");
         assert!(!out.exists(), "{file}: no IR may be written on error");
@@ -1348,12 +1348,12 @@ fn imports_reject_cycles_traversal_duplicates_and_bad_files() {
 }
 
 #[test]
-fn capability_primitives_and_catalog_names_are_accepted() {
-    let dir = out_dir("capability-kinds");
+fn async_primitives_and_catalog_names_are_accepted() {
+    let dir = out_dir("async-kinds");
     let src = dir.join("kinds.opu");
     fs::write(
         &src,
-        r#"app CapabilityKinds {
+        r#"app KindsProof {
   Column {
     Table(columns: 2, rows: 3) { }
     Chart(height: 120)
@@ -1411,7 +1411,7 @@ fn capability_primitives_and_catalog_names_are_accepted() {
 fn optimizer_preserves_async_effect_state_and_imports() {
     let mut ir = compile_ok(&fixture("async.opu"));
     ir["imports"] = json!(["models/todo.opu"]);
-    let dir = out_dir("capability-opt-async");
+    let dir = out_dir("opt-async");
     let ir_path = dir.join("async.opuir.json");
     let out = dir.join("optimized.opuir.json");
     fs::write(&ir_path, pretty_ir(&ir)).unwrap();
@@ -1432,11 +1432,11 @@ fn optimizer_preserves_async_effect_state_and_imports() {
 
 #[test]
 fn every_target_emits_effect_code() {
-    let ir = out_dir("capability-effect-ir").join("async.opuir.json");
+    let ir = out_dir("effect-ir").join("async.opuir.json");
     let r = compile(&fixture("async.opu"), &ir);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
 
-    let web = out_dir("capability-effect-web");
+    let web = out_dir("effect-web");
     let r = emit(&ir, "web", &web);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let web_js = fs::read_to_string(web.join("app.js")).unwrap();
@@ -1447,7 +1447,7 @@ fn every_target_emits_effect_code() {
     assert!(web_js.contains("state.payload = await response1.text();"));
     node_check(&web.join("app.js"));
 
-    let native = out_dir("capability-effect-native");
+    let native = out_dir("effect-native");
     let r = emit(&ir, "native", &native);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let native_rs = fs::read_to_string(native.join("src/main.rs")).unwrap();
@@ -1471,7 +1471,7 @@ fn every_target_emits_effect_code() {
         ("kuaishou", "ks.request"),
     ];
     for &(target, request_api) in mini_cases {
-        let dir = out_dir(&format!("capability-effect-{target}"));
+        let dir = out_dir(&format!("effect-{target}"));
         let r = emit(&ir, target, &dir);
         assert!(
             r.status.success(),
@@ -1492,7 +1492,7 @@ fn every_target_emits_effect_code() {
         node_check(&dir.join("index.js"));
     }
 
-    let wasm = out_dir("capability-effect-wasm");
+    let wasm = out_dir("effect-wasm");
     let r = emit(&ir, "wasm", &wasm);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let host_js = fs::read_to_string(wasm.join("host.js")).unwrap();
@@ -1517,10 +1517,10 @@ fn every_target_emits_effect_code() {
 
 #[test]
 fn native_effects_build_and_run_locally() {
-    let ir = out_dir("capability-native-ir").join("async.opuir.json");
+    let ir = out_dir("native-ir").join("async.opuir.json");
     let r = compile(&fixture("async.opu"), &ir);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
-    let dir = out_dir("capability-native-run");
+    let dir = out_dir("native-run");
     let r = emit(&ir, "native", &dir);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let (built, stderr) = build_native(&dir);
@@ -1541,11 +1541,11 @@ fn native_effects_build_and_run_locally() {
     assert!(stdout.contains("patch count=1"), "{stdout}");
 }
 
-// ------------------------------------------------------------------ capability ----
+// ---------------------------------------------- GPU and transport layer ----
 
 #[test]
 fn plain_todo_ir_is_byte_identical() {
-    let out = out_dir("capability-golden-todo").join("todo.opuir.json");
+    let out = out_dir("golden-todo").join("todo.opuir.json");
     let r = compile(&fixture("golden/todo.opu"), &out);
     assert!(
         r.status.success(),
@@ -1553,8 +1553,8 @@ fn plain_todo_ir_is_byte_identical() {
         String::from_utf8_lossy(&r.stderr)
     );
     let got = fs::read(&out).expect("read compiled todo IR");
-    let expected = fs::read(fixture("golden/todo.opuir.json")).expect("read capability todo golden IR");
-    assert_eq!(got, expected, "plain todo IR changed its capability bytes");
+    let expected = fs::read(fixture("golden/todo.opuir.json")).expect("read todo golden IR");
+    assert_eq!(got, expected, "plain todo IR changed its bytes");
     let ir: Json = serde_json::from_slice(&got).unwrap();
     assert!(ir.get("computed").is_none());
     assert!(ir.get("imports").is_none());
@@ -1564,8 +1564,8 @@ fn plain_todo_ir_is_byte_identical() {
 }
 
 #[test]
-fn capability_else_lowers_when_and_unless() {
-    let ir = compile_ok(&fixture("capability_else.opu"));
+fn else_branch_lowers_when_and_unless() {
+    let ir = compile_ok(&fixture("else_branch.opu"));
     let nodes = nodes_of(&ir);
     let find = |value: &str| {
         nodes
@@ -1591,8 +1591,8 @@ fn capability_else_lowers_when_and_unless() {
 }
 
 #[test]
-fn capability_computed_and_list_lower_to_documented_ir() {
-    let ir = compile_ok(&fixture("capability_features.opu"));
+fn computed_and_list_lower_to_documented_ir() {
+    let ir = compile_ok(&fixture("effects_features.opu"));
     assert_eq!(ir["computed"][0]["name"], "doubled");
     assert_eq!(ir["computed"][0]["type"], "int");
     assert_eq!(ir["computed"][0]["expr"], "count * 2");
@@ -1620,7 +1620,7 @@ fn capability_computed_and_list_lower_to_documented_ir() {
         .collect();
     assert_eq!(unrolled, vec!["a", "b"]);
 
-    let computed_ir = compile_ok(&fixture("capability_computed.opu"));
+    let computed_ir = compile_ok(&fixture("computed_state.opu"));
     assert_eq!(
         computed_ir["computed"],
         json!([
@@ -1647,7 +1647,7 @@ fn capability_computed_and_list_lower_to_documented_ir() {
         json!({"name": "label", "type": "string", "init": "Ada"})
     );
 
-    let list_ir = compile_ok(&fixture("capability_list.opu"));
+    let list_ir = compile_ok(&fixture("list_state.opu"));
     assert_eq!(
         list_ir["state"][0],
         json!({"name": "items", "type": "list", "init": ["a", "b", "c"]})
@@ -1660,16 +1660,16 @@ fn capability_computed_and_list_lower_to_documented_ir() {
 }
 
 #[test]
-fn capability_diagnostics_are_friendly() {
-    let dir = out_dir("capability-diag");
+fn language_diagnostics_are_friendly() {
+    let dir = out_dir("diag");
     let fixture_cases: &[(&str, &str)] = &[
         ("else_without_if.opu", "'else' must follow an 'if' block"),
         ("duplicate_else.opu", "duplicate 'else' block"),
         ("else_non_bool.opu", "'if' requires a bool state"),
-        ("else_if.opu", "'else if' is not supported in capability"),
+        ("else_if.opu", "'else if' is not supported yet"),
         (
             "nested_else_in_else.opu",
-            "nested 'else' inside an 'else' block is not supported in capability",
+            "nested 'else' inside an 'else' block is not supported yet",
         ),
         (
             "computed_bad_expr.opu",
@@ -1705,10 +1705,7 @@ fn capability_diagnostics_are_friendly() {
             "list state 'items' is compile-time only",
         ),
         ("list_bind.opu", "list state 'items' is compile-time only"),
-        (
-            "list_braces.opu",
-            "list values may not contain braces in capability",
-        ),
+        ("list_braces.opu", "list values may not contain braces"),
         ("for_non_list.opu", "'for' requires a list state"),
         (
             "for_unknown_list.opu",
@@ -1870,7 +1867,7 @@ fn capability_diagnostics_are_friendly() {
             "{label}: unexpected diagnostic: {err}"
         );
         assert_error_shape(&err);
-        let out = out_dir("capability-reject").join(format!("{label}.opuir.json"));
+        let out = out_dir("lang-reject").join(format!("{label}.opuir.json"));
         let capability = compile(path, &out);
         assert_eq!(capability.status.code(), Some(1), "{label}: compile must fail");
         assert!(!out.exists(), "{label}: no IR may be written on error");
@@ -1879,10 +1876,10 @@ fn capability_diagnostics_are_friendly() {
 
 #[test]
 fn optimizer_preserves_computed_conditions_and_list_state() {
-    let dir = out_dir("capability-opt");
+    let dir = out_dir("lang-opt");
     let ir_path = dir.join("features.opuir.json");
     let out = dir.join("optimized.opuir.json");
-    let r = compile(&fixture("capability_features.opu"), &ir_path);
+    let r = compile(&fixture("effects_features.opu"), &ir_path);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let original: Json = serde_json::from_slice(&fs::read(&ir_path).unwrap()).unwrap();
     let r = optimize(&ir_path, &out);
@@ -1907,12 +1904,12 @@ fn optimizer_preserves_computed_conditions_and_list_state() {
 }
 
 #[test]
-fn capability_emitters_apply_computed_values_and_honor_unless() {
-    let ir = out_dir("capability-emit-ir").join("features.opuir.json");
-    let r = compile(&fixture("capability_features.opu"), &ir);
+fn emitters_apply_computed_values_and_honor_unless() {
+    let ir = out_dir("emit-ir").join("features.opuir.json");
+    let r = compile(&fixture("effects_features.opu"), &ir);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
 
-    let native = out_dir("capability-emit-native");
+    let native = out_dir("emit-native");
     let r = emit(&ir, "native", &native);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let native_rs = fs::read_to_string(native.join("src/main.rs")).unwrap();
@@ -1926,7 +1923,7 @@ fn capability_emitters_apply_computed_values_and_honor_unless() {
         assert!(native_rs.contains(marker), "native source missing {marker}");
     }
 
-    let web = out_dir("capability-emit-web");
+    let web = out_dir("emit-web");
     let r = emit(&ir, "web", &web);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let app_js = fs::read_to_string(web.join("app.js")).unwrap();
@@ -1955,7 +1952,7 @@ fn capability_emitters_apply_computed_values_and_honor_unless() {
         ("kuaishou", "index.ksml"),
     ];
     for &(target, markup_name) in mini_cases {
-        let dir = out_dir(&format!("capability-emit-{target}"));
+        let dir = out_dir(&format!("emit-{target}"));
         let r = emit(&ir, target, &dir);
         assert!(
             r.status.success(),
@@ -1986,7 +1983,7 @@ fn capability_emitters_apply_computed_values_and_honor_unless() {
         node_check(&dir.join("index.js"));
     }
 
-    let wasm = out_dir("capability-emit-wasm");
+    let wasm = out_dir("emit-wasm");
     let r = emit(&ir, "wasm", &wasm);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let host_js = fs::read_to_string(wasm.join("host.js")).unwrap();
@@ -2007,14 +2004,14 @@ fn capability_emitters_apply_computed_values_and_honor_unless() {
         assert!(lib_rs.contains(marker), "wasm lib.rs missing {marker}");
     }
     let readme = fs::read_to_string(wasm.join("README.md")).unwrap();
-    assert!(readme.contains("capability computed values"));
+    assert!(readme.contains("Computed values"));
     node_check(&wasm.join("host.js"));
 }
 
 #[test]
-fn capability_native_emitter_builds_and_applies_computed_values() {
-    let ir = out_dir("capability-native-ir").join("features.opuir.json");
-    let r = compile(&fixture("capability_features.opu"), &ir);
+fn native_emitter_builds_and_applies_computed_values() {
+    let ir = out_dir("native-ir").join("features.opuir.json");
+    let r = compile(&fixture("effects_features.opu"), &ir);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let ir_json: Json = serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap();
     let tap_id = nodes_of(&ir_json)
@@ -2022,7 +2019,7 @@ fn capability_native_emitter_builds_and_applies_computed_values() {
         .find(|n| n["events"].get("tap").is_some())
         .and_then(|n| n["id"].as_u64())
         .expect("tap node id");
-    let dir = out_dir("capability-native-run");
+    let dir = out_dir("native-run");
     let r = emit(&ir, "native", &dir);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let (built, stderr) = build_native(&dir);
@@ -2052,11 +2049,11 @@ fn capability_native_emitter_builds_and_applies_computed_values() {
     assert!(stdout.contains("patch visible=true"), "{stdout}");
 }
 
-// ------------------------------------------------------------------ capability ----
+// ---------------------------------------------------- platform delivery ----
 
 #[test]
-fn capability_components_expand_to_ordinary_ir() {
-    let one = compile_ok(&fixture("capability_component_one.opu"));
+fn components_expand_to_ordinary_ir() {
+    let one = compile_ok(&fixture("component_one.opu"));
     assert_shape(&one["tree"]);
     assert_eq!(one["tree"]["kind"], "Column");
     assert_eq!(one["tree"]["props"]["padding"], 8);
@@ -2079,7 +2076,7 @@ fn capability_components_expand_to_ordinary_ir() {
         assert_ne!(node["kind"], "Card", "no component node survives");
     }
 
-    let two = compile_ok(&fixture("capability_component_two.opu"));
+    let two = compile_ok(&fixture("component_two.opu"));
     assert_shape(&two["tree"]);
     assert_eq!(node_ids(&two), vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
     let rows = two["tree"]["children"].as_array().unwrap();
@@ -2093,7 +2090,7 @@ fn capability_components_expand_to_ordinary_ir() {
     assert_eq!(rows[1]["children"][2]["props"]["value"], "on: false");
     assert!(two.get("components").is_none());
 
-    let nested = compile_ok(&fixture("capability_component_nested.opu"));
+    let nested = compile_ok(&fixture("component_nested.opu"));
     let values: Vec<&str> = nodes_of(&nested)
         .iter()
         .filter_map(|n| n["props"]["value"].as_str())
@@ -2105,7 +2102,7 @@ fn capability_components_expand_to_ordinary_ir() {
     );
 
     // The declaration may also sit inside the app body, and `Card` shadows the primitive.
-    let in_app = compile_ok(&fixture("capability_component_in_app.opu"));
+    let in_app = compile_ok(&fixture("component_in_app.opu"));
     assert_eq!(in_app["tree"]["kind"], "Column");
     assert_eq!(in_app["tree"]["children"][0]["kind"], "Text");
     assert_eq!(in_app["tree"]["children"][0]["props"]["value"], "Hi");
@@ -2115,7 +2112,7 @@ fn capability_components_expand_to_ordinary_ir() {
     );
 
     // Parameters also substitute into tap-handler statement values.
-    let stmt = compile_ok(&fixture("capability_component_stmt.opu"));
+    let stmt = compile_ok(&fixture("component_stmt.opu"));
     assert_eq!(stmt["tree"]["kind"], "Button");
     assert_eq!(
         stmt["tree"]["events"]["tap"],
@@ -2125,60 +2122,57 @@ fn capability_components_expand_to_ordinary_ir() {
 }
 
 #[test]
-fn capability_component_diagnostics_are_friendly() {
+fn component_diagnostics_are_friendly() {
     let cases: &[(&str, &str)] = &[
         (
-            "capability_component_recursive.opu",
+            "component_recursive.opu",
             "component cycle detected: Card -> Card",
         ),
         (
-            "capability_component_cycle.opu",
+            "component_cycle.opu",
             "component cycle detected: Alpha -> Beta -> Alpha",
         ),
         (
-            "capability_component_arity.opu",
+            "component_arity.opu",
             "component 'Card' expects 2 arguments, found 1",
         ),
-        ("capability_component_unknown.opu", "unknown component 'Missing'"),
+        ("component_unknown.opu", "unknown component 'Missing'"),
         (
-            "capability_component_param_type.opu",
+            "component_param_type.opu",
             "parameter 'title' of component 'Card' expects string, found int",
         ),
+        ("component_duplicate_name.opu", "duplicate component 'Card'"),
         (
-            "capability_component_duplicate_name.opu",
-            "duplicate component 'Card'",
-        ),
-        (
-            "capability_component_duplicate_param.opu",
+            "component_duplicate_param.opu",
             "duplicate parameter 'title' in component 'Card'",
         ),
         (
-            "capability_component_top_level_app.opu",
+            "component_top_level_app.opu",
             "component 'Card' cannot be used as a top-level app",
         ),
         (
-            "capability_component_bad_param_type.opu",
+            "component_bad_param_type.opu",
             "unknown parameter type 'text'",
         ),
-        ("capability_component_named_arg.opu", "arguments must be positional"),
+        ("component_named_arg.opu", "arguments must be positional"),
         (
-            "capability_component_inferred_type_mismatch.opu",
+            "component_inferred_type_mismatch.opu",
             "expects string, found int",
         ),
         (
-            "capability_component_unknown_in_body.opu",
+            "component_unknown_in_body.opu",
             "unknown component 'Missing' in component 'Card'",
         ),
         (
-            "capability_component_if_condition.opu",
+            "component_if_condition.opu",
             "component parameter 'flag' cannot be used as an 'if' condition",
         ),
         (
-            "capability_component_for_iterable.opu",
+            "component_for_iterable.opu",
             "component parameter 'items' cannot be used as a 'for' iterable",
         ),
         (
-            "capability_component_write_param.opu",
+            "component_write_param.opu",
             "component parameter 'step' is read-only in event statements",
         ),
     ];
@@ -2192,7 +2186,7 @@ fn capability_component_diagnostics_are_friendly() {
             "{file}: unexpected diagnostic: {err}"
         );
         assert_diag(&err, &path);
-        let out = out_dir("capability-reject").join(format!("{file}.opuir.json"));
+        let out = out_dir("component-reject").join(format!("{file}.opuir.json"));
         let capability = compile(&path, &out);
         assert_eq!(capability.status.code(), Some(1), "{file}: compile must fail");
         assert!(!out.exists(), "{file}: no IR may be written on error");
@@ -2200,9 +2194,9 @@ fn capability_component_diagnostics_are_friendly() {
 }
 
 #[test]
-fn capability_expanded_ir_keeps_emitters_catalog_and_optimizer() {
-    let ir_path = out_dir("capability-emit-ir").join("two.opuir.json");
-    let r = compile(&fixture("capability_component_two.opu"), &ir_path);
+fn expanded_ir_keeps_emitters_catalog_and_optimizer() {
+    let ir_path = out_dir("component-emit-ir").join("two.opuir.json");
+    let r = compile(&fixture("component_two.opu"), &ir_path);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let original: Json = serde_json::from_slice(&fs::read(&ir_path).unwrap()).unwrap();
 
@@ -2219,7 +2213,7 @@ fn capability_expanded_ir_keeps_emitters_catalog_and_optimizer() {
     ];
     let mut web_dir = PathBuf::new();
     for &(target, artifact) in targets {
-        let dir = out_dir(&format!("capability-emit-{target}"));
+        let dir = out_dir(&format!("component-emit-{target}"));
         if target == "web" {
             web_dir = dir.clone();
         }
@@ -2239,7 +2233,7 @@ fn capability_expanded_ir_keeps_emitters_catalog_and_optimizer() {
         assert!(app_js.contains(marker), "web JS missing {marker}");
     }
 
-    let optimized = out_dir("capability-opt").join("two.opuir.json");
+    let optimized = out_dir("component-opt").join("two.opuir.json");
     let r = optimize(&ir_path, &optimized);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let got: Json = serde_json::from_slice(&fs::read(&optimized).unwrap()).unwrap();
@@ -2255,7 +2249,7 @@ fn capability_expanded_ir_keeps_emitters_catalog_and_optimizer() {
 }
 
 #[test]
-fn capability_plain_ir_stays_byte_identical() {
+fn component_plain_ir_stays_byte_identical() {
     let cases = [
         (contract("counter.opu"), fixture("golden/counter.opuir.json")),
         (
@@ -2268,7 +2262,7 @@ fn capability_plain_ir_stays_byte_identical() {
         ),
     ];
     for (index, (src, golden)) in cases.iter().enumerate() {
-        let out = out_dir("capability-golden").join(format!("plain-{index}.opuir.json"));
+        let out = out_dir("component-golden").join(format!("plain-{index}.opuir.json"));
         let r = compile(src, &out);
         assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
         assert_eq!(
@@ -2284,11 +2278,12 @@ fn capability_plain_ir_stays_byte_identical() {
     }
 }
 
-// ------------------------------------------------------------------ capability ----
+// ----------------------------------------- component library hardening ----
 
-/// The 68 canonical capability primitive names, derived from `opuromc components` rows
-/// where the component name equals its primitive (the capability catalog convention).
-fn capability_canonical_kinds() -> Vec<String> {
+/// The 68 canonical extended primitive names, derived from `opuromc components`
+/// rows where the component name equals its primitive (the extended catalog
+/// convention).
+fn canonical_extended_kinds() -> Vec<String> {
     let r = bin().arg("components").output().expect("run components");
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let text = String::from_utf8_lossy(&r.stdout);
@@ -2306,17 +2301,17 @@ fn capability_canonical_kinds() -> Vec<String> {
     assert_eq!(
         kinds.len(),
         68,
-        "expected 68 canonical capability kinds: {kinds:?}"
+        "expected 68 canonical extended kinds: {kinds:?}"
     );
     kinds
 }
 
 #[test]
-fn capability_primitives_and_catalog_names_are_accepted() {
-    let kinds = capability_canonical_kinds();
-    let dir = out_dir("capability-kinds");
+fn extended_primitives_and_catalog_names_are_accepted() {
+    let kinds = canonical_extended_kinds();
+    let dir = out_dir("extended-kinds");
     let src_path = dir.join("kinds.opu");
-    let mut src = String::from("app CapabilityKinds {\n  Column {\n");
+    let mut src = String::from("app ExtendedKindsProof {\n  Column {\n");
     for k in &kinds {
         src.push_str(&format!(
             "    {k}(value: 42, segments: 4, labels: \"a,b\")\n"
@@ -2354,11 +2349,11 @@ fn capability_primitives_and_catalog_names_are_accepted() {
 }
 
 #[test]
-fn capability_all_nine_emitters_keep_working() {
-    let kinds = capability_canonical_kinds();
-    let dir = out_dir("capability-emit");
+fn all_nine_emitters_keep_working() {
+    let kinds = canonical_extended_kinds();
+    let dir = out_dir("extended-emit");
     let src_path = dir.join("kinds.opu");
-    let mut src = String::from("app CapabilityEmit {\n  state n = 0\n  Column {\n");
+    let mut src = String::from("app EmitProof {\n  state n = 0\n  Column {\n");
     for k in kinds.iter().take(12) {
         src.push_str(&format!("    {k}(value: 7)\n"));
     }

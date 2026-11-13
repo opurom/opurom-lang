@@ -4,12 +4,12 @@ The language/compiler workstream of Opurom. An independent Rust 1.99.1 crate (st
 `serde_json` only) with one binary, `opuromc`. The frontend lowers `.opu` source to
 [IR 0.1.0](../opurom-examples/golden/the IR format); the backend lowers IR into target-native source.
 **No target ships a runtime IR interpreter**: every emitter writes straight-line code from the
-tree. capability is additive: a program without capability/capability features produces byte-identical capability-capability IR, and
-`counter.opu`, `profile.opu` and `todo.opu` keep byte-identical capability IR. capability is additive too:
-custom components are expanded at compile time, so a program without them produces
-byte-identical capability IR and gains no new IR fields.
+tree. Every layer is additive: a program without the async, computed or component features
+produces byte-identical IR, and `counter.opu`, `profile.opu` and `todo.opu` keep
+byte-identical IR at every stage. Custom components are expanded at compile time, so a program
+without them produces byte-identical IR and gains no new IR fields.
 
-## Grammar summary (the language syntax 0.1.0 + capability + capability + capability + capability)
+## Grammar summary (the language syntax 0.1.0 + the additive layers)
 
 ```ebnf
 program       = { import_decl | component_decl } "app" IDENT "{" { state_decl | computed_decl | component_decl | model_decl | api_decl | theme_decl | node } "}" ;
@@ -43,24 +43,24 @@ computed_factor = [ "-" ] INT | IDENT ;
 - UTF-8, `.opu` extension, `//` line comments, insignificant whitespace (a newline is a valid
   node terminator, so `;` is optional).
 - Kinds: the eight 0.1.0 kinds (`Column`, `Row`, `Container`, `Text`, `Button`, `Input`, `Image`,
-  `Spacer`), the sixteen capability kinds (`Card`, `Divider`, `Icon`, `Badge`, `Progress`, `Switch`,
-  `Slider`, `Checkbox`, `Radio`, `Dialog`, `Tabs`, `List`, `Grid`, `Scroll`, `Avatar`, `Spinner`),
-  the eight capability primitives (`Table`, `Chart`, `Calendar`, `RichText`, `Player`, `Map`, `Menu`,
-  `Tooltip`) and the 68 capability primitives (listed in the `opurom-render` README). Catalog names are
-  also accepted and lower to one of these 100 primitives.
+  `Spacer`), the sixteen interactive UI kinds (`Card`, `Divider`, `Icon`, `Badge`, `Progress`,
+  `Switch`, `Slider`, `Checkbox`, `Radio`, `Dialog`, `Tabs`, `List`, `Grid`, `Scroll`, `Avatar`,
+  `Spinner`), the eight data primitives (`Table`, `Chart`, `Calendar`, `RichText`, `Player`, `Map`,
+  `Menu`, `Tooltip`) and the 68 extended primitives (listed in the `opurom-render` README).
+  Catalog names are also accepted and lower to one of these 100 primitives.
   `Text("x")` and `Button("OK")` are the positional forms of `Text(value: "x")` /
   `Button(label: "OK")`.
-- Types are inferred from the initializer: `int` (i64), `bool`, `string` and capability `list`.
+- Types are inferred from the initializer: `int` (i64), `bool`, `string` and `list`.
   `Text` values interpolate `{name}` against state; `{{` is a literal `{` (and `}}` a
   literal `}`). Computed names are readable in interpolation; list states are not.
 - `Input(bind: name)` lowers to an `input` event whose `set` action omits `value`; the runtime
   supplies the string.
 - `fn`, `module`, `units`, `dp`, `rem`, `let` and `var` remain rejected with a
-  "not yet supported" diagnostic. `async`, `await` and `import` are capability syntax with strict
-  validation; `else`, `computed` and list-valued state are capability syntax; `component` is capability syntax
-  with compile-time expansion only.
+  "not yet supported" diagnostic. `async`, `await` and `import` are the async language layer
+  with strict validation; `else`, `computed` and list-valued state are the GPU and transport
+  layer; `component` is the platform delivery layer, with compile-time expansion only.
 
-### capability language features
+### Interactive UI language features
 
 | Feature | Source | IR |
 | --- | --- | --- |
@@ -75,7 +75,7 @@ computed_factor = [ "-" ] INT | IDENT ;
 `for` integer counts are limited to 0..64; colors are `#RRGGBB`; `opacity` is 0..1; `shadow` is
 0..8.
 
-### capability async/await effects
+### Async/await effects
 
 ```opu
 app AsyncDemo {
@@ -97,10 +97,10 @@ non-string or undeclared `fetch` target and an out-of-range delay are diagnostic
 
 The event gains optional `"async": true` and an `"effects"` array. Effects are compile-time
 lowered, not interpreted. Emitters run effects in source order before applying `actions`. An
-capability-capability consumer ignores `async` and `effects` and still applies `actions`; plain events gain
-neither key.
+earlier consumer ignores `async` and `effects` and still applies `actions`; plain events
+gain neither key.
 
-### capability modules
+### Modules
 
 ```opu
 import "models/todo.opu"
@@ -116,13 +116,13 @@ duplicate API paths, cycles, `..` traversal, absolute paths, missing files, non-
 disallowed declarations produce diagnostics. Paths resolve relative to the importing file, then
 against `moduleRoots` from the nearest `opurom.json`. The IR gains an optional top-level
 `"imports": ["models/todo.opu", ...]` array containing the direct imports, and consumers may
-ignore it. capability computed declarations are main-program only; an imported module with `computed`
+ignore it. Computed declarations are main-program only; an imported module with `computed`
 gets a friendly diagnostic.
 
-### capability language features
+### Computed values, lists and `else`
 
 ```opu
-app CapabilityDemo {
+app EffectsDemo {
   state count = 1
   state dark = false
   state name = "Ada"
@@ -147,11 +147,11 @@ app CapabilityDemo {
 ```
 
 - `else` follows exactly one `if (boolState) { ... }` block. True-branch nodes keep `"when"`;
-  else-branch nodes gain `"unless"`. Both fields are compile-time-only IR annotations. 0.1.0-capability
-  consumers ignore `unless`; this round's web, mini, native and wasm emitters honor it.
+  else-branch nodes gain `"unless"`. Both fields are compile-time-only IR annotations. Earlier
+  consumers ignore `unless`; the web, mini, native and wasm emitters honor it.
   `else if`, `else` without `if`, duplicate `else`, an `else` on a non-bool state and a nested
   `else` inside an `else` branch are friendly diagnostics.
-- `computed NAME = EXPR` declares a read-only derived `int`, `bool` or `string` value. The capability
+- `computed NAME = EXPR` declares a read-only derived `int`, `bool` or `string` value. The
   expression grammar is only `+`, `-`, `*`, integer literals and declared state names. Bool and
   string computed values come from a matching bool or string state; arithmetic requires int
   operands. Unknown names, computed-to-computed reads, list reads, string/bool operands,
@@ -164,14 +164,13 @@ app CapabilityDemo {
   ```
 
   Rust targets use saturating i64 arithmetic; JS targets use their normal `Number` arithmetic.
-  capability consumers ignore the `"computed"` array and therefore see only the compiled initial value;
-  this is the documented fallback, not a silent capability recomputation.
+  Earlier consumers ignore the `"computed"` array and therefore see only the compiled initial
+  value; this is the documented fallback, not a silent recomputation.
 - `state items = ["a", "b"]` declares a `"list"` state whose `init` is a JSON string array. A
   `for (item in items) { Text("{item}") }` block unrolls at compile time against that
-  initializer; list values may not contain braces in capability, and a list loop is limited to 64
-  values. Binding a list, interpolating a list, mutating a list, using it in a computed
-  expression or looping over a non-list state is a friendly diagnostic. Runtime list mutation
-  is capability+.
+  initializer; list values may not contain braces, and a list loop is limited to 64 values.
+  Binding a list, interpolating a list, mutating a list, using it in a computed
+  expression or looping over a non-list state is a friendly diagnostic.
 
   ```json
   {"name": "items", "type": "list", "init": ["a", "b"]}
@@ -180,7 +179,7 @@ app CapabilityDemo {
 Plain programs gain no `computed` array, no `unless` fields and no `list` state entries. Byte-level
 golden IR fixtures cover `counter.opu`, `profile.opu` and `todo.opu`.
 
-### capability custom components (compile-time expansion)
+### Custom components (compile-time expansion)
 
 ```opu
 component Metric(label: string, value: int, active: bool) {
@@ -191,7 +190,7 @@ component Metric(label: string, value: int, active: bool) {
   }
 }
 
-app CapabilityDemo {
+app ComponentsDemo {
   Column {
     Metric("CPU", 42, true)
     Metric("RAM", 8, false)
@@ -202,7 +201,8 @@ app CapabilityDemo {
 Declarations may appear before the `app` block or at the top level of its body. A component name
 starts with an uppercase letter and a use site is `Name(arg, ...)`, with one literal per parameter.
 `Name` also shadows a built-in primitive or catalog name of the same spelling: declaring
-`component Card(title)` means `Card("Hi")` is the custom component, not the capability `Card` primitive.
+`component Card(title)` means `Card("Hi")` is the custom component, not the built-in `Card`
+primitive.
 `int`, `bool` and `string` are the parameter types; omitting the annotation infers the type from
 the first use site and checks later use sites against it.
 
@@ -301,35 +301,35 @@ The compiler emits node ids pre-order from 0, keeps numeric props as JSON number
 The six mini-program targets share one lowering pass and one small per-platform table
 (extensions, loop/key directives, tap/input directives, state-set API, request API, window title
 key and binding delimiters). All emitters generate code, not an IR parser. They understand the
-capability/capability IR plus capability `when`, `unless`, `computed` and `list` state entries.
+the interactive UI and async IR plus `when`, `unless`, `computed` and `list` state entries.
 
-### capability per-target effect status
+### Per-target effect status
 
-| Target | Status | Honest implementation and limits |
+| Target | Status | Implementation |
 | --- | --- | --- |
 | `web` | **Full** | `async function applyTap`, `await` on a `Promise`/`setTimeout` delay, `await fetch(path)`, then `response.text()` into the string state. `node --check` is verified; no browser automation runs here. |
 | `native` | **Full within the std-only contract** | A deterministic source-order sequencer uses `Instant`-measured `thread::sleep` (busy-free) and a `TcpStream` HTTP/1.1 GET against `OPR_BASE_URL`. With the variable unset, the documented local result is `local: <path>`. Plain HTTP only: no TLS, redirects, IPv6 literals or HTTP/2. |
 | `wechat`, `alipay`, `qq`, `douyin`, `baidu`, `kuaishou` | **Approximate** | `async` handlers await `setTimeout` promises and call each platform's `request` API (`wx.request`, `my.request`, `qq.request`, `tt.request`, `swan.request`, `ks.request`). The generated URL is the literal IR path; a real deployment needs a configured absolute base and domain allowlist. No simulator or device conformance runs. |
 | `wasm` | **Approximate** | `host.js` exposes `HOST_CALLBACKS` for `setTimeout` and `fetch`, runs them through `runEffects(id)` before the synchronous `opu_tap`, and keeps string state in the host mirror. The wasm module has no imports and no OS async IO; browser host behavior is not automated here. |
 
-### capability per-target computed status
+### Per-target computed status
 
-| Target | Status | Honest implementation and limits |
+| Target | Status | Implementation |
 | --- | --- | --- |
 | `web` | **Full** | `applyComputed()` runs after every tap/input handler and before startup render; computed fields live in `state`; `unless` hides else subtrees. `node --check` is verified. |
 | `native` | **Full** | `apply_computed()` runs after each event, returns computed patches, uses saturating i64 arithmetic and stores list states as `Vec<String>`. Generated crates build warning-free and run with piped stdin. |
 | `wechat`, `alipay`, `qq`, `douyin`, `baidu`, `kuaishou` | **Full at generated-source level** | An `applyComputed` method calls `setData` after every event; `unless` renders as a negated conditional. JS `Number` arithmetic is used; no simulator or device conformance runs. |
 | `wasm` | **Full with split state** | Int computed values are recomputed inside the wasm module and visible through `opu_state`; bool/string computed values are recomputed in the `host.js` mirror. Node ABI covers the int path; no browser automation or OS async IO runs. |
 
-No capability emitter silently ignores `computed`. A 0.1.0-capability consumer may ignore `computed`/`unless` and
+No emitter silently ignores `computed`. An earlier consumer may ignore `computed`/`unless` and
 keeps only compiled initial values; that is the documented consumer-side fallback.
 
-### capability/capability component catalog
+### Component catalog
 
 [components.json](../opurom-examples/golden/components.json) is vendored **byte-for-byte** as
 [src/catalog.json](src/catalog.json) and embedded with `include_str!`, so the crate builds
 standalone. Its 216 tuples are `[name, primitive, category, defaultProps]`, mapping onto
-100 distinct primitive kinds (32 capability-capability + 68 capability). A source `Kind` that is a
+100 distinct primitive kinds (32 core kinds + 68 extended kinds). A source `Kind` that is a
 catalog name lowers to the named primitive: the IR
 node keeps `kind` = primitive and gains `"component": "<name>"`. Consumers that ignore
 `component` still read valid 0.1.0 IR.
@@ -337,13 +337,13 @@ node keeps `kind` = primitive and gains `"component": "<name>"`. Consumers that 
 `defaultProps` are injected after explicitly written props are validated, so explicit values
 win and preset keys need not be props that the primitive declares. The catalog is validated at
 compile time. `opuromc components` prints `name | primitive | category` rows and a final
-`216 components` line. Unknown kinds remain a diagnostic. The capability accessibility keys `label`,
+`216 components` line. Unknown kinds remain a diagnostic. The accessibility keys `label`,
 `role`, `fontScale` and `highContrast` are accepted on any node and preserved in IR props.
 
-### capability component catalog expansion (the capability contract framework rules)
+### Component catalog expansion (the component catalog rules framework rules)
 
 The vendored [components.json](../opurom-examples/golden/components.json) now has **216
-named components mapped onto 100 DISTINCT primitive kinds**: the 32 capability-capability kinds
+named components mapped onto 100 DISTINCT primitive kinds**: the 32 core kinds
 plus 68 new ones. Each new primitive has its own deterministic software drawing,
 a documented prop schema and a default a11y role in `opurom-render`; the catalog
 itself is still plain data (name, primitive, category, defaultProps). 100 new
@@ -358,16 +358,14 @@ emitters still lower an IR containing them. Plain `counter.opu`, `profile.opu`
 and `todo.opu` keep byte-identical IR: the new kinds are additive and no existing
 kind changed its lowering.
 
-**Honest scope:** one deterministic software drawing per kind (in
-`opurom-render`), no real font shaping, no image decoding, no platform-native
-widgets and no frame-rate / 120fps claim. Catalog names remain compile-time
-aliases for primitives; they are not runtime components.
+Each kind has one deterministic software drawing (in `opurom-render`). Catalog names
+remain compile-time aliases for primitives; they are not runtime components.
 
-### capability/capability optimizer
+### Optimizer
 
 `opuromc optimize <ir.json> -o <out.json>` performs dead-state elimination: it removes `state`
 entries that no interpolation, `bind`, event action `target` or `valueFrom`, `when`, `unless`,
-capability fetch `into` or capability computed expression can observe. It drops props whose value is `null`,
+async fetch `into` or a computed expression can observe. It drops props whose value is `null`,
 keeps empty `children`/`events` objects, preserves the optional top-level `computed` array and
 preserves `list` states and computed state entries. It never removes nodes, folds conditionals,
 changes ids, reorders state, strips `component`, or mutates `imports`/`effects`. IR versions other
@@ -382,7 +380,7 @@ Optimization is opt-in: default `compile` output stays byte-identical.
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
-cd the framework workspace/opurom-lang
+cd opurom-lang
 cargo fmt --all
 cargo fmt --all -- --check
 cargo test --offline                 # 55 tests: 4 unit + 45 CLI + 6 wasm
@@ -394,65 +392,62 @@ and parsed-JSON deep-equality, checks `node --check` on web + six mini `index.js
 plus the wasm `host.js`, runs `cargo build --release --offline` inside generated native crates
 followed by piped-stdin sessions, and builds generated wasm crates for
 `wasm32-unknown-unknown` before instantiating them in Node's `WebAssembly` runtime with an empty
-import object. capability tests cover `else`/`unless`, computed values, list unroll, every new diagnostic,
-all nine emitters, computed native runtime patches and computed wasm ABI state. capability tests cover
-one, two, nested and in-app component uses, the exact expanded IR, all fifteen negative classes,
-all nine emitters and the optimizer on expanded IR, byte-identical plain IR, and the wasm ABI on
-a component-expanded tree.
+import object. The language tests cover `else`/`unless`, computed values, list unroll, every new
+diagnostic, all nine emitters, computed native runtime patches and computed wasm ABI state. The
+component tests cover one, two, nested and in-app component uses, the exact expanded IR, all
+fifteen negative classes, all nine emitters and the optimizer on expanded IR, byte-identical
+plain IR, and the wasm ABI on a component-expanded tree.
 
-## Honest status
-
-**Verified in this round**
+## Verified status
 
 - `cargo test --offline`: 55/55 tests pass (4 unit + 45 CLI + 6 wasm); `RUSTFLAGS="-D warnings"`
   is clean and `cargo fmt --all -- --check` passes.
-- UI-only programs (`counter.opu`, `profile.opu`, `todo.opu`) compile to **byte-identical** IR
-  compared with capability; no `imports`, `async`, `effects`, `computed`, `unless` or component keys are
-  added to plain IR. The 216/100 vendored catalog is byte-identical to the framework rules catalog.
-- Negative fixtures cover the 0.1.0 classes, capability classes, capability async/import classes, capability
-  `else`/computed/list classes and fifteen capability component classes. No panics, no stack traces.
-- capability components expand in the frontend: one, two, nested and in-app uses produce ordinary IR
+- UI-only programs (`counter.opu`, `profile.opu`, `todo.opu`) compile to **byte-identical** IR;
+  no `imports`, `async`, `effects`, `computed`, `unless` or component keys are added to plain IR.
+  The 216/100 vendored catalog is byte-identical to the framework rules catalog.
+- Negative fixtures cover the 0.1.0 classes, the interactive UI classes, the async/import
+  classes, the `else`/computed/list classes and fifteen component classes. No panics, no stack
+  traces.
+- Components expand in the frontend: one, two, nested and in-app uses produce ordinary IR
   with pre-order ids, and all 9 emitters, the optimizer and the wasm ABI accept that IR.
 - The wasm target builds with `cargo build --release --target wasm32-unknown-unknown` and the
   `.wasm` instantiates in Node with an empty import object; `opu_version() == 1`, int computed
-  state is recomputed after a tap, and capability effects remain host-side callbacks without wasm
+  state is recomputed after a tap, and async effects remain host-side callbacks without wasm
   imports.
 - Every generated JS file passes `node --check` (web + 6 mini + wasm host); `opuromc targets`
   lists all 9 targets and `opuromc components` prints `216 components`.
 - Generated native output builds warning-free with `cargo build --release --offline` and runs with
-  piped stdin. The capability native sequencer's local fallback and plain-HTTP `OPR_BASE_URL` path are
+  piped stdin. The native sequencer's local fallback and plain-HTTP `OPR_BASE_URL` path are
   generated from the same IR.
 
 ### Scope and limits
 
-- **216 named components map onto 100 distinct primitive kinds.** The 68 capability kinds each
-  have a distinct deterministic software drawing in `opurom-render`; the other 32 are the
-  capability-capability primitives. Catalog names are compile-time aliases, not renderer components. capability
-  custom components are compile-time macros, not renderer components: no runtime registry
-  and no component node in the IR. Honest scope: no real font shaping, no image decoding,
-  no native widgets and no fps claim.
-- **capability components take literal arguments only.** Parameters are `int`, `bool` or `string`;
+- **216 named components map onto 100 distinct primitive kinds.** The 68 extended kinds each
+  have a distinct deterministic software drawing in `opurom-render`; the other 32 are the core
+  primitives. Catalog names are compile-time aliases, not renderer components. Custom
+  components are compile-time macros, not renderer components: no runtime registry and no
+  component node in the IR.
+- **Components take literal arguments only.** Parameters are `int`, `bool` or `string`;
   substituting into `text` props and literal attribute values is the whole feature. Passing a
   state name, an expression, a list or a node is rejected. Components are not generic and have
   no conditional/loop parameters: conditional UI still comes from `if`/`else` and `for`.
   Component expansion is not size-capped beyond the existing 64-iteration `for` limit.
 - **The optimizer is dead-state elimination only.** It does not prune nodes, fold conditionals,
-  remove events or reorder anything; capability merely adds `computed`, `unless` and `list` preservation.
+  remove events or reorder anything; it adds `computed`, `unless` and `list` preservation.
 - **Effects run before actions.** The IR has separate `effects` and `actions` arrays; source-level
   interleaving after an `await` is intentionally not represented. Wasm has no OS async IO.
 - **Modules are compile-time declaration merges.** There is no runtime module registry, no remote
   resolver, no code execution during import resolution and no computed or component declarations
   in imported modules.
-- **capability lists are compile-time constants.** A `for` loop unrolls against the initializer, list
+- **Lists are compile-time constants.** A `for` loop unrolls against the initializer, list
   values may not contain braces, list loops are capped at 64 values and runtime list mutation is
   not emitted.
 
-**Still capability+**
+### Later work
 
 - OS async IO in wasm, runtime list mutation, generic or conditional components, component
   libraries shared through imports, nested `else if` chains, Vulkan/ANGLE/D3D backends, full GPU
-  UI rasterization, Windows/Linux/Harmony native windows, real device conformance and fps claims,
-  TLS, SCRAM, MySQL, remote marketplace, an IntelliJ runtime plugin, OS screen-reader integration
-  and competitive benchmark claims.
-- LSP, plugin sandboxing and a perf harness remain later work. No browser/DOM automation, no
-  simulator or device conformance, no pixel golden hash and no invented numbers are claimed here.
+  UI rasterization, Windows/Linux/Harmony native windows, real device conformance, TLS, SCRAM,
+  MySQL, a remote package marketplace, an IntelliJ runtime plugin and OS screen-reader
+  integration.
+- LSP, plugin sandboxing and a perf harness.

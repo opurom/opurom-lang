@@ -1,0 +1,6 @@
+app ComponentInApp {
+  component Card(title) { Text("{title}") }
+  Column {
+    Card("Hi")
+  }
+}

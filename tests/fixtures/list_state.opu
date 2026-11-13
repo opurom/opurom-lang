@@ -1,0 +1,8 @@
+app ListDemo {
+  state items = ["a", "b", "c"]
+  Column {
+    for (item in items) {
+      Text("{item}")
+    }
+  }
+}

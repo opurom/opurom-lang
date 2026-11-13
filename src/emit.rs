@@ -771,7 +771,8 @@ fn tree_has_effects(states: &[EState], tree: &ENode, ir_path: &str) -> DResult<b
     Ok(found)
 }
 
-/// An event is either one action object (0.1.0), `{"actions":[...]}` (capability), or effects only (capability).
+/// An event is either one action object (0.1.0), `{"actions":[...]}` (interactive UI), or
+/// effects only (async language layer).
 pub fn event_actions(event: &Json) -> Vec<&Json> {
     match event.get("actions").and_then(Json::as_array) {
         Some(list) => list.iter().collect(),
@@ -980,7 +981,7 @@ fn native_action(action: &Json, states: &[EState], ir_path: &str) -> DResult<(St
 
 /// Generated std-only effect helpers. Each event calls the sequencer in source order.
 fn native_effect_helpers() -> &'static str {
-    r#"// capability effects: measured sleeps and plain HTTP GET; no third-party runtime.
+    r#"// Async effects: measured sleeps and plain HTTP GET; no third-party runtime.
 #[allow(dead_code)]
 enum Effect<'a> {
     Delay(u64),

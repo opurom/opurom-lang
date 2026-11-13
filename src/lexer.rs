@@ -1,8 +1,9 @@
 use crate::diag::{DResult, Diagnostic};
 
-// capability promotes `async`, `await` and `import` to real syntax; capability promotes `else`;
-// capability promotes `component`. `fn` stays reserved. Other capability constructs are rejected at
-// lex time so they can never be silently miscompiled.
+// The async language layer promotes `async`, `await` and `import` to real
+// syntax; the GPU and transport layer promotes `else`; the platform delivery
+// layer promotes `component`. `fn` stays reserved. Other constructs are
+// rejected at lex time so they can never be silently miscompiled.
 const RESERVED_V01: &[&str] = &["fn"];
 const RESERVED_V02: &[&str] = &["module", "units", "dp", "rem", "let", "var"];
 
@@ -207,7 +208,7 @@ pub fn lex(src: &str, path: &str) -> DResult<Vec<Token>> {
                     start_line,
                     start_col,
                     format!("'{s}' is not yet supported in v0.2"),
-                    format!("remove '{s}'; capability supports state, nodes, model, api and theme only"),
+                    format!("remove '{s}'; the core language supports state, nodes, model, api and theme only"),
                 ));
             }
             let tok = match s.as_str() {
