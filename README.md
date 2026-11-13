@@ -54,7 +54,9 @@ computed_factor = [ "-" ] INT | IDENT ;
   declare its type explicitly (`state count: int = 0`); the annotation is optional and is checked
   against the initializer.
   `Text` values interpolate `{name}` against state; `{{` is a literal `{` (and `}}` a
-  literal `}`). Computed names are readable in interpolation; list states are not.
+  literal `}`). Computed names are readable in interpolation. A list state is read by
+  position with `{items[i]}`, where the subscript is an integer literal or a `for` count
+  loop variable; the element resolves at compile time.
 - `Input(bind: name)` lowers to an `input` event whose `set` action omits `value`; the runtime
   supplies the string.
 - `fn`, `module`, `units`, `dp`, `rem`, `let` and `var` remain rejected with a
@@ -70,6 +72,7 @@ computed_factor = [ "-" ] INT | IDENT ;
 | State-to-state action | `Button("copy") { a = b }` | `{"op":"set","target":"a","valueFrom":"b"}` |
 | Conditional UI | `if (dark) { Text("...") }` | `"when": "dark"` on each direct child |
 | Compile-time repetition | `for (i in 3) { Text("Item {i}") }` | unrolled nodes, consecutive ids |
+| List element read | `for (i in 3) { Text("{items[i]}") }` | element resolved into the node |
 | Theme block | `theme { mode: dark, accent: "#FF4D6D", radius: 8 }` | `IR.theme` |
 | Atomic shortcuts | `p` / `m` / `bg` / `rounded` | `padding` / `margin` / `color` / `radius` |
 | Visual props | `shadow`, `gradient`, `glass`, `opacity`, `border`, `animate` | passed through |

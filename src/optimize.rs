@@ -149,8 +149,15 @@ fn collect_refs(v: &Json, states: &[String], refs: &mut HashSet<String>) {
         Json::String(s) => match interp_parts(s) {
             Ok(parts) => {
                 for part in parts {
-                    if let Part::Var(name, _) = part {
-                        refs.insert(name);
+                    match part {
+                        Part::Var(name, _) => {
+                            refs.insert(name);
+                        }
+                        // A list read observes the list state, so keep it live.
+                        Part::Index { list, .. } => {
+                            refs.insert(list);
+                        }
+                        Part::Lit(_) => {}
                     }
                 }
             }

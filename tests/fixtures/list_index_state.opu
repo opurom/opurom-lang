@@ -1,0 +1,9 @@
+app IndexDemo {
+  state items = ["alpha", "beta", "gamma"]
+  Column {
+    for (i in 3) {
+      Text("{items[i]}")
+    }
+    Text("first={items[0]}")
+  }
+}
