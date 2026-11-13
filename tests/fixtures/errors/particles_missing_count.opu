@@ -1,0 +1,5 @@
+app Bad {
+  Container(particles: "seed=7") {
+    Text("x", size: 12)
+  }
+}
