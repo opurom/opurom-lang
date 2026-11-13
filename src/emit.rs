@@ -11,12 +11,30 @@ use crate::parser::Pos;
 pub const TARGETS: &[(&str, &str)] = &[
     ("native", "Cargo.toml, src/main.rs"),
     ("web", "index.html, app.js, ir.json"),
-    ("wechat", "app.json, index.wxml, index.wxss, index.js"),
-    ("alipay", "app.json, index.axml, index.acss, index.js"),
-    ("qq", "app.json, index.qml, index.qss, index.js"),
-    ("douyin", "app.json, index.ttml, index.ttss, index.js"),
-    ("baidu", "app.json, index.swan, index.css, index.js"),
-    ("kuaishou", "app.json, index.ksml, index.css, index.js"),
+    (
+        "wechat",
+        "app.json, app.js, pages/index/index.wxml, pages/index/index.wxss, pages/index/index.js",
+    ),
+    (
+        "alipay",
+        "app.json, app.js, pages/index/index.axml, pages/index/index.acss, pages/index/index.js",
+    ),
+    (
+        "qq",
+        "app.json, app.js, pages/index/index.qml, pages/index/index.qss, pages/index/index.js",
+    ),
+    (
+        "douyin",
+        "app.json, app.js, pages/index/index.ttml, pages/index/index.ttss, pages/index/index.js",
+    ),
+    (
+        "baidu",
+        "app.json, app.js, pages/index/index.swan, pages/index/index.css, pages/index/index.js",
+    ),
+    (
+        "kuaishou",
+        "app.json, app.js, pages/index/index.ksml, pages/index/index.css, pages/index/index.js",
+    ),
     (
         "wasm",
         "Cargo.toml, src/lib.rs, index.html, host.js, README.md",
@@ -1294,7 +1312,11 @@ fn emit_native(
 // -------------------------------------------------------------------- web ----
 
 fn intrinsic(n: &ENode) -> (f64, f64) {
-    match n.kind.as_str() {
+    // Explicit width/height props override the kind default, matching
+    // opurom-render's natural_w/natural_h rule.
+    let pw = prop_num(&n.props, "width", 0.0);
+    let ph = prop_num(&n.props, "height", 0.0);
+    let (w, h) = match n.kind.as_str() {
         "Text" => {
             let size = prop_num(&n.props, "size", 16.0);
             let len = prop_str(&n.props, "value", "").chars().count() as f64;
@@ -1313,17 +1335,33 @@ fn intrinsic(n: &ENode) -> (f64, f64) {
             prop_num(&n.props, "width", 0.0),
             prop_num(&n.props, "height", 0.0),
         ),
+        // Unknown kinds draw their fallback label; size the box to it so
+        // stacked exhibits keep their line height instead of collapsing to 1px.
+        // Kinds with children size from the children in layout() instead.
+        _ if n.children.is_empty() => {
+            let label = fallback_text(n);
+            if label.is_empty() {
+                (0.0, 0.0)
+            } else {
+                (label.chars().count() as f64 * 14.0 * 0.6 + 12.0, 24.0)
+            }
+        }
         _ => (0.0, 0.0),
-    }
+    };
+    (if pw > 0.0 { pw } else { w }, if ph > 0.0 { ph } else { h })
 }
 
 fn layout(n: &ENode, x: f64, y: f64, boxes: &mut HashMap<u64, Box2>) -> Box2 {
     let pad = prop_num(&n.props, "padding", 0.0);
     let gap = prop_num(&n.props, "gap", 4.0);
     let (iw, ih) = intrinsic(n);
-    let vertical = n.kind == "Column";
-    let horizontal = n.kind == "Row" || n.kind == "Container";
-    let b = if !n.children.is_empty() && (vertical || horizontal) {
+    // Row stacks horizontally and every other kind stacks vertically,
+    // matching opurom-render's direction() rule. Any kind with children is
+    // laid out, so roots like Scroll or Grid place their subtree instead of
+    // drawing it at the origin.
+    let horizontal = n.kind == "Row";
+    let vertical = !horizontal;
+    let b = if !n.children.is_empty() {
         let mut cx = x + pad;
         let mut cy = y + pad;
         let mut max_w = 0.0f64;
@@ -1873,16 +1911,29 @@ fn markup_node(
             ));
         }
         "Divider" | "Spinner" => {
+            let label = markup_text(&fallback_text(n));
+            let inner = if label.is_empty() {
+                String::new()
+            } else {
+                format!("<text>{label}</text>")
+            };
             out.push_str(&format!(
-                "{pad}<view class=\"n{id}\"{style_attr}{cond_attr}></view>\n"
+                "{pad}<view class=\"n{id}\"{style_attr}{cond_attr}>{inner}</view>\n"
             ));
         }
         kind => {
-            // Documented fallback: an unknown kind renders as a Container.
+            // Documented fallback: an unknown kind renders as a Container
+            // showing its label, so gallery exhibits stay visible in pages.
             let cls = if kind == "Row" { "row" } else { "col" };
             out.push_str(&format!(
                 "{pad}<view class=\"{cls} n{id}\"{style_attr}{cond_attr}>\n"
             ));
+            if n.children.is_empty() {
+                let label = markup_text(&fallback_text(n));
+                if !label.is_empty() {
+                    out.push_str(&format!("{pad}  <text>{label}</text>\n"));
+                }
+            }
             for child in &n.children {
                 markup_node(child, p, depth + 1, out, ir_path)?;
             }
@@ -2027,6 +2078,13 @@ fn emit_mini(
     let app_json = serde_json::to_string_pretty(&Json::Object(app_obj))
         .map_err(|e| bad_ir(ir_path, format!("cannot serialize app.json: {e}")))?;
     write(out, "app.json", &(app_json + "\n"), ir_path)?;
+    // app.js is a required root entry in the mini-program package structure;
+    // pages are resolved from the package root without file extensions.
+    let app_js = format!(
+        "// Generated by opuromc for {}; no IR interpreter.\nApp({{}});\n",
+        p.key
+    );
+    write(out, "app.js", &app_js, ir_path)?;
 
     let mut markup = String::new();
     markup.push_str(&format!(
@@ -2034,7 +2092,12 @@ fn emit_mini(
         p.key
     ));
     markup_node(tree, p, 0, &mut markup, ir_path)?;
-    write(out, &format!("index.{}", p.markup_ext), &markup, ir_path)?;
+    write(
+        out,
+        &format!("pages/index/index.{}", p.markup_ext),
+        &markup,
+        ir_path,
+    )?;
 
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
@@ -2047,7 +2110,12 @@ fn emit_mini(
             style.push_str(&format!(".n{} {{ {}; }}\n", n.id, s));
         }
     }
-    write(out, &format!("index.{}", p.style_ext), &style, ir_path)?;
+    write(
+        out,
+        &format!("pages/index/index.{}", p.style_ext),
+        &style,
+        ir_path,
+    )?;
 
     let mut data = JsonMap::new();
     for st in states {
@@ -2081,5 +2149,5 @@ fn emit_mini(
         "// Generated by opuromc for {}; straight-line code, no IR interpreter.\nPage({{\n  data: {},\n{}}});\n",
         p.key, data_js, methods
     );
-    write(out, "index.js", &index_js, ir_path)
+    write(out, "pages/index/index.js", &index_js, ir_path)
 }
