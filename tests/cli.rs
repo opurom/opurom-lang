@@ -603,10 +603,30 @@ fn web_and_mini_emitters_produce_valid_js() {
 
 #[test]
 fn web_layout_places_children_of_every_container_kind() {
-    let ir = out_dir("gallery-ir").join("gallery.opuir.json");
-    let r = compile(&example("gallery.opu"), &ir);
+    // Self-contained: CI clones only the sibling repos a check needs.
+    let src = out_dir("containers").join("containers.opu");
+    fs::write(
+        &src,
+        concat!(
+            "app Containers {\n",
+            "  Scroll(height: 100) {\n",
+            "    Column {\n",
+            "      Grid(columns: 2) { Text(\"cell\") }\n",
+            "      Card(p: 8) { Text(\"card\") }\n",
+            "      Dialog(title: \"Hi\") { Text(\"body\") }\n",
+            "      List { Text(\"row\") }\n",
+            "      Container(p: 4) { Text(\"box\") }\n",
+            "      Gauge(label: \"data/Gauge\")\n",
+            "    }\n",
+            "  }\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+    let ir = out_dir("containers-ir").join("containers.opuir.json");
+    let r = compile(&src, &ir);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
-    let dir = out_dir("gallery-web");
+    let dir = out_dir("containers-web");
     let r = emit(&ir, "web", &dir);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let app_js = fs::read_to_string(dir.join("app.js")).unwrap();
@@ -614,7 +634,7 @@ fn web_layout_places_children_of_every_container_kind() {
         .lines()
         .filter(|l| l.contains("ctx.fillText(") || l.contains("ctx.fillRect("))
         .collect();
-    assert!(draws.len() > 100, "expected the full gallery to be drawn");
+    assert!(draws.len() >= 7, "expected every child to be drawn");
     for draw in &draws {
         assert!(
             !draw.contains("(0, 0,") && !draw.contains(", 0, 0)"),
