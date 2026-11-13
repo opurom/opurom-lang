@@ -14,7 +14,7 @@
     }
   ],
   "theme": {
-    "accent": "#4F46E5",
+    "accent": "#097FEB",
     "mode": "light",
     "radius": 12
   },
@@ -128,7 +128,7 @@
                     "id": 12,
                     "kind": "Button",
                     "props": {
-                      "color": "#4F46E5",
+                      "color": "#097FEB",
                       "label": "+"
                     }
                   },
