@@ -1,0 +1,8 @@
+app ParticlesDemo {
+  Column(p: 16, gap: 8) {
+    Container(width: 240, height: 120, particles: "count=64,seed=7,radius=2,alpha=512,color=#101828") {
+      Text("Field", size: 16)
+    }
+    Text("Plain", size: 14)
+  }
+}

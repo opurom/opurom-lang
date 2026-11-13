@@ -3194,3 +3194,180 @@ fn theme_without_font_scale_stays_unchanged() {
     let ir = compile_ok(&fixture("features.opu"));
     assert_eq!(ir["theme"].get("fontScale"), None);
 }
+
+#[test]
+fn particles_prop_lowers_to_the_bounded_ir() {
+    let ir = compile_ok(&fixture("particles.opu"));
+    let node = nodes_of(&ir)
+        .into_iter()
+        .find(|n| n["props"].get("particles").is_some())
+        .expect("a node carries the particles prop");
+    assert_eq!(
+        node["props"]["particles"],
+        json!({"count": 64, "seed": 7, "radius": 2, "alpha": 512, "color": "#101828"})
+    );
+}
+
+#[test]
+fn particles_prop_applies_the_documented_defaults() {
+    let ir = compile_ok(&fixture("particles_defaults.opu"));
+    let node = nodes_of(&ir)
+        .into_iter()
+        .find(|n| n["props"].get("particles").is_some())
+        .expect("a node carries the particles prop");
+    assert_eq!(
+        node["props"]["particles"],
+        json!({"count": 3, "seed": 1, "radius": 2, "alpha": 1024})
+    );
+    assert_eq!(node["props"]["particles"].get("color"), None);
+}
+
+#[test]
+fn particles_field_errors_are_precise() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "particles_value_type.opu",
+            "prop 'particles' expects a field list, found int",
+        ),
+        (
+            "particles_shape.opu",
+            "particles field '64' must be written name=value",
+        ),
+        (
+            "particles_missing_count.opu",
+            "particles requires the 'count' field",
+        ),
+        (
+            "particles_count_range.opu",
+            "particles.count 513 must be 0..=512",
+        ),
+        (
+            "particles_count_type.opu",
+            "particles.count must be an integer 0..=512, found 'many'",
+        ),
+        (
+            "particles_seed_range.opu",
+            "particles.seed 4294967296 must be 0..=4294967295",
+        ),
+        (
+            "particles_unknown_field.opu",
+            "unknown particles field 'cnt'",
+        ),
+        (
+            "particles_duplicate_field.opu",
+            "duplicate particles field 'count'",
+        ),
+        (
+            "particles_bad_color.opu",
+            "invalid color 'red' for 'particles.color'",
+        ),
+    ];
+    for &(file, message) in cases {
+        let path = error_fixture(file);
+        let r = bin().arg("check").arg(&path).output().expect("run check");
+        assert_eq!(r.status.code(), Some(1), "{file} must fail: {r:?}");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            err.contains(message),
+            "{file}: unexpected diagnostic: {err}"
+        );
+        assert_diag(&err, &path);
+
+        let out = out_dir("particles-reject").join("out.opuir.json");
+        let r2 = compile(&path, &out);
+        assert_eq!(r2.status.code(), Some(1), "{file}: compile must fail");
+        assert!(!out.exists(), "{file}: no IR may be written on error");
+    }
+}
+
+/// Run the sibling renderer on one IR file at 320x240. The offline attempt
+/// keeps the common case network-free; a cold cargo cache falls back to a
+/// regular run, which the CI checkout provides.
+fn render_ir(ir: &Path, ppm: &Path) -> (bool, String) {
+    let manifest = workspace()
+        .join("..")
+        .join("opurom-render")
+        .join("Cargo.toml");
+    let run = |offline: bool| {
+        let mut cmd = Command::new(cargo_path());
+        cmd.arg("run").arg("--quiet");
+        if offline {
+            cmd.arg("--offline");
+        }
+        cmd.arg("--manifest-path")
+            .arg(&manifest)
+            .arg("--")
+            .arg(ir)
+            .arg("320")
+            .arg("240")
+            .arg(ppm);
+        cmd.output().expect("run opurom-render")
+    };
+    let out = run(true);
+    let out = if out.status.success() {
+        out
+    } else {
+        run(false)
+    };
+    (
+        out.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+fn render_digest(text: &str) -> &str {
+    text.lines()
+        .find_map(|l| l.split_whitespace().find(|t| t.starts_with("digest=")))
+        .map(|t| &t["digest=".len()..])
+        .unwrap_or("")
+}
+
+fn strip_particles(node: &mut Json) {
+    if let Some(props) = node.get_mut("props").and_then(Json::as_object_mut) {
+        props.remove("particles");
+    }
+    if let Some(children) = node.get_mut("children").and_then(Json::as_array_mut) {
+        for child in children {
+            strip_particles(child);
+        }
+    }
+}
+
+#[test]
+fn particles_prop_changes_the_rendered_frame() {
+    let dir = out_dir("particles-render");
+    let with_ir = dir.join("with.opuir.json");
+    let r = compile(&fixture("particles.opu"), &with_ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let mut doc: Json =
+        serde_json::from_slice(&fs::read(&with_ir).expect("read compiled IR")).expect("parse IR");
+    strip_particles(doc.get_mut("tree").expect("IR tree"));
+    let base_ir = dir.join("without.opuir.json");
+    fs::write(&base_ir, serde_json::to_vec(&doc).expect("serialize IR")).expect("write IR");
+
+    let (ok_with, with_out) = render_ir(&with_ir, &dir.join("with.ppm"));
+    let (ok_without, without_out) = render_ir(&base_ir, &dir.join("without.ppm"));
+    assert!(
+        ok_with && ok_without,
+        "render failed:\n{with_out}\n{without_out}"
+    );
+    let with_digest = render_digest(&with_out);
+    let base_digest = render_digest(&without_out);
+    assert!(
+        with_digest.len() == 16 && base_digest.len() == 16,
+        "missing digest:\n{with_out}\n{without_out}"
+    );
+    assert_ne!(
+        with_digest, base_digest,
+        "particles must change the rendered digest"
+    );
+    assert_ne!(
+        fs::read(dir.join("with.ppm")).expect("read with.ppm"),
+        fs::read(dir.join("without.ppm")).expect("read without.ppm"),
+        "particles must change the rendered pixels"
+    );
+}

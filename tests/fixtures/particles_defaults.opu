@@ -1,0 +1,5 @@
+app ParticlesDefaults {
+  Container(width: 80, height: 40, particles: "count=3") {
+    Text("Dots", size: 12)
+  }
+}

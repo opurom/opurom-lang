@@ -73,9 +73,12 @@ computed_factor = [ "-" ] INT | IDENT ;
 | Theme block | `theme { mode: dark, accent: "#FF4D6D", radius: 8 }` | `IR.theme` |
 | Atomic shortcuts | `p` / `m` / `bg` / `rounded` | `padding` / `margin` / `color` / `radius` |
 | Visual props | `shadow`, `gradient`, `glass`, `opacity`, `border`, `animate` | passed through |
+| Particle field | `particles: "count=64,seed=7,radius=2"` | bounded `props.particles` object |
 
 `for` integer counts are limited to 0..64; colors are `#RRGGBB`; `opacity` is 0..1; `shadow` is
-0..8.
+0..8. `particles` is a comma-separated `name=value` list: `count` is required and must be
+0..512, `seed` is 0..4294967295 (default 1), `radius` is 0..32 (default 2), `alpha` is 0..1024
+(default 1024) and `color` is an optional `#RRGGBB` that falls back to the node accent.
 
 ### Async/await effects
 
@@ -414,6 +417,8 @@ win and preset keys need not be props that the primitive declares. The catalog i
 compile time. `opuromc components` prints `name | primitive | category` rows and a final
 `216 components` line. Unknown kinds remain a diagnostic. The accessibility keys `label`,
 `role`, `fontScale` and `highContrast` are accepted on any node and preserved in IR props.
+`particles` is accepted on any node too and lowers to the bounded `props.particles` object
+the renderer scatters.
 
 ### Component catalog expansion (COMPONENT_LIBRARY_HARDENING section 1)
 

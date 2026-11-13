@@ -205,6 +205,7 @@ const GENERIC_PROPS: &[&str] = &[
     "role",
     "fontScale",
     "highContrast",
+    "particles",
 ];
 
 /// Atomic source shortcuts and the canonical prop they lower to.
@@ -885,6 +886,9 @@ fn prop_value(ctx: &Ctx, _kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> 
         }
         return Ok(json!(s));
     }
+    if key == "particles" {
+        return particles_value(ctx, arg);
+    }
     if info.numeric.contains(&key) || GENERIC_NUMERIC.contains(&key) {
         return match &arg.value {
             AstValue::Lit(Lit::Int(n)) => Ok(json!(*n)),
@@ -903,6 +907,122 @@ fn prop_value(ctx: &Ctx, _kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> 
         AstValue::Lit(l) => json_lit(l),
         AstValue::Ident(s) => json!(s),
     })
+}
+
+/// One accepted `particles` field: name, inclusive bounds and the value used
+/// when the source omits it. `count` has no default because the renderer
+/// requires it. The bounds mirror the renderer's particle validation, so a
+/// rejected value fails at its source position instead of at view time.
+const PARTICLE_FIELDS: &[(&str, i64, i64, Option<i64>)] = &[
+    ("count", 0, 512, None),
+    ("seed", 0, 4_294_967_295, Some(1)),
+    ("radius", 0, 32, Some(2)),
+    ("alpha", 0, 1024, Some(1024)),
+];
+
+/// Lower the `particles` prop: a comma-separated `name=value` field list that
+/// becomes the bounded object the renderer reads as `props.particles`. The
+/// field set is static so the raster and the GPU backend hash identical bytes
+/// on every run of the same document.
+fn particles_value(ctx: &Ctx, arg: &Arg) -> DResult<Json> {
+    let text = match &arg.value {
+        AstValue::Lit(Lit::Str(s)) => s.clone(),
+        other => {
+            return Err(ctx.err(
+                arg.pos,
+                format!(
+                    "prop 'particles' expects a field list, found {}",
+                    value_desc(other)
+                ),
+                "write fields as 'particles: \"count=64,seed=7\"'".to_string(),
+            ))
+        }
+    };
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut values: Vec<(&str, i64)> = Vec::new();
+    let mut color: Option<String> = None;
+    for part in text.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let (name, raw) = part.split_once('=').ok_or_else(|| {
+            ctx.err(
+                arg.pos,
+                format!("particles field '{part}' must be written name=value"),
+                "write fields as 'count=64,seed=7,radius=2,alpha=1024,color=#097FEB'".to_string(),
+            )
+        })?;
+        let name = name.trim();
+        let raw = raw.trim();
+        if !seen.insert(name) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("duplicate particles field '{name}'"),
+                "keep one value per field".to_string(),
+            ));
+        }
+        if name == "color" {
+            check_color(ctx, arg.pos, "particles.color", raw)?;
+            color = Some(raw.to_string());
+            continue;
+        }
+        let field = PARTICLE_FIELDS
+            .iter()
+            .find(|f| f.0 == name)
+            .ok_or_else(|| {
+                ctx.err(
+                    arg.pos,
+                    format!("unknown particles field '{name}'"),
+                    "accepted fields: count, seed, radius, alpha, color".to_string(),
+                )
+            })?;
+        let (lo, hi, default) = (field.1, field.2, field.3);
+        let example = default.unwrap_or(64);
+        let n = raw.parse::<i64>().map_err(|_| {
+            ctx.err(
+                arg.pos,
+                format!("particles.{name} must be an integer {lo}..={hi}, found '{raw}'"),
+                format!("write '{name}={example}'"),
+            )
+        })?;
+        if !(lo..=hi).contains(&n) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("particles.{name} {n} must be {lo}..={hi}"),
+                format!("write '{name}={example}'"),
+            ));
+        }
+        values.push((name, n));
+    }
+    let count = values
+        .iter()
+        .find(|(name, _)| *name == "count")
+        .map(|(_, n)| *n)
+        .ok_or_else(|| {
+            ctx.err(
+                arg.pos,
+                "particles requires the 'count' field".to_string(),
+                "write 'particles: \"count=64\"' with optional seed, radius, alpha and color"
+                    .to_string(),
+            )
+        })?;
+    let mut out = JsonMap::new();
+    out.insert("count".to_string(), json!(count));
+    for (name, _, _, default) in PARTICLE_FIELDS {
+        let Some(default) = default else {
+            continue;
+        };
+        let value = values
+            .iter()
+            .find(|(field, _)| field == name)
+            .map_or(*default, |(_, n)| *n);
+        out.insert((*name).to_string(), json!(value));
+    }
+    if let Some(color) = color {
+        out.insert("color".to_string(), json!(color));
+    }
+    Ok(Json::Object(out))
 }
 
 /// Lower one event statement into an IR action. The types are already checked
