@@ -1353,7 +1353,7 @@ fn async_primitives_and_catalog_names_are_accepted() {
     let src = dir.join("kinds.opu");
     fs::write(
         &src,
-        r#"app R4Kinds {
+        r#"app KindsProof {
   Column {
     Table(columns: 2, rows: 3) { }
     Chart(height: 120)
@@ -2311,7 +2311,7 @@ fn extended_primitives_and_catalog_names_are_accepted() {
     let kinds = canonical_extended_kinds();
     let dir = out_dir("extended-kinds");
     let src_path = dir.join("kinds.opu");
-    let mut src = String::from("app R10Kinds {\n  Column {\n");
+    let mut src = String::from("app ExtendedKindsProof {\n  Column {\n");
     for k in &kinds {
         src.push_str(&format!(
             "    {k}(value: 42, segments: 4, labels: \"a,b\")\n"
@@ -2353,7 +2353,7 @@ fn all_nine_emitters_keep_working() {
     let kinds = canonical_extended_kinds();
     let dir = out_dir("extended-emit");
     let src_path = dir.join("kinds.opu");
-    let mut src = String::from("app R10Emit {\n  state n = 0\n  Column {\n");
+    let mut src = String::from("app EmitProof {\n  state n = 0\n  Column {\n");
     for k in kinds.iter().take(12) {
         src.push_str(&format!("    {k}(value: 7)\n"));
     }
