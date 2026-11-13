@@ -16,241 +16,285 @@
   "theme": {
     "accent": "#097FEB",
     "mode": "light",
-    "radius": 12
+    "radius": 14
   },
   "tree": {
     "children": [
-      {
-        "children": [],
-        "component": "Heading",
-        "events": {},
-        "id": 1,
-        "kind": "Text",
-        "props": {
-          "role": "heading",
-          "size": 26,
-          "value": "OPUROM Components"
-        }
-      },
-      {
-        "children": [],
-        "component": "Paragraph",
-        "events": {},
-        "id": 2,
-        "kind": "Text",
-        "props": {
-          "size": 14,
-          "value": "One catalog, 216 named components, 100 distinct primitive kinds"
-        }
-      },
-      {
-        "children": [],
-        "component": "DividerSpace",
-        "events": {},
-        "id": 3,
-        "kind": "Spacer",
-        "props": {
-          "height": 16
-        }
-      },
       {
         "children": [
           {
             "children": [
               {
-                "children": [],
-                "component": "Label",
+                "children": [
+                  {
+                    "children": [],
+                    "component": "Heading",
+                    "events": {},
+                    "id": 4,
+                    "kind": "Text",
+                    "props": {
+                      "color": "#FFFFFF",
+                      "role": "heading",
+                      "size": 26,
+                      "value": "OPUROM Components"
+                    }
+                  },
+                  {
+                    "children": [],
+                    "component": "Paragraph",
+                    "events": {},
+                    "id": 5,
+                    "kind": "Text",
+                    "props": {
+                      "color": "#D6E8FF",
+                      "size": 14,
+                      "value": "One catalog, 216 named components, 100 distinct primitive kinds"
+                    }
+                  }
+                ],
                 "events": {},
-                "id": 6,
-                "kind": "Text",
+                "id": 3,
+                "kind": "Column",
                 "props": {
-                  "size": 16,
-                  "value": "Counter"
-                }
-              },
-              {
-                "children": [],
-                "component": "Gap",
-                "events": {},
-                "id": 7,
-                "kind": "Spacer",
-                "props": {
-                  "height": 8
-                }
-              },
-              {
-                "children": [],
-                "component": "CountBadge",
-                "events": {},
-                "id": 8,
-                "kind": "Badge",
-                "props": {
-                  "label": "{count}",
-                  "radius": 8
+                  "gap": 4
                 }
               }
             ],
-            "component": "Tile",
             "events": {},
-            "id": 5,
-            "kind": "Card",
+            "id": 2,
+            "kind": "Container",
             "props": {
-              "padding": 12,
-              "radius": 8,
-              "shadow": 2
+              "animate": "ease",
+              "gradient": "#097FEB,#043B70",
+              "padding": 26,
+              "radius": 18,
+              "shadow": 4
             }
           },
           {
             "children": [
               {
-                "children": [],
-                "component": "Label",
+                "children": [
+                  {
+                    "children": [],
+                    "component": "Label",
+                    "events": {},
+                    "id": 8,
+                    "kind": "Text",
+                    "props": {
+                      "color": "#101828",
+                      "size": 16,
+                      "value": "Counter"
+                    }
+                  },
+                  {
+                    "children": [],
+                    "component": "Gap",
+                    "events": {},
+                    "id": 9,
+                    "kind": "Spacer",
+                    "props": {
+                      "height": 8
+                    }
+                  },
+                  {
+                    "children": [],
+                    "component": "CountBadge",
+                    "events": {},
+                    "id": 10,
+                    "kind": "Badge",
+                    "props": {
+                      "label": "{count}",
+                      "radius": 12
+                    }
+                  }
+                ],
+                "component": "Tile",
                 "events": {},
-                "id": 10,
-                "kind": "Text",
+                "id": 7,
+                "kind": "Card",
                 "props": {
-                  "size": 16,
-                  "value": "Actions"
+                  "border": "#E4E9F2",
+                  "color": "#FFFFFF",
+                  "padding": 14,
+                  "radius": 14,
+                  "shadow": 3
                 }
               },
               {
                 "children": [
                   {
                     "children": [],
-                    "component": "PrimaryButton",
-                    "events": {
-                      "tap": {
-                        "op": "add",
-                        "target": "count",
-                        "value": 1
-                      }
-                    },
+                    "component": "Label",
+                    "events": {},
                     "id": 12,
-                    "kind": "Button",
+                    "kind": "Text",
                     "props": {
-                      "color": "#097FEB",
-                      "label": "+"
+                      "color": "#101828",
+                      "size": 16,
+                      "value": "Actions"
                     }
                   },
                   {
-                    "children": [],
-                    "component": "DangerButton",
-                    "events": {
-                      "tap": {
-                        "op": "set",
-                        "target": "count",
-                        "value": 0
+                    "children": [
+                      {
+                        "children": [],
+                        "component": "PrimaryButton",
+                        "events": {
+                          "tap": {
+                            "op": "add",
+                            "target": "count",
+                            "value": 1
+                          }
+                        },
+                        "id": 14,
+                        "kind": "Button",
+                        "props": {
+                          "animate": "spring",
+                          "color": "#097FEB",
+                          "label": "+",
+                          "padding": 12,
+                          "radius": 12,
+                          "shadow": 2
+                        }
+                      },
+                      {
+                        "children": [],
+                        "component": "DangerButton",
+                        "events": {
+                          "tap": {
+                            "op": "set",
+                            "target": "count",
+                            "value": 0
+                          }
+                        },
+                        "id": 15,
+                        "kind": "Button",
+                        "props": {
+                          "animate": "spring",
+                          "color": "#DC2626",
+                          "label": "Reset",
+                          "padding": 12,
+                          "radius": 12,
+                          "shadow": 2
+                        }
                       }
-                    },
+                    ],
+                    "component": "ButtonBar",
+                    "events": {},
                     "id": 13,
-                    "kind": "Button",
+                    "kind": "Row",
                     "props": {
-                      "color": "#DC2626",
-                      "label": "Reset"
+                      "gap": 8
                     }
                   }
                 ],
-                "component": "ButtonBar",
+                "component": "ElevationCard",
                 "events": {},
                 "id": 11,
-                "kind": "Row",
+                "kind": "Card",
                 "props": {
-                  "gap": 8
+                  "color": "#F4F7FB",
+                  "padding": 14,
+                  "radius": 14,
+                  "shadow": 3
                 }
               }
             ],
-            "component": "ElevationCard",
+            "component": "CardGrid",
             "events": {},
-            "id": 9,
+            "id": 6,
+            "kind": "Grid",
+            "props": {
+              "columns": 2,
+              "gap": 12
+            }
+          },
+          {
+            "children": [
+              {
+                "children": [],
+                "component": "Caption",
+                "events": {},
+                "id": 17,
+                "kind": "Text",
+                "props": {
+                  "color": "#D6E8FF",
+                  "fontScale": 1.25,
+                  "size": 12,
+                  "value": "High contrast is active"
+                },
+                "when": "dark"
+              }
+            ],
+            "component": "InfoCard",
+            "events": {},
+            "id": 16,
             "kind": "Card",
             "props": {
-              "padding": 12,
-              "shadow": 2
-            }
-          }
-        ],
-        "component": "CardGrid",
-        "events": {},
-        "id": 4,
-        "kind": "Grid",
-        "props": {
-          "columns": 2,
-          "gap": 12
-        }
-      },
-      {
-        "children": [
-          {
-            "children": [],
-            "component": "Caption",
-            "events": {},
-            "id": 15,
-            "kind": "Text",
-            "props": {
-              "fontScale": 1.25,
-              "size": 12,
-              "value": "High contrast is active"
+              "color": "#EEF2FF",
+              "gradient": "#101828,#043B70",
+              "highContrast": true,
+              "label": "Dark mode details",
+              "padding": 14,
+              "radius": 14,
+              "role": "text",
+              "shadow": 3
             },
             "when": "dark"
+          },
+          {
+            "children": [],
+            "component": "ToggleSwitch",
+            "events": {
+              "tap": {
+                "op": "toggle",
+                "target": "dark"
+              }
+            },
+            "id": 18,
+            "kind": "Switch",
+            "props": {
+              "bind": "dark",
+              "label": "Dark mode",
+              "role": "checkbox"
+            }
+          },
+          {
+            "children": [],
+            "component": "LinearProgress",
+            "events": {},
+            "id": 19,
+            "kind": "Progress",
+            "props": {
+              "value": 40
+            }
+          },
+          {
+            "children": [],
+            "component": "UserAvatar",
+            "events": {},
+            "id": 20,
+            "kind": "Avatar",
+            "props": {
+              "label": "OP",
+              "size": 40
+            }
+          },
+          {
+            "children": [],
+            "events": {},
+            "id": 21,
+            "kind": "Spinner",
+            "props": {}
           }
         ],
-        "component": "InfoCard",
         "events": {},
-        "id": 14,
-        "kind": "Card",
+        "id": 1,
+        "kind": "Column",
         "props": {
-          "color": "#EEF2FF",
-          "highContrast": true,
-          "label": "Dark mode details",
-          "padding": 12,
-          "role": "text"
-        },
-        "when": "dark"
-      },
-      {
-        "children": [],
-        "component": "ToggleSwitch",
-        "events": {
-          "tap": {
-            "op": "toggle",
-            "target": "dark"
-          }
-        },
-        "id": 16,
-        "kind": "Switch",
-        "props": {
-          "bind": "dark",
-          "label": "Dark mode",
-          "role": "checkbox"
+          "gap": 18
         }
-      },
-      {
-        "children": [],
-        "component": "LinearProgress",
-        "events": {},
-        "id": 17,
-        "kind": "Progress",
-        "props": {
-          "value": 40
-        }
-      },
-      {
-        "children": [],
-        "component": "UserAvatar",
-        "events": {},
-        "id": 18,
-        "kind": "Avatar",
-        "props": {
-          "label": "OP",
-          "size": 40
-        }
-      },
-      {
-        "children": [],
-        "events": {},
-        "id": 19,
-        "kind": "Spinner",
-        "props": {}
       }
     ],
     "component": "ScrollView",
@@ -258,8 +302,8 @@
     "id": 0,
     "kind": "Scroll",
     "props": {
-      "height": 480,
-      "padding": 16
+      "height": 520,
+      "padding": 20
     }
   }
 }
