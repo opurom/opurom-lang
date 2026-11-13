@@ -12,6 +12,6 @@ component Outer(title) {
   }
 }
 
-app R6Nested {
+app ComponentNested {
   Outer("Hi")
 }

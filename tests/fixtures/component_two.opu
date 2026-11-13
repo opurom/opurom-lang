@@ -6,7 +6,7 @@ component Metric(label: string, value: int, active: bool) {
   }
 }
 
-app R6Two {
+app ComponentTwo {
   Column {
     Metric("CPU", 42, true)
     Metric("RAM", 8, false)

@@ -1,6 +1,6 @@
-// R2 feature coverage: full-stack model/api, multi-statement handlers,
+// Interactive UI feature coverage: full-stack model/api, multi-statement handlers,
 // state-to-state actions, conditionals, compile-time loops, theme and styles.
-app R2Features {
+app FeaturesAdditive {
   model Todo {
     id: int primary
     title: string

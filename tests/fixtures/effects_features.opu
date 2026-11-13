@@ -1,4 +1,4 @@
-app R5Features {
+app EffectsFeatures {
   state count = 1
   state dark = false
   state name = "Ada"

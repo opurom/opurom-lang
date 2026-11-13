@@ -298,7 +298,7 @@ fn web_emitter_keeps_the_cli_state_shape() {
     );
 }
 
-/// R4 effects stay in host.js: the wasm module still instantiates with an empty import object.
+/// Async effects stay in host.js: the wasm module still instantiates with an empty import object.
 #[test]
 fn wasm_effects_use_host_callbacks_without_wasm_imports() {
     let dir = out_dir("wasm-effects");
@@ -404,12 +404,12 @@ console.log(JSON.stringify({
     assert_eq!(got["after"], 1, "{text}");
 }
 
-/// R5 int computed values are recomputed inside the wasm module after every tap.
+/// Int computed values are recomputed inside the wasm module after every tap.
 #[test]
 fn wasm_emitter_recomputes_int_computed_values() {
-    let dir = out_dir("wasm-r5");
-    let src = workspace().join("tests/fixtures/r5_features.opu");
-    let ir = dir.join("r5.opuir.json");
+    let dir = out_dir("wasm-computed");
+    let src = workspace().join("tests/fixtures/effects_features.opu");
+    let ir = dir.join("computed.opuir.json");
     let r = bin()
         .arg("compile")
         .arg(&src)
@@ -419,7 +419,7 @@ fn wasm_emitter_recomputes_int_computed_values() {
         .expect("run opuromc compile");
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let ir_json: serde_json::Value =
-        serde_json::from_slice(&fs::read(&ir).unwrap()).expect("parse R5 IR");
+        serde_json::from_slice(&fs::read(&ir).unwrap()).expect("parse IR");
     let tap_id = ir_json["tree"]["children"]
         .as_array()
         .unwrap()
@@ -517,12 +517,12 @@ console.log(JSON.stringify({
 
 fn _unused(_: &Path) {}
 
-/// R6 custom components expand before emission: the wasm ABI sees ordinary nodes.
+/// Custom components expand before emission: the wasm ABI sees ordinary nodes.
 #[test]
 fn wasm_abi_works_on_expanded_component_ir() {
-    let dir = out_dir("wasm-r6");
-    let src = workspace().join("tests/fixtures/r6_component_wasm.opu");
-    let ir = dir.join("r6.opuir.json");
+    let dir = out_dir("wasm-components");
+    let src = workspace().join("tests/fixtures/component_wasm.opu");
+    let ir = dir.join("components.opuir.json");
     let r = bin()
         .arg("compile")
         .arg(&src)
@@ -571,7 +571,7 @@ fn wasm_abi_works_on_expanded_component_ir() {
     );
     let wasm = out.join("target/wasm32-unknown-unknown/release/opurom_wasm.wasm");
 
-    let script = dir.join("r6.mjs");
+    let script = dir.join("components.mjs");
     fs::write(
         &script,
         r#"import { readFile } from "node:fs/promises";

@@ -2,7 +2,7 @@ component AddButton(label: string, step: int) {
   Button(label) { count += step }
 }
 
-app R6Stmt {
+app ComponentStmt {
   state count = 0
   AddButton("+2", 2)
 }

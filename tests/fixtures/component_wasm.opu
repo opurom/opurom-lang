@@ -2,7 +2,7 @@ component AddButton(label: string) {
   Button(label) { count += 1 }
 }
 
-app R6Wasm {
+app ComponentWasm {
   state count = 0
   Column {
     Text("{count}")

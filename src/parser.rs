@@ -627,8 +627,8 @@ impl<'a> Parser<'a> {
                         self.path,
                         t.line,
                         t.col,
-                        "list values may not contain braces in R5",
-                        "use plain strings; interpolation in list values is R6+",
+                        "list values may not contain braces",
+                        "use plain strings; interpolation in list values is not supported yet",
                     ));
                 }
                 values.push(value);
@@ -971,7 +971,7 @@ impl<'a> Parser<'a> {
                         self.path,
                         else_pos.line,
                         else_pos.col,
-                        "'else if' is not supported in R5",
+                        "'else if' is not supported yet",
                         "write a single 'else { ... }' block after the 'if' block",
                     ));
                 }

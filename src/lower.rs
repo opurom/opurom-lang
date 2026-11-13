@@ -114,9 +114,10 @@ pub const KINDS: &[&str] = &[
     "BracketPanel",
 ];
 
-/// The 68 R10 extended primitive kinds (R10_ADDENDUM section 1): each is a
-/// distinct drawn primitive with a documented prop schema and an a11y role.
-pub const R10_KINDS: &[&str] = &[
+/// The 68 extended primitive kinds (COMPONENT_LIBRARY_HARDENING section 1):
+/// each is a distinct drawn primitive with a documented prop schema and an a11y
+/// role.
+pub const EXTENDED_PRIMITIVE_KINDS: &[&str] = &[
     "Gauge",
     "Sparkline",
     "AreaChart",
@@ -187,7 +188,7 @@ pub const R10_KINDS: &[&str] = &[
     "BracketPanel",
 ];
 
-/// Generic props every kind accepts: canonical R2 visual props plus R3 accessibility keys.
+/// Generic props every kind accepts: canonical visual props plus accessibility keys.
 const GENERIC_PROPS: &[&str] = &[
     "padding",
     "margin",
@@ -213,7 +214,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("rounded", "radius"),
 ];
 
-/// Numeric props every kind accepts (canonical R2 visual props).
+/// Numeric props every kind accepts (canonical visual props).
 const GENERIC_NUMERIC: &[&str] = &["padding", "margin", "radius"];
 
 const HANDLER_VERBS: &[&str] = &["list", "get", "create", "update", "delete"];
@@ -587,9 +588,9 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             children: true,
             tap: false,
         },
-        // R10 extended primitives share one documented, reasonable prop schema:
+        // Extended primitives share one documented, reasonable prop schema:
         // all props are optional, `value` is positional, and none take children.
-        kind if R10_KINDS.contains(&kind) => KindInfo {
+        kind if EXTENDED_PRIMITIVE_KINDS.contains(&kind) => KindInfo {
             props: &[
                 "value", "values", "segments", "labels", "min", "max", "size", "src", "type",
                 "width", "height", "columns", "rows", "gap", "align",
@@ -771,7 +772,7 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
                     return Err(ctx.err(
                         arg.pos,
                         format!("list state '{name}' is compile-time only"),
-                        "use 'for (item in items)' to unroll a list at compile time; runtime binding is R6+",
+                        "use 'for (item in items)' to unroll a list at compile time; runtime binding is not supported yet",
                     ));
                 }
                 if ty != expected {
@@ -972,7 +973,7 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
         return Err(ctx.err(
             stmt.pos,
             format!("list state '{}' is compile-time only", stmt.target),
-            "use 'for (item in items)' to unroll a list at compile time; runtime mutation is R6+",
+            "use 'for (item in items)' to unroll a list at compile time; runtime mutation is not supported yet",
         ));
     }
     match &stmt.kind {
@@ -1296,7 +1297,7 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
                         return Err(ctx.err(
                             p,
                             format!("list state '{name}' is compile-time only"),
-                            "use 'for (item in items)' to unroll list values; interpolation is R6+",
+                            "use 'for (item in items)' to unroll list values; interpolation is not supported yet",
                         ));
                     }
                     _ => {}
@@ -1570,7 +1571,7 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], cond: Cond) -> DResult<Vec<Jso
                     if cond.unless.is_some() {
                         return Err(ctx.err(
                             node.pos,
-                            "nested 'else' inside an 'else' block is not supported in R5",
+                            "nested 'else' inside an 'else' block is not supported yet",
                             "flatten the conditional or move it outside the else block",
                         ));
                     }
@@ -2225,7 +2226,7 @@ fn eval_computed_expr(
                 return Err(ctx.err(
                     expr.pos,
                     format!("computed expression cannot read computed value '{name}'"),
-                    "read a declared state; computed-to-computed references are R6+",
+                    "read a declared state; computed-to-computed references are not supported yet",
                 ));
             }
             let ty = ctx.types.get(name).copied().ok_or_else(|| {

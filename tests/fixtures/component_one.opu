@@ -6,6 +6,6 @@ component Card(title: string) {
   }
 }
 
-app R6One {
+app ComponentOne {
   Card("Hi")
 }
