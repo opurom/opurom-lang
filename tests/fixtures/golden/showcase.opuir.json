@@ -25,38 +25,28 @@
           {
             "children": [
               {
-                "children": [
-                  {
-                    "children": [],
-                    "component": "Heading",
-                    "events": {},
-                    "id": 4,
-                    "kind": "Text",
-                    "props": {
-                      "color": "#FFFFFF",
-                      "role": "heading",
-                      "size": 26,
-                      "value": "OPUROM Components"
-                    }
-                  },
-                  {
-                    "children": [],
-                    "component": "Paragraph",
-                    "events": {},
-                    "id": 5,
-                    "kind": "Text",
-                    "props": {
-                      "color": "#D6E8FF",
-                      "size": 14,
-                      "value": "One catalog, 216 named components, 100 distinct primitive kinds"
-                    }
-                  }
-                ],
+                "children": [],
+                "component": "Heading",
                 "events": {},
                 "id": 3,
-                "kind": "Column",
+                "kind": "Text",
                 "props": {
-                  "gap": 4
+                  "color": "#FFFFFF",
+                  "role": "heading",
+                  "size": 22,
+                  "value": "OPUROM Components"
+                }
+              },
+              {
+                "children": [],
+                "component": "Paragraph",
+                "events": {},
+                "id": 4,
+                "kind": "Text",
+                "props": {
+                  "color": "#D6E8FF",
+                  "size": 12,
+                  "value": "One catalog, 216 named components, 100 distinct primitive kinds"
                 }
               }
             ],
@@ -66,7 +56,7 @@
             "props": {
               "animate": "ease",
               "gradient": "#097FEB,#043B70",
-              "padding": 26,
+              "padding": 20,
               "radius": 18,
               "shadow": 4
             }
@@ -79,7 +69,7 @@
                     "children": [],
                     "component": "Label",
                     "events": {},
-                    "id": 8,
+                    "id": 7,
                     "kind": "Text",
                     "props": {
                       "color": "#101828",
@@ -91,7 +81,7 @@
                     "children": [],
                     "component": "Gap",
                     "events": {},
-                    "id": 9,
+                    "id": 8,
                     "kind": "Spacer",
                     "props": {
                       "height": 8
@@ -101,7 +91,7 @@
                     "children": [],
                     "component": "CountBadge",
                     "events": {},
-                    "id": 10,
+                    "id": 9,
                     "kind": "Badge",
                     "props": {
                       "label": "{count}",
@@ -111,7 +101,7 @@
                 ],
                 "component": "Tile",
                 "events": {},
-                "id": 7,
+                "id": 6,
                 "kind": "Card",
                 "props": {
                   "border": "#E4E9F2",
@@ -127,7 +117,7 @@
                     "children": [],
                     "component": "Label",
                     "events": {},
-                    "id": 12,
+                    "id": 11,
                     "kind": "Text",
                     "props": {
                       "color": "#101828",
@@ -147,7 +137,7 @@
                             "value": 1
                           }
                         },
-                        "id": 14,
+                        "id": 13,
                         "kind": "Button",
                         "props": {
                           "animate": "spring",
@@ -168,7 +158,7 @@
                             "value": 0
                           }
                         },
-                        "id": 15,
+                        "id": 14,
                         "kind": "Button",
                         "props": {
                           "animate": "spring",
@@ -182,16 +172,17 @@
                     ],
                     "component": "ButtonBar",
                     "events": {},
-                    "id": 13,
+                    "id": 12,
                     "kind": "Row",
                     "props": {
+                      "color": "#F4F7FB",
                       "gap": 8
                     }
                   }
                 ],
                 "component": "ElevationCard",
                 "events": {},
-                "id": 11,
+                "id": 10,
                 "kind": "Card",
                 "props": {
                   "color": "#F4F7FB",
@@ -203,7 +194,7 @@
             ],
             "component": "CardGrid",
             "events": {},
-            "id": 6,
+            "id": 5,
             "kind": "Grid",
             "props": {
               "columns": 2,
@@ -216,7 +207,7 @@
                 "children": [],
                 "component": "Caption",
                 "events": {},
-                "id": 17,
+                "id": 16,
                 "kind": "Text",
                 "props": {
                   "color": "#D6E8FF",
@@ -229,7 +220,7 @@
             ],
             "component": "InfoCard",
             "events": {},
-            "id": 16,
+            "id": 15,
             "kind": "Card",
             "props": {
               "color": "#EEF2FF",
@@ -252,7 +243,7 @@
                 "target": "dark"
               }
             },
-            "id": 18,
+            "id": 17,
             "kind": "Switch",
             "props": {
               "bind": "dark",
@@ -264,7 +255,7 @@
             "children": [],
             "component": "LinearProgress",
             "events": {},
-            "id": 19,
+            "id": 18,
             "kind": "Progress",
             "props": {
               "value": 40
@@ -274,7 +265,7 @@
             "children": [],
             "component": "UserAvatar",
             "events": {},
-            "id": 20,
+            "id": 19,
             "kind": "Avatar",
             "props": {
               "label": "OP",
@@ -284,7 +275,7 @@
           {
             "children": [],
             "events": {},
-            "id": 21,
+            "id": 20,
             "kind": "Spinner",
             "props": {}
           }
@@ -293,7 +284,7 @@
         "id": 1,
         "kind": "Column",
         "props": {
-          "gap": 18
+          "gap": 14
         }
       }
     ],
@@ -302,8 +293,8 @@
     "id": 0,
     "kind": "Scroll",
     "props": {
-      "height": 520,
-      "padding": 20
+      "height": 400,
+      "padding": 16
     }
   }
 }

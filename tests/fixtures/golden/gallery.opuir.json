@@ -30,36 +30,26 @@
           {
             "children": [
               {
-                "children": [
-                  {
-                    "children": [],
-                    "events": {},
-                    "id": 4,
-                    "kind": "Text",
-                    "props": {
-                      "color": "#FFFFFF",
-                      "role": "heading",
-                      "size": 22,
-                      "value": "OPUROM primitive gallery"
-                    }
-                  },
-                  {
-                    "children": [],
-                    "events": {},
-                    "id": 5,
-                    "kind": "Text",
-                    "props": {
-                      "color": "#D6E8FF",
-                      "size": 12,
-                      "value": "216 named components, 100 distinct primitive kinds"
-                    }
-                  }
-                ],
+                "children": [],
                 "events": {},
                 "id": 3,
-                "kind": "Column",
+                "kind": "Text",
                 "props": {
-                  "gap": 4
+                  "color": "#FFFFFF",
+                  "role": "heading",
+                  "size": 22,
+                  "value": "OPUROM primitive gallery"
+                }
+              },
+              {
+                "children": [],
+                "events": {},
+                "id": 4,
+                "kind": "Text",
+                "props": {
+                  "color": "#D6E8FF",
+                  "size": 12,
+                  "value": "216 named components, 100 distinct primitive kinds"
                 }
               }
             ],
@@ -81,7 +71,7 @@
                   {
                     "children": [],
                     "events": {},
-                    "id": 8,
+                    "id": 7,
                     "kind": "Text",
                     "props": {
                       "role": "heading",
@@ -94,7 +84,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 10,
+                        "id": 9,
                         "kind": "Column",
                         "props": {
                           "gap": 4,
@@ -104,7 +94,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 11,
+                        "id": 10,
                         "kind": "Row",
                         "props": {
                           "gap": 4,
@@ -114,7 +104,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 12,
+                        "id": 11,
                         "kind": "Container",
                         "props": {
                           "label": "layout/Container",
@@ -124,7 +114,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 13,
+                        "id": 12,
                         "kind": "Spacer",
                         "props": {
                           "height": 8,
@@ -134,7 +124,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 14,
+                        "id": 13,
                         "kind": "List",
                         "props": {
                           "label": "layout/List"
@@ -143,7 +133,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 15,
+                        "id": 14,
                         "kind": "Grid",
                         "props": {
                           "columns": 4,
@@ -153,7 +143,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 16,
+                        "id": 15,
                         "kind": "Scroll",
                         "props": {
                           "height": 120,
@@ -163,7 +153,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 17,
+                        "id": 16,
                         "kind": "CornerFrame",
                         "props": {
                           "label": "layout/CornerFrame",
@@ -174,7 +164,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 18,
+                        "id": 17,
                         "kind": "CrosshairMark",
                         "props": {
                           "label": "layout/CrosshairMark",
@@ -185,7 +175,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 19,
+                        "id": 18,
                         "kind": "LadderDivider",
                         "props": {
                           "label": "layout/LadderDivider",
@@ -196,7 +186,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 20,
+                        "id": 19,
                         "kind": "ChevronDivider",
                         "props": {
                           "label": "layout/ChevronDivider",
@@ -207,7 +197,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 21,
+                        "id": 20,
                         "kind": "GridOverlay",
                         "props": {
                           "label": "layout/GridOverlay",
@@ -218,7 +208,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 22,
+                        "id": 21,
                         "kind": "CheckerBackdrop",
                         "props": {
                           "label": "layout/CheckerBackdrop",
@@ -229,7 +219,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 23,
+                        "id": 22,
                         "kind": "DotPattern",
                         "props": {
                           "label": "layout/DotPattern",
@@ -240,7 +230,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 24,
+                        "id": 23,
                         "kind": "RingBadge",
                         "props": {
                           "label": "layout/RingBadge",
@@ -251,7 +241,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 25,
+                        "id": 24,
                         "kind": "StairDivider",
                         "props": {
                           "label": "layout/StairDivider",
@@ -262,7 +252,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 26,
+                        "id": 25,
                         "kind": "BracketPanel",
                         "props": {
                           "label": "layout/BracketPanel",
@@ -272,7 +262,7 @@
                       }
                     ],
                     "events": {},
-                    "id": 9,
+                    "id": 8,
                     "kind": "Grid",
                     "props": {
                       "columns": 4
@@ -280,7 +270,7 @@
                   }
                 ],
                 "events": {},
-                "id": 7,
+                "id": 6,
                 "kind": "Column",
                 "props": {
                   "gap": 8
@@ -288,7 +278,7 @@
               }
             ],
             "events": {},
-            "id": 6,
+            "id": 5,
             "kind": "Container",
             "props": {
               "border": "#E4E9F2",
@@ -305,7 +295,7 @@
                   {
                     "children": [],
                     "events": {},
-                    "id": 29,
+                    "id": 28,
                     "kind": "Text",
                     "props": {
                       "role": "heading",
@@ -318,7 +308,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 31,
+                        "id": 30,
                         "kind": "Text",
                         "props": {
                           "label": "typography/Text",
@@ -329,7 +319,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 32,
+                        "id": 31,
                         "kind": "RichText",
                         "props": {
                           "label": "typography/RichText",
@@ -339,7 +329,7 @@
                       }
                     ],
                     "events": {},
-                    "id": 30,
+                    "id": 29,
                     "kind": "Grid",
                     "props": {
                       "columns": 4
@@ -347,7 +337,7 @@
                   }
                 ],
                 "events": {},
-                "id": 28,
+                "id": 27,
                 "kind": "Column",
                 "props": {
                   "gap": 8
@@ -355,7 +345,7 @@
               }
             ],
             "events": {},
-            "id": 27,
+            "id": 26,
             "kind": "Container",
             "props": {
               "border": "#E4E9F2",
@@ -372,7 +362,7 @@
                   {
                     "children": [],
                     "events": {},
-                    "id": 35,
+                    "id": 34,
                     "kind": "Text",
                     "props": {
                       "role": "heading",
@@ -385,7 +375,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 37,
+                        "id": 36,
                         "kind": "Button",
                         "props": {
                           "label": "form/Button"
@@ -394,7 +384,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 38,
+                        "id": 37,
                         "kind": "Input",
                         "props": {
                           "label": "form/Input",
@@ -409,7 +399,7 @@
                             "target": "dark"
                           }
                         },
-                        "id": 39,
+                        "id": 38,
                         "kind": "Switch",
                         "props": {
                           "bind": "dark",
@@ -424,7 +414,7 @@
                             "target": "level"
                           }
                         },
-                        "id": 40,
+                        "id": 39,
                         "kind": "Slider",
                         "props": {
                           "bind": "level",
@@ -441,7 +431,7 @@
                             "target": "dark"
                           }
                         },
-                        "id": 41,
+                        "id": 40,
                         "kind": "Checkbox",
                         "props": {
                           "bind": "dark",
@@ -457,7 +447,7 @@
                             "value": "a"
                           }
                         },
-                        "id": 42,
+                        "id": 41,
                         "kind": "Radio",
                         "props": {
                           "bind": "choice",
@@ -468,7 +458,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 43,
+                        "id": 42,
                         "kind": "Rating",
                         "props": {
                           "label": "form/Rating",
@@ -479,7 +469,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 44,
+                        "id": 43,
                         "kind": "Dial",
                         "props": {
                           "label": "form/Dial",
@@ -490,7 +480,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 45,
+                        "id": 44,
                         "kind": "Knob",
                         "props": {
                           "label": "form/Knob",
@@ -501,7 +491,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 46,
+                        "id": 45,
                         "kind": "ColorWell",
                         "props": {
                           "label": "form/ColorWell",
@@ -512,7 +502,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 47,
+                        "id": 46,
                         "kind": "DateField",
                         "props": {
                           "label": "form/DateField",
@@ -523,7 +513,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 48,
+                        "id": 47,
                         "kind": "TimeField",
                         "props": {
                           "label": "form/TimeField",
@@ -534,7 +524,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 49,
+                        "id": 48,
                         "kind": "SelectBox",
                         "props": {
                           "label": "form/SelectBox",
@@ -545,7 +535,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 50,
+                        "id": 49,
                         "kind": "ComboBox",
                         "props": {
                           "label": "form/ComboBox",
@@ -556,7 +546,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 51,
+                        "id": 50,
                         "kind": "SearchBar",
                         "props": {
                           "label": "form/SearchBar",
@@ -567,7 +557,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 52,
+                        "id": 51,
                         "kind": "PinInput",
                         "props": {
                           "label": "form/PinInput",
@@ -578,7 +568,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 53,
+                        "id": 52,
                         "kind": "SegmentedInput",
                         "props": {
                           "label": "form/SegmentedInput",
@@ -589,7 +579,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 54,
+                        "id": 53,
                         "kind": "UploadZone",
                         "props": {
                           "label": "form/UploadZone",
@@ -599,7 +589,7 @@
                       }
                     ],
                     "events": {},
-                    "id": 36,
+                    "id": 35,
                     "kind": "Grid",
                     "props": {
                       "columns": 4
@@ -607,7 +597,7 @@
                   }
                 ],
                 "events": {},
-                "id": 34,
+                "id": 33,
                 "kind": "Column",
                 "props": {
                   "gap": 8
@@ -615,7 +605,7 @@
               }
             ],
             "events": {},
-            "id": 33,
+            "id": 32,
             "kind": "Container",
             "props": {
               "border": "#E4E9F2",
@@ -632,7 +622,7 @@
                   {
                     "children": [],
                     "events": {},
-                    "id": 57,
+                    "id": 56,
                     "kind": "Text",
                     "props": {
                       "role": "heading",
@@ -645,7 +635,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 59,
+                        "id": 58,
                         "kind": "Image",
                         "props": {
                           "height": 64,
@@ -657,7 +647,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 60,
+                        "id": 59,
                         "kind": "Icon",
                         "props": {
                           "label": "media/Icon",
@@ -667,7 +657,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 61,
+                        "id": 60,
                         "kind": "Avatar",
                         "props": {
                           "label": "media/Avatar"
@@ -676,7 +666,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 62,
+                        "id": 61,
                         "kind": "Player",
                         "props": {
                           "height": 80,
@@ -688,7 +678,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 63,
+                        "id": 62,
                         "kind": "Map",
                         "props": {
                           "center": "0,0",
@@ -700,7 +690,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 64,
+                        "id": 63,
                         "kind": "WaveformPlayer",
                         "props": {
                           "label": "media/WaveformPlayer",
@@ -711,7 +701,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 65,
+                        "id": 64,
                         "kind": "Spectrogram",
                         "props": {
                           "label": "media/Spectrogram",
@@ -722,7 +712,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 66,
+                        "id": 65,
                         "kind": "Filmstrip",
                         "props": {
                           "label": "media/Filmstrip",
@@ -733,7 +723,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 67,
+                        "id": 66,
                         "kind": "ThumbnailGrid",
                         "props": {
                           "label": "media/ThumbnailGrid",
@@ -744,7 +734,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 68,
+                        "id": 67,
                         "kind": "QrGlyph",
                         "props": {
                           "label": "media/QrGlyph",
@@ -755,7 +745,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 69,
+                        "id": 68,
                         "kind": "BarcodeGlyph",
                         "props": {
                           "label": "media/BarcodeGlyph",
@@ -766,7 +756,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 70,
+                        "id": 69,
                         "kind": "ColorPalette",
                         "props": {
                           "label": "media/ColorPalette",
@@ -777,7 +767,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 71,
+                        "id": 70,
                         "kind": "ZoomLens",
                         "props": {
                           "label": "media/ZoomLens",
@@ -787,7 +777,7 @@
                       }
                     ],
                     "events": {},
-                    "id": 58,
+                    "id": 57,
                     "kind": "Grid",
                     "props": {
                       "columns": 4
@@ -795,7 +785,7 @@
                   }
                 ],
                 "events": {},
-                "id": 56,
+                "id": 55,
                 "kind": "Column",
                 "props": {
                   "gap": 8
@@ -803,7 +793,7 @@
               }
             ],
             "events": {},
-            "id": 55,
+            "id": 54,
             "kind": "Container",
             "props": {
               "border": "#E4E9F2",
@@ -820,7 +810,7 @@
                   {
                     "children": [],
                     "events": {},
-                    "id": 74,
+                    "id": 73,
                     "kind": "Text",
                     "props": {
                       "role": "heading",
@@ -833,7 +823,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 76,
+                        "id": 75,
                         "kind": "Card",
                         "props": {
                           "label": "display/Card"
@@ -842,7 +832,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 77,
+                        "id": 76,
                         "kind": "Divider",
                         "props": {
                           "label": "display/Divider"
@@ -851,7 +841,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 78,
+                        "id": 77,
                         "kind": "Badge",
                         "props": {
                           "label": "display/Badge"
@@ -859,7 +849,7 @@
                       }
                     ],
                     "events": {},
-                    "id": 75,
+                    "id": 74,
                     "kind": "Grid",
                     "props": {
                       "columns": 4
@@ -867,7 +857,7 @@
                   }
                 ],
                 "events": {},
-                "id": 73,
+                "id": 72,
                 "kind": "Column",
                 "props": {
                   "gap": 8
@@ -875,7 +865,7 @@
               }
             ],
             "events": {},
-            "id": 72,
+            "id": 71,
             "kind": "Container",
             "props": {
               "border": "#E4E9F2",
@@ -892,7 +882,7 @@
                   {
                     "children": [],
                     "events": {},
-                    "id": 81,
+                    "id": 80,
                     "kind": "Text",
                     "props": {
                       "role": "heading",
@@ -905,7 +895,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 83,
+                        "id": 82,
                         "kind": "Progress",
                         "props": {
                           "label": "feedback/Progress",
@@ -915,7 +905,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 84,
+                        "id": 83,
                         "kind": "Spinner",
                         "props": {
                           "label": "feedback/Spinner"
@@ -924,7 +914,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 85,
+                        "id": 84,
                         "kind": "LevelMeter",
                         "props": {
                           "label": "feedback/LevelMeter",
@@ -935,7 +925,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 86,
+                        "id": 85,
                         "kind": "SignalBars",
                         "props": {
                           "label": "feedback/SignalBars",
@@ -946,7 +936,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 87,
+                        "id": 86,
                         "kind": "BatteryMeter",
                         "props": {
                           "label": "feedback/BatteryMeter",
@@ -957,7 +947,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 88,
+                        "id": 87,
                         "kind": "Thermometer",
                         "props": {
                           "label": "feedback/Thermometer",
@@ -968,7 +958,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 89,
+                        "id": 88,
                         "kind": "Speedometer",
                         "props": {
                           "label": "feedback/Speedometer",
@@ -979,7 +969,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 90,
+                        "id": 89,
                         "kind": "Compass",
                         "props": {
                           "label": "feedback/Compass",
@@ -990,7 +980,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 91,
+                        "id": 90,
                         "kind": "ProgressRing",
                         "props": {
                           "label": "feedback/ProgressRing",
@@ -1001,7 +991,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 92,
+                        "id": 91,
                         "kind": "ActivityRing",
                         "props": {
                           "label": "feedback/ActivityRing",
@@ -1012,7 +1002,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 93,
+                        "id": 92,
                         "kind": "KpiTile",
                         "props": {
                           "label": "feedback/KpiTile",
@@ -1023,7 +1013,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 94,
+                        "id": 93,
                         "kind": "StatCard",
                         "props": {
                           "label": "feedback/StatCard",
@@ -1033,7 +1023,7 @@
                       }
                     ],
                     "events": {},
-                    "id": 82,
+                    "id": 81,
                     "kind": "Grid",
                     "props": {
                       "columns": 4
@@ -1041,7 +1031,7 @@
                   }
                 ],
                 "events": {},
-                "id": 80,
+                "id": 79,
                 "kind": "Column",
                 "props": {
                   "gap": 8
@@ -1049,7 +1039,7 @@
               }
             ],
             "events": {},
-            "id": 79,
+            "id": 78,
             "kind": "Container",
             "props": {
               "border": "#E4E9F2",
@@ -1066,7 +1056,7 @@
                   {
                     "children": [],
                     "events": {},
-                    "id": 97,
+                    "id": 96,
                     "kind": "Text",
                     "props": {
                       "role": "heading",
@@ -1079,7 +1069,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 99,
+                        "id": 98,
                         "kind": "Dialog",
                         "props": {
                           "label": "overlay/Dialog",
@@ -1089,7 +1079,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 100,
+                        "id": 99,
                         "kind": "Tooltip",
                         "props": {
                           "label": "overlay/Tooltip",
@@ -1098,7 +1088,7 @@
                       }
                     ],
                     "events": {},
-                    "id": 98,
+                    "id": 97,
                     "kind": "Grid",
                     "props": {
                       "columns": 4
@@ -1106,7 +1096,7 @@
                   }
                 ],
                 "events": {},
-                "id": 96,
+                "id": 95,
                 "kind": "Column",
                 "props": {
                   "gap": 8
@@ -1114,7 +1104,7 @@
               }
             ],
             "events": {},
-            "id": 95,
+            "id": 94,
             "kind": "Container",
             "props": {
               "border": "#E4E9F2",
@@ -1131,7 +1121,7 @@
                   {
                     "children": [],
                     "events": {},
-                    "id": 103,
+                    "id": 102,
                     "kind": "Text",
                     "props": {
                       "role": "heading",
@@ -1150,7 +1140,7 @@
                             "value": "A"
                           }
                         },
-                        "id": 105,
+                        "id": 104,
                         "kind": "Tabs",
                         "props": {
                           "bind": "choice",
@@ -1161,7 +1151,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 106,
+                        "id": 105,
                         "kind": "Menu",
                         "props": {
                           "items": "A,B",
@@ -1171,7 +1161,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 107,
+                        "id": 106,
                         "kind": "Breadcrumbs",
                         "props": {
                           "label": "navigation/Breadcrumbs",
@@ -1182,7 +1172,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 108,
+                        "id": 107,
                         "kind": "Pagination",
                         "props": {
                           "label": "navigation/Pagination",
@@ -1193,7 +1183,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 109,
+                        "id": 108,
                         "kind": "Stepper",
                         "props": {
                           "label": "navigation/Stepper",
@@ -1204,7 +1194,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 110,
+                        "id": 109,
                         "kind": "Sidebar",
                         "props": {
                           "label": "navigation/Sidebar",
@@ -1215,7 +1205,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 111,
+                        "id": 110,
                         "kind": "TabStrip",
                         "props": {
                           "label": "navigation/TabStrip",
@@ -1226,7 +1216,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 112,
+                        "id": 111,
                         "kind": "NavRail",
                         "props": {
                           "label": "navigation/NavRail",
@@ -1237,7 +1227,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 113,
+                        "id": 112,
                         "kind": "AnchorBar",
                         "props": {
                           "label": "navigation/AnchorBar",
@@ -1248,7 +1238,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 114,
+                        "id": 113,
                         "kind": "ProgressSteps",
                         "props": {
                           "label": "navigation/ProgressSteps",
@@ -1259,7 +1249,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 115,
+                        "id": 114,
                         "kind": "MenuBar",
                         "props": {
                           "label": "navigation/MenuBar",
@@ -1270,7 +1260,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 116,
+                        "id": 115,
                         "kind": "TocTree",
                         "props": {
                           "label": "navigation/TocTree",
@@ -1280,7 +1270,7 @@
                       }
                     ],
                     "events": {},
-                    "id": 104,
+                    "id": 103,
                     "kind": "Grid",
                     "props": {
                       "columns": 4
@@ -1288,7 +1278,7 @@
                   }
                 ],
                 "events": {},
-                "id": 102,
+                "id": 101,
                 "kind": "Column",
                 "props": {
                   "gap": 8
@@ -1296,7 +1286,7 @@
               }
             ],
             "events": {},
-            "id": 101,
+            "id": 100,
             "kind": "Container",
             "props": {
               "border": "#E4E9F2",
@@ -1313,7 +1303,7 @@
                   {
                     "children": [],
                     "events": {},
-                    "id": 119,
+                    "id": 118,
                     "kind": "Text",
                     "props": {
                       "role": "heading",
@@ -1326,7 +1316,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 121,
+                        "id": 120,
                         "kind": "Table",
                         "props": {
                           "columns": 3,
@@ -1337,7 +1327,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 122,
+                        "id": 121,
                         "kind": "Chart",
                         "props": {
                           "height": 80,
@@ -1349,7 +1339,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 123,
+                        "id": 122,
                         "kind": "Calendar",
                         "props": {
                           "date": "2026-01-01",
@@ -1360,7 +1350,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 124,
+                        "id": 123,
                         "kind": "Gauge",
                         "props": {
                           "label": "data/Gauge",
@@ -1371,7 +1361,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 125,
+                        "id": 124,
                         "kind": "Sparkline",
                         "props": {
                           "label": "data/Sparkline",
@@ -1382,7 +1372,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 126,
+                        "id": 125,
                         "kind": "AreaChart",
                         "props": {
                           "label": "data/AreaChart",
@@ -1393,7 +1383,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 127,
+                        "id": 126,
                         "kind": "PieChart",
                         "props": {
                           "label": "data/PieChart",
@@ -1404,7 +1394,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 128,
+                        "id": 127,
                         "kind": "DonutChart",
                         "props": {
                           "label": "data/DonutChart",
@@ -1415,7 +1405,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 129,
+                        "id": 128,
                         "kind": "ScatterPlot",
                         "props": {
                           "label": "data/ScatterPlot",
@@ -1426,7 +1416,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 130,
+                        "id": 129,
                         "kind": "StackedBar",
                         "props": {
                           "label": "data/StackedBar",
@@ -1437,7 +1427,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 131,
+                        "id": 130,
                         "kind": "Histogram",
                         "props": {
                           "label": "data/Histogram",
@@ -1448,7 +1438,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 132,
+                        "id": 131,
                         "kind": "Heatmap",
                         "props": {
                           "label": "data/Heatmap",
@@ -1459,7 +1449,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 133,
+                        "id": 132,
                         "kind": "Treemap",
                         "props": {
                           "label": "data/Treemap",
@@ -1470,7 +1460,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 134,
+                        "id": 133,
                         "kind": "Waterfall",
                         "props": {
                           "label": "data/Waterfall",
@@ -1481,7 +1471,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 135,
+                        "id": 134,
                         "kind": "BulletChart",
                         "props": {
                           "label": "data/BulletChart",
@@ -1492,7 +1482,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 136,
+                        "id": 135,
                         "kind": "FunnelChart",
                         "props": {
                           "label": "data/FunnelChart",
@@ -1503,7 +1493,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 137,
+                        "id": 136,
                         "kind": "Waveform",
                         "props": {
                           "label": "data/Waveform",
@@ -1514,7 +1504,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 138,
+                        "id": 137,
                         "kind": "Equalizer",
                         "props": {
                           "label": "data/Equalizer",
@@ -1525,7 +1515,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 139,
+                        "id": 138,
                         "kind": "Candlestick",
                         "props": {
                           "label": "data/Candlestick",
@@ -1536,7 +1526,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 140,
+                        "id": 139,
                         "kind": "BubbleChart",
                         "props": {
                           "label": "data/BubbleChart",
@@ -1547,7 +1537,7 @@
                       {
                         "children": [],
                         "events": {},
-                        "id": 141,
+                        "id": 140,
                         "kind": "PolarChart",
                         "props": {
                           "label": "data/PolarChart",
@@ -1557,7 +1547,7 @@
                       }
                     ],
                     "events": {},
-                    "id": 120,
+                    "id": 119,
                     "kind": "Grid",
                     "props": {
                       "columns": 4
@@ -1565,7 +1555,7 @@
                   }
                 ],
                 "events": {},
-                "id": 118,
+                "id": 117,
                 "kind": "Column",
                 "props": {
                   "gap": 8
@@ -1573,7 +1563,7 @@
               }
             ],
             "events": {},
-            "id": 117,
+            "id": 116,
             "kind": "Container",
             "props": {
               "border": "#E4E9F2",

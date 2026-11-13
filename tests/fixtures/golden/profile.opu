@@ -5,28 +5,30 @@ app Profile {
 
   theme { mode: light, accent: "#097FEB", radius: 14 }
 
-  Column(p: 24, gap: 20) {
-    Container(p: 26, rounded: 18, shadow: 4, gradient: "#097FEB,#043B70", animate: ease) {
-      Text("OPUROM Profile", size: 28, color: "#FFFFFF")
-      Text("Bound input, set and toggle state", size: 13, color: "#D6E8FF")
-    }
-    Container(p: 24, rounded: 16, shadow: 3, bg: "#FFFFFF", border: "#E4E9F2") {
-      Text("Greeting", size: 13, color: "#667085")
-      Text("Hello, {name}", size: 26, color: "#101828")
-      Input(placeholder: "Your name", bind: name)
-    }
-    Row(gap: 14) {
-      Button("Toggle theme", p: 14, rounded: 14, shadow: 2, bg: "#097FEB", fontScale: 1.1, animate: spring) {
-        dark.toggle()
+  ScrollView(p: 16) {
+    Column(gap: 14) {
+      Container(p: 20, rounded: 18, shadow: 4, gradient: "#097FEB,#043B70", animate: ease) {
+        Text("OPUROM Profile", size: 22, color: "#FFFFFF")
+        Text("Bound input, set and toggle state", size: 12, color: "#D6E8FF")
       }
-      Button("Reset", p: 14, rounded: 14, shadow: 2, bg: "#04509B", fontScale: 1.1, animate: spring) {
-        name = "world"
+      Container(p: 18, rounded: 16, shadow: 3, bg: "#FFFFFF", border: "#E4E9F2") {
+        Column(gap: 8, bg: "#FFFFFF") {
+          Text("Greeting", size: 12, color: "#667085")
+          Text("Hello, {name}", size: 24, color: "#101828")
+          Input(placeholder: "Your name", bind: name)
+        }
       }
-    }
-    if (dark) {
-      Container(p: 22, rounded: 16, shadow: 3, gradient: "#101828,#043B70", animate: ease) {
-        Column(gap: 6) {
-          Text("Dark surface", size: 14, color: "#D6E8FF")
+      Row(gap: 12) {
+        Button("Toggle theme", p: 12, rounded: 12, shadow: 2, bg: "#097FEB", fontScale: 1.1, animate: spring) {
+          dark.toggle()
+        }
+        Button("Reset", p: 12, rounded: 12, shadow: 2, bg: "#04509B", fontScale: 1.1, animate: spring) {
+          name = "world"
+        }
+      }
+      if (dark) {
+        Container(p: 18, rounded: 16, shadow: 3, gradient: "#101828,#043B70", animate: ease) {
+          Text("Dark surface", size: 13, color: "#D6E8FF")
           Text("Hello, {name}", size: 22, color: "#FFFFFF")
         }
       }
