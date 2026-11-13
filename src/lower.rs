@@ -4,6 +4,7 @@ use serde_json::{json, Map as JsonMap, Value as Json};
 
 use crate::catalog;
 use crate::diag::{DResult, Diagnostic};
+use crate::icons::{icon_help, is_icon};
 use crate::lexer::lex;
 use crate::modules;
 use crate::parser::{
@@ -829,7 +830,21 @@ fn check_color(ctx: &Ctx, pos: Pos, key: &str, value: &str) -> DResult<()> {
     ))
 }
 
-fn prop_value(ctx: &Ctx, _kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> DResult<Json> {
+fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> DResult<Json> {
+    if key == "name" && kind == "Icon" {
+        // The name must be a built-in icon. A literal is checked now; a name
+        // that still interpolates state is resolved at view time and cannot be
+        // checked statically, so it is passed through.
+        if let AstValue::Lit(Lit::Str(s)) = &arg.value {
+            if !s.contains('{') && !is_icon(s) {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!("unknown icon name '{s}' on Icon"),
+                    icon_help(),
+                ));
+            }
+        }
+    }
     if key == "bind" {
         return match &arg.value {
             AstValue::Ident(name) => Ok(json!(name)),

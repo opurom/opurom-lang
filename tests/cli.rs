@@ -1034,6 +1034,54 @@ fn all_core_primitives_stay_unchanged() {
 }
 
 #[test]
+fn icon_names_are_validated_at_compile_time() {
+    let dir = out_dir("icon");
+    let good = dir.join("good.opu");
+    fs::write(
+        &good,
+        "app Icons {\n  Column {\n    Icon(name: \"star\")\n    SVGIcon(name: \"search\")\n\
+         MaterialIcon(name: \"home\")\n  }\n}\n",
+    )
+    .expect("write icon fixture");
+    let ir = compile_ok(&good);
+    let icons: Vec<&str> = nodes_of(&ir)
+        .into_iter()
+        .filter(|n| n["kind"] == "Icon")
+        .filter_map(|n| n["props"]["name"].as_str())
+        .collect();
+    assert_eq!(
+        icons,
+        vec!["star", "search", "home"],
+        "canonical names must lower"
+    );
+
+    let bad = dir.join("bad.opu");
+    fs::write(&bad, "app Bad {\n  Column { Icon(name: \"nope\") }\n}\n")
+        .expect("write bad icon fixture");
+    let out = dir.join("bad.opuir.json");
+    let r = compile(&bad, &out);
+    assert!(!r.status.success(), "an unknown icon must be rejected");
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert_diag(&stderr, &bad);
+    assert!(
+        stderr.contains("unknown icon name 'nope'"),
+        "diagnostic must name the bad icon: {stderr}"
+    );
+    assert!(
+        stderr.contains("write a built-in icon name such as 'home'"),
+        "diagnostic must suggest a valid name: {stderr}"
+    );
+    assert!(
+        stderr.contains("the set has 31 names"),
+        "diagnostic must state the canonical set size: {stderr}"
+    );
+    assert!(
+        stderr.contains("Icon"),
+        "diagnostic must name the node kind: {stderr}"
+    );
+}
+
+#[test]
 fn components_lists_216_rows() {
     let r = bin().arg("components").output().expect("run components");
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));

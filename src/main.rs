@@ -1,6 +1,7 @@
 mod catalog;
 mod diag;
 mod emit;
+mod icons;
 mod lexer;
 mod lower;
 mod modules;
