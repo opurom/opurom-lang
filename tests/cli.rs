@@ -476,46 +476,36 @@ fn web_and_mini_emitters_produce_valid_js() {
     let r = compile(&spec("counter.opu"), &ir);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
 
-    let cases: &[(&str, &str, &[&str], &str)] = &[
-        ("web", "app.js", &["index.html", "ir.json"], ""),
+    let cases: &[(&str, &str, &[&str])] = &[
+        ("web", "app.js", &["index.html", "ir.json"]),
         (
             "wechat",
             "index.js",
             &["app.json", "index.wxml", "index.wxss"],
-            "wx:for",
         ),
         (
             "alipay",
             "index.js",
             &["app.json", "index.axml", "index.acss"],
-            "a:for",
         ),
-        (
-            "qq",
-            "index.js",
-            &["app.json", "index.qml", "index.qss"],
-            "qq:for",
-        ),
+        ("qq", "index.js", &["app.json", "index.qml", "index.qss"]),
         (
             "douyin",
             "index.js",
             &["app.json", "index.ttml", "index.ttss"],
-            "tt:for",
         ),
         (
             "baidu",
             "index.js",
             &["app.json", "index.swan", "index.css"],
-            "s-for",
         ),
         (
             "kuaishou",
             "index.js",
             &["app.json", "index.ksml", "index.css"],
-            "ks:for",
         ),
     ];
-    for &(target, js, extras, directive) in cases {
+    for &(target, js, extras) in cases {
         let dir = out_dir(&format!("emit-{target}"));
         let r = emit(&ir, target, &dir);
         assert!(
@@ -562,11 +552,17 @@ fn web_and_mini_emitters_produce_valid_js() {
             assert!(index_js.contains("Page("), "{target}: missing Page() entry");
             let markup_name = extras[1];
             let markup = fs::read_to_string(dir.join(markup_name)).unwrap();
-            assert!(
-                markup.contains(directive),
-                "{target}: missing loop directive {directive}"
-            );
             assert!(markup.contains("{{"), "{target}: missing binding syntax");
+            // The generated page must show the application only. Internal state
+            // key names are compiler bookkeeping and never reach the screen.
+            assert!(
+                !markup.contains("__stateKeys"),
+                "{target}: internal state keys leak into the rendered page"
+            );
+            assert!(
+                !index_js.contains("__stateKeys"),
+                "{target}: internal state keys leak into the page data"
+            );
         }
     }
 }

@@ -62,9 +62,7 @@ struct Platform {
     key: &'static str,
     markup_ext: &'static str,
     style_ext: &'static str,
-    for_attr: &'static str,
     cond_attr: &'static str,
-    key_attr: &'static str,
     tap_attr: &'static str,
     input_attr: &'static str,
     state_set: &'static str,
@@ -80,8 +78,6 @@ const PLATFORMS: &[Platform] = &[
         cond_attr: "wx:if",
         markup_ext: "wxml",
         style_ext: "wxss",
-        for_attr: "wx:for",
-        key_attr: "wx:key",
         tap_attr: "bindtap",
         input_attr: "bindinput",
         state_set: "setData",
@@ -95,8 +91,6 @@ const PLATFORMS: &[Platform] = &[
         cond_attr: "a:if",
         markup_ext: "axml",
         style_ext: "acss",
-        for_attr: "a:for",
-        key_attr: "a:key",
         tap_attr: "onTap",
         input_attr: "onInput",
         state_set: "setData",
@@ -110,8 +104,6 @@ const PLATFORMS: &[Platform] = &[
         cond_attr: "qq:if",
         markup_ext: "qml",
         style_ext: "qss",
-        for_attr: "qq:for",
-        key_attr: "qq:key",
         tap_attr: "bindtap",
         input_attr: "bindinput",
         state_set: "setData",
@@ -125,8 +117,6 @@ const PLATFORMS: &[Platform] = &[
         cond_attr: "tt:if",
         markup_ext: "ttml",
         style_ext: "ttss",
-        for_attr: "tt:for",
-        key_attr: "tt:key",
         tap_attr: "bindtap",
         input_attr: "bindinput",
         state_set: "setData",
@@ -140,8 +130,6 @@ const PLATFORMS: &[Platform] = &[
         cond_attr: "s-if",
         markup_ext: "swan",
         style_ext: "css",
-        for_attr: "s-for",
-        key_attr: "s-key",
         tap_attr: "bindtap",
         input_attr: "bindinput",
         state_set: "setData",
@@ -155,8 +143,6 @@ const PLATFORMS: &[Platform] = &[
         cond_attr: "ks:if",
         markup_ext: "ksml",
         style_ext: "css",
-        for_attr: "ks:for",
-        key_attr: "ks:key",
         tap_attr: "bindtap",
         input_attr: "bindinput",
         state_set: "setData",
@@ -2048,18 +2034,12 @@ fn emit_mini(
         p.key
     ));
     markup_node(tree, p, 0, &mut markup, ir_path)?;
-    let keys = bind_expr(p, "__stateKeys");
-    let item = bind_expr(p, "item");
-    markup.push_str(&format!(
-        "<view class=\"state\" {}=\"{}\" {}=\"*this\"><text>{}</text></view>\n",
-        p.for_attr, keys, p.key_attr, item
-    ));
     write(out, &format!("index.{}", p.markup_ext), &markup, ir_path)?;
 
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
     let mut style = String::from(
-        ".col { display: flex; flex-direction: column; }\n.row { display: flex; flex-direction: row; }\n.state { margin-top: 12px; }\n",
+        ".col { display: flex; flex-direction: column; }\n.row { display: flex; flex-direction: row; }\n",
     );
     for n in &nodes {
         let s = style_of(&n.props, n.kind == "Container");
@@ -2073,8 +2053,6 @@ fn emit_mini(
     for st in states {
         data.insert(st.name.clone(), st.init.clone());
     }
-    let keys_arr: Vec<Json> = states.iter().map(|s| json!(s.name)).collect();
-    data.insert("__stateKeys".to_string(), Json::Array(keys_arr));
     let data_js = js_lit(&Json::Object(data));
     let mut methods = mini_computed(p, states, computed, ir_path)?;
     let computed_call = if computed.is_empty() {
