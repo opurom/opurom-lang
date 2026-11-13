@@ -1,0 +1,8 @@
+app IntBoundary {
+  state max = 9223372036854775807
+  state min = -9223372036854775807
+  computed atMax = 9223372036854775806 + 1
+  computed atMin = -9223372036854775807 - 1
+  computed maxTimesOne = 9223372036854775807 * 1
+  Text("{atMax} {atMin} {maxTimesOne}")
+}

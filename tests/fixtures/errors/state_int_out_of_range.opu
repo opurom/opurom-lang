@@ -1,0 +1,4 @@
+app Bad {
+  state big = 9223372036854775808
+  Text("x")
+}

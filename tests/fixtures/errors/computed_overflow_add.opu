@@ -1,0 +1,4 @@
+app Bad {
+  computed big = 9223372036854775807 + 1
+  Text("{big}")
+}

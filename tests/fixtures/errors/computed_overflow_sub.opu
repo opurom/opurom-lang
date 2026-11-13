@@ -1,0 +1,4 @@
+app Bad {
+  computed low = -9223372036854775807 - 2
+  Text("{low}")
+}

@@ -252,6 +252,29 @@ pub fn infer_states(
     Ok((types, inits))
 }
 
+/// An operand of the same sign that keeps `lhs op rhs` inside i64, for the hint.
+fn safe_operand(op: &str, lhs: i64, rhs: i64) -> i64 {
+    let a = lhs as i128;
+    let safe = match op {
+        "+" if rhs > 0 => i64::MAX as i128 - a,
+        "+" => i64::MIN as i128 - a,
+        "-" if rhs > 0 => a - i64::MIN as i128,
+        "-" => a - i64::MAX as i128,
+        _ => {
+            if a == 0 {
+                return 0;
+            }
+            let bound = if (lhs > 0) == (rhs > 0) {
+                i64::MAX
+            } else {
+                i64::MIN
+            };
+            bound as i128 / a
+        }
+    };
+    safe.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+}
+
 /// Infer the type and the compile-time value of a computed expression.
 pub fn infer_computed(
     expr: &Expr,
@@ -316,11 +339,22 @@ pub fn infer_computed(
             let a = lhs_value.as_i64().unwrap_or(0);
             let b = rhs_value.as_i64().unwrap_or(0);
             let value = match &expr.kind {
-                ExprKind::Add(..) => a.saturating_add(b),
-                ExprKind::Sub(..) => a.saturating_sub(b),
-                ExprKind::Mul(..) => a.saturating_mul(b),
+                ExprKind::Add(..) => a.checked_add(b),
+                ExprKind::Sub(..) => a.checked_sub(b),
+                ExprKind::Mul(..) => a.checked_mul(b),
                 _ => unreachable!("binary expression variant"),
             };
+            let value = value.ok_or_else(|| {
+                Diagnostic::arithmetic_overflow(
+                    path,
+                    expr.pos.line,
+                    expr.pos.col,
+                    op,
+                    a,
+                    b,
+                    safe_operand(op, a, b),
+                )
+            })?;
             Ok((Ty::Int, json!(value)))
         }
     }

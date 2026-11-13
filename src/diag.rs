@@ -56,6 +56,30 @@ impl Diagnostic {
         )
     }
 
+    /// An arithmetic overflow names the operator, both operands and a concrete
+    /// expression that still fits, instead of silently saturating the result.
+    pub fn arithmetic_overflow(
+        path: &str,
+        line: usize,
+        col: usize,
+        op: &str,
+        lhs: i64,
+        rhs: i64,
+        safe_rhs: i64,
+    ) -> Self {
+        Self::new(
+            path,
+            line,
+            col,
+            format!("computed expression '{op}' overflows int: {lhs} {op} {rhs}"),
+            format!(
+                "use smaller operands, e.g. '{lhs} {op} {safe_rhs}'; int results must fit between {} and {}",
+                i64::MIN,
+                i64::MAX
+            ),
+        )
+    }
+
     pub fn render(&self) -> String {
         format!(
             "{}:{}:{}: error: {}\n  help: {}\n",
