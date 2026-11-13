@@ -1510,7 +1510,7 @@ fn every_target_emits_effect_code() {
     let readme = fs::read_to_string(wasm.join("README.md")).unwrap();
     assert!(
         readme.contains("host callbacks"),
-        "wasm README missing honest status"
+        "wasm README missing the host-callback description"
     );
     node_check(&wasm.join("host.js"));
 }

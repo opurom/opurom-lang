@@ -338,7 +338,7 @@ fn wasm_effects_use_host_callbacks_without_wasm_imports() {
     let readme = fs::read_to_string(out.join("README.md")).unwrap();
     assert!(
         readme.contains("host callbacks"),
-        "README missing honest status"
+        "README missing the host-callback description"
     );
     let check = Command::new("node")
         .arg("--check")
