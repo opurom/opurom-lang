@@ -663,6 +663,71 @@ fn canvas_and_mini_emitters_draw_real_icon_glyphs() {
 }
 
 #[test]
+fn canvas_and_mini_emitters_apply_effects_and_animation() {
+    // The canvas `web` target and the mini targets must map the per-node
+    // visual-effect props and the `animate` entry curve, matching the native
+    // renderer and the web-dom emitter.
+    let dir = out_dir("emit-effects");
+    let ir = dir.join("effects.opuir.json");
+    let src = dir.join("effects.opu");
+    fs::write(
+        &src,
+        "app EffectsEmit {\n  Column(gap: 8) {\n    Container(gradient: \"#111111,#eeeeee\", shadow: 3, glass: true, border: \"#000000\", animate: spring)\n    Button(\"Go\", animate: ease) { }\n  }\n}\n",
+    )
+    .unwrap();
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    // Canvas web: a vertical two-stop gradient, a soft shadow, and the entry
+    // animation on the canvas element.
+    let web = out_dir("emit-effects-web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let app_js = fs::read_to_string(web.join("app.js")).unwrap();
+    assert!(
+        app_js.contains("createLinearGradient"),
+        "canvas web must draw a gradient"
+    );
+    assert!(
+        app_js.contains("shadowColor"),
+        "canvas web must draw a shadow"
+    );
+    let web_html = fs::read_to_string(web.join("index.html")).unwrap();
+    assert!(
+        web_html.contains("opurom-entry"),
+        "canvas web must carry the entry keyframes"
+    );
+    assert!(
+        web_html.contains("opu-anim"),
+        "canvas web must animate on load"
+    );
+
+    // Mini target: the same effects as CSS plus the entry animation.
+    let wx = out_dir("emit-effects-wechat");
+    let r = emit(&ir, "wechat", &wx);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let wxss = fs::read_to_string(wx.join("pages/index/index.wxss")).unwrap();
+    assert!(
+        wxss.contains("linear-gradient"),
+        "mini must map gradient to CSS"
+    );
+    assert!(wxss.contains("box-shadow"), "mini must map shadow to CSS");
+    assert!(
+        wxss.contains("backdrop-filter"),
+        "mini must map glass to CSS"
+    );
+    assert!(
+        wxss.contains("opurom-entry"),
+        "mini must carry the entry keyframes"
+    );
+    let wxml = fs::read_to_string(wx.join("pages/index/index.wxml")).unwrap();
+    assert!(
+        wxml.contains("anim-entry"),
+        "mini must animate the annotated nodes"
+    );
+}
+
+#[test]
 fn web_layout_places_children_of_every_container_kind() {
     // Self-contained: CI clones only the sibling repos a check needs.
     let src = out_dir("containers").join("containers.opu");
