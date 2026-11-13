@@ -3699,3 +3699,153 @@ fn particles_prop_changes_the_rendered_frame() {
         "particles must change the rendered pixels"
     );
 }
+
+/// Every canonical icon name, mirroring `crate::icons::ICON_NAMES`.
+const ALL_ICONS: &[&str] = &[
+    "home",
+    "settings",
+    "star",
+    "search",
+    "plus",
+    "minus",
+    "check",
+    "close",
+    "arrow_back",
+    "arrow_forward",
+    "refresh",
+    "lock",
+    "user",
+    "bell",
+    "heart",
+    "info",
+    "warning",
+    "chevron_right",
+    "chevron_down",
+    "download",
+    "upload",
+    "play",
+    "pause",
+    "edit",
+    "delete",
+    "eye",
+    "calendar",
+    "location",
+    "folder",
+    "mail",
+    "chat",
+];
+
+#[test]
+fn canvas_web_icon_draws_the_canonical_path() {
+    let dir = out_dir("icon-canvas");
+    let src = dir.join("icon.opu");
+    fs::write(
+        &src,
+        "app IconCanvas {\n  Column {\n    Icon(name: \"star\")\n  }\n}\n",
+    )
+    .expect("write icon canvas fixture");
+    let ir = dir.join("icon.opuir.json");
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let web = dir.join("web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let js = fs::read_to_string(web.join("app.js")).expect("read web app.js");
+    assert!(
+        js.contains("ctx.stroke(new Path2D("),
+        "canvas icon must stroke the canonical path: {js}"
+    );
+    assert!(
+        js.contains("new Path2D(\"M12 3 L14.9 9.1"),
+        "the star path must be embedded in the canvas output"
+    );
+    assert!(
+        !js.contains("fillText(\"star\""),
+        "the icon name must not be drawn as text: {js}"
+    );
+}
+
+#[test]
+fn mini_targets_emit_real_icon_elements() {
+    let dir = out_dir("icon-mini");
+    let src = dir.join("icon.opu");
+    fs::write(
+        &src,
+        "app IconMini {\n  Column {\n    Icon(name: \"star\")\n  }\n}\n",
+    )
+    .expect("write icon mini fixture");
+    let ir = dir.join("icon.opuir.json");
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let cases: &[(&str, &str)] = &[
+        ("wechat", "pages/index/index.wxml"),
+        ("alipay", "pages/index/index.axml"),
+        ("qq", "pages/index/index.qml"),
+        ("douyin", "pages/index/index.ttml"),
+        ("baidu", "pages/index/index.swan"),
+        ("kuaishou", "pages/index/index.ksml"),
+    ];
+    for &(target, markup) in cases {
+        let out = dir.join(target);
+        let r = emit(&ir, target, &out);
+        assert!(
+            r.status.success(),
+            "{target} emit failed: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let text = fs::read_to_string(out.join(markup)).expect("read mini markup");
+        assert!(
+            text.contains("<image"),
+            "{target}: icon must emit an image element"
+        );
+        assert!(
+            text.contains("data:image/svg+xml;base64,"),
+            "{target}: icon must embed an SVG data URI"
+        );
+        assert!(
+            !text.contains("<text>star</text>"),
+            "{target}: the icon name must not render as text"
+        );
+    }
+}
+
+#[test]
+fn icon_path_table_covers_every_canonical_name() {
+    let dir = out_dir("icon-all");
+    let body = ALL_ICONS
+        .iter()
+        .map(|n| format!("    Icon(name: \"{n}\")"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(
+        &dir.join("all.opu"),
+        format!("app AllIcons {{\n  Column(gap: 4) {{\n{body}\n  }}\n}}\n"),
+    )
+    .expect("write all-icons fixture");
+    let ir = dir.join("all.opuir.json");
+    let r = compile(&dir.join("all.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let web = dir.join("web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let js = fs::read_to_string(web.join("app.js")).expect("read web app.js");
+    let drawn = js.matches("ctx.stroke(new Path2D(").count();
+    assert_eq!(
+        drawn,
+        ALL_ICONS.len(),
+        "every canonical icon must draw a path"
+    );
+
+    let wechat = dir.join("wechat");
+    let r = emit(&ir, "wechat", &wechat);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let markup =
+        fs::read_to_string(wechat.join("pages/index/index.wxml")).expect("read wechat wxml");
+    let images = markup.matches("<image").count();
+    assert_eq!(
+        images,
+        ALL_ICONS.len(),
+        "every canonical icon must emit an image"
+    );
+}
