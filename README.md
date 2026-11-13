@@ -2,7 +2,7 @@
 
 The language/compiler workstream of Opurom. An independent Rust 1.99.1 crate (std +
 `serde_json` only) with one binary, `opuromc`. The frontend lowers `.opu` source to
-[IR 0.1.0](../opurom-examples/golden/the IR format); the backend lowers IR into target-native source.
+the IR format; the backend lowers IR into target-native source.
 **No target ships a runtime IR interpreter**: every emitter writes straight-line code from the
 tree. Every layer is additive: a program without the async, computed or component features
 produces byte-identical IR, and `counter.opu`, `profile.opu` and `todo.opu` keep
@@ -340,7 +340,7 @@ app TodoApp {
 ```
 
 `model`/`api` lower to the additive top-level IR arrays `models` and `api` (see
-[the framework implementation](../opurom-examples/golden/the framework implementation) framework rules). The arrays appear only when the source
+framework rules). The arrays appear only when the source
 declares them. `ir` stays `"0.1.0"`.
 
 Diagnostics go to stderr as `path:line:col: error: message` plus a `  help: ...` line; exit code
@@ -361,8 +361,8 @@ opuromc --version                                         # 0.1.0
 The compiler emits node ids pre-order from 0, keeps numeric props as JSON numbers, puts
 `events: {}` and `children: []` on every node, and adds the default theme
 `{"mode":"system","accent":"#097FEB","radius":12}`. Compiling
-[`counter.opu`](../opurom-examples/golden/counter.opu) is deep-equal to
-[`counter.opuir.json`](../opurom-examples/golden/counter.opuir.json); `counter.opu`, `profile.opu` and
+[`counter.opu`](counter.opu) is deep-equal to
+[`counter.opuir.json`](counter.opuir.json); `counter.opu`, `profile.opu` and
 `todo.opu` also have byte-level golden IR fixtures in `tests/fixtures/golden/`.
 
 ## Emitters
@@ -377,7 +377,7 @@ The compiler emits node ids pre-order from 0, keeps numeric props as JSON number
 | `douyin` | `app.json`, `app.js`, `pages/index/index.ttml`, `pages/index/index.ttss`, `pages/index/index.js` | `tt:for`, `bindtap`/`bindinput`, `setData` |
 | `baidu` | `app.json`, `app.js`, `pages/index/index.swan`, `pages/index/index.css`, `pages/index/index.js` | `s-for`, `bindtap`/`bindinput`, `setData` |
 | `kuaishou` | `app.json`, `app.js`, `pages/index/index.ksml`, `pages/index/index.css`, `pages/index/index.js` | `ks:for`, `bindtap`/`bindinput`, `setData` |
-| `wasm` | `Cargo.toml`, `src/lib.rs`, `index.html`, `host.js`, `README.md` | std-only `cdylib` for `wasm32-unknown-unknown` with the C ABI of [the wasm ABI](../opurom-examples/golden/the wasm ABI): `opu_version`, `opu_state_len`, `opu_state`, `opu_tap`, `opu_input` |
+| `wasm` | `Cargo.toml`, `src/lib.rs`, `index.html`, `host.js`, `README.md` | std-only `cdylib` for `wasm32-unknown-unknown` with the C ABI of [the wasm ABI](the wasm ABI): `opu_version`, `opu_state_len`, `opu_state`, `opu_tap`, `opu_input` |
 
 The six mini-program targets share one lowering pass and one small per-platform table
 (extensions, loop/key directives, tap/input directives, state-set API, request API, window title
@@ -407,7 +407,7 @@ keeps only compiled initial values; that is the documented consumer-side fallbac
 
 ### Component catalog
 
-[components.json](../opurom-examples/golden/components.json) is vendored **byte-for-byte** as
+[components.json](components.json) is vendored **byte-for-byte** as
 [src/catalog.json](src/catalog.json) and embedded with `include_str!`, so the crate builds
 standalone. Its 216 tuples are `[name, primitive, category, defaultProps]`, mapping onto
 100 distinct primitive kinds (32 core kinds + 68 extended kinds). A source `Kind` that is a
@@ -425,7 +425,7 @@ the renderer scatters.
 
 ### Component catalog expansion (the component catalog rules framework rules)
 
-The vendored [components.json](../opurom-examples/golden/components.json) now has **216
+The vendored [components.json](components.json) now has **216
 named components mapped onto 100 DISTINCT primitive kinds**: the 32 core kinds
 plus 68 new ones. Each new primitive has its own deterministic software drawing,
 a documented prop schema and a default a11y role in `opurom-render`; the catalog
