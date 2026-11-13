@@ -1,0 +1,6 @@
+app ThemeScaleBad {
+  theme { fontScale: "big" }
+  Column {
+    Text("x")
+  }
+}

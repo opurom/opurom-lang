@@ -174,6 +174,7 @@ pub struct ThemeDecl {
     pub mode: Option<String>,
     pub accent: Option<String>,
     pub radius: Option<i64>,
+    pub font_scale: Option<f64>,
     pub pos: Pos,
 }
 
@@ -1120,6 +1121,7 @@ impl<'a> Parser<'a> {
             mode: None,
             accent: None,
             radius: None,
+            font_scale: None,
             pos: start,
         };
         loop {
@@ -1193,13 +1195,30 @@ impl<'a> Parser<'a> {
                     };
                     decl.radius = Some(radius);
                 }
+                "fontScale" => {
+                    let (v, vp) = self.value()?;
+                    let fs = match v {
+                        Value::Lit(Lit::Int(n)) => n as f64,
+                        Value::Lit(Lit::Float(n)) => n,
+                        _ => {
+                            return Err(Diagnostic::new(
+                                self.path,
+                                vp.line,
+                                vp.col,
+                                "'fontScale' expects a number",
+                                "write 'fontScale: 1.2'",
+                            ))
+                        }
+                    };
+                    decl.font_scale = Some(fs);
+                }
                 other => {
                     return Err(Diagnostic::new(
                         self.path,
                         kp.line,
                         kp.col,
                         format!("unknown theme key '{other}'"),
-                        "theme accepts: mode, accent, radius",
+                        "theme accepts: mode, accent, radius, fontScale",
                     ));
                 }
             }
