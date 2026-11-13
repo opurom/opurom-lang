@@ -878,14 +878,16 @@ fn native_emitter_renders_and_writes_a_frame() {
         "native emit failed: {}",
         String::from_utf8_lossy(&r.stderr)
     );
-    // The generated app renders the embedded IR and writes the frame.
+    // The generated app renders the embedded IR and writes the frame. It must
+    // depend only on opurom-render so an offline build resolves without a
+    // registry (opurom-platform pulls the `png` crate).
     let native_rs = fs::read_to_string(dir.join("src/main.rs")).unwrap();
-    for marker in [
-        "opurom_render::Renderer",
-        "render_frame()",
-        "opurom_platform::frame_to_png",
-        "write_ppm",
-    ] {
+    let native_toml = fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+    assert!(
+        !native_toml.contains("opurom-platform"),
+        "native manifest must not depend on opurom-platform"
+    );
+    for marker in ["opurom_render::Renderer", "render_frame()", "write_ppm"] {
         assert!(native_rs.contains(marker), "native source missing {marker}");
     }
 

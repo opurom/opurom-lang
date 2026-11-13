@@ -369,7 +369,7 @@ The compiler emits node ids pre-order from 0, keeps numeric props as JSON number
 
 | Target | Artifacts | Lowering notes |
 | --- | --- | --- |
-| `native` | `Cargo.toml`, `src/main.rs` | std-only `State` struct, `apply(event_node_id)` with a generated `match` over tap/input actions, stdin loop `tap <id>` / `input <id> <text>` / `state` / `quit` printing state and patches |
+| `native` | `Cargo.toml`, `src/main.rs` | a `State` struct, `apply(event_node_id)` with a generated `match` over tap/input actions, stdin loop `tap <id>` / `input <id> <text>` / `state` / `quit` printing state and patches, plus a one-frame PPM render of the embedded IR through `opurom-render` at startup |
 | `web` | `index.html`, `app.js`, `ir.json` | generated `state` object, event handlers, Canvas 2D draw calls with computed layout, `{}` interpolation resolved to `String(state.x)` (no mustache, no IR traversal) |
 | `wechat` | `app.json`, `app.js`, `pages/index/index.wxml`, `pages/index/index.wxss`, `pages/index/index.js` | `wx:for`, `bindtap`/`bindinput`, `setData` |
 | `alipay` | `app.json`, `app.js`, `pages/index/index.axml`, `pages/index/index.acss`, `pages/index/index.js` | `a:for`, `onTap`/`onInput`, `setData` |

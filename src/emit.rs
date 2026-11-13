@@ -895,9 +895,11 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
 
 // ---------------------------------------------------------------- native ----
 
-/// The workspace that holds the sibling render/platform crates the generated
-/// native app renders through. The compiler's manifest directory is the
-/// `opurom-lang` crate, so its parent is the workspace root.
+/// The workspace that holds the sibling render crate the generated native app
+/// renders through. The compiler's manifest directory is the `opurom-lang`
+/// crate, so its parent is the workspace root. The generated app depends only
+/// on opurom-render, which writes PPM with no external crates, so an offline
+/// build resolves without a registry.
 fn native_dep_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -907,11 +909,9 @@ fn native_dep_root() -> PathBuf {
 
 fn native_manifest(dep_root: &Path) -> String {
     let render = dep_root.join("opurom-render");
-    let platform = dep_root.join("opurom-platform");
     format!(
-        "[package]\nname = \"opurom_native\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\nopurom-render = {{ path = \"{}\" }}\nopurom-platform = {{ path = \"{}\" }}\n",
-        render.display(),
-        platform.display()
+        "[package]\nname = \"opurom_native\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\nopurom-render = {{ path = \"{}\" }}\n",
+        render.display()
     )
 }
 
@@ -1362,19 +1362,6 @@ fn render_frame() {
     if let Err(e) = write_ppm(&frame, &out) {
         println!("error: cannot write frame: {e}");
         return;
-    }
-    let png = std::path::Path::new(&out)
-        .with_extension("png")
-        .to_string_lossy()
-        .to_string();
-    let platform_view = opurom_platform::FrameView {
-        width: frame.width,
-        height: frame.height,
-        pixels: &frame.pixels,
-    };
-    match opurom_platform::frame_to_png(platform_view, &png) {
-        Ok(()) => println!("png: {}", png),
-        Err(e) => println!("png: unavailable ({})", e),
     }
     println!("frame: {}x{} wrote {}", frame.width, frame.height, out);
 }
