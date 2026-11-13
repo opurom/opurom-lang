@@ -480,29 +480,63 @@ fn web_and_mini_emitters_produce_valid_js() {
         ("web", "app.js", &["index.html", "ir.json"]),
         (
             "wechat",
-            "index.js",
-            &["app.json", "index.wxml", "index.wxss"],
+            "pages/index/index.js",
+            &[
+                "app.json",
+                "pages/index/index.wxml",
+                "pages/index/index.wxss",
+                "app.js",
+            ],
         ),
         (
             "alipay",
-            "index.js",
-            &["app.json", "index.axml", "index.acss"],
+            "pages/index/index.js",
+            &[
+                "app.json",
+                "pages/index/index.axml",
+                "pages/index/index.acss",
+                "app.js",
+            ],
         ),
-        ("qq", "index.js", &["app.json", "index.qml", "index.qss"]),
+        (
+            "qq",
+            "pages/index/index.js",
+            &[
+                "app.json",
+                "pages/index/index.qml",
+                "pages/index/index.qss",
+                "app.js",
+            ],
+        ),
         (
             "douyin",
-            "index.js",
-            &["app.json", "index.ttml", "index.ttss"],
+            "pages/index/index.js",
+            &[
+                "app.json",
+                "pages/index/index.ttml",
+                "pages/index/index.ttss",
+                "app.js",
+            ],
         ),
         (
             "baidu",
-            "index.js",
-            &["app.json", "index.swan", "index.css"],
+            "pages/index/index.js",
+            &[
+                "app.json",
+                "pages/index/index.swan",
+                "pages/index/index.css",
+                "app.js",
+            ],
         ),
         (
             "kuaishou",
-            "index.js",
-            &["app.json", "index.ksml", "index.css"],
+            "pages/index/index.js",
+            &[
+                "app.json",
+                "pages/index/index.ksml",
+                "pages/index/index.css",
+                "app.js",
+            ],
         ),
     ];
     for &(target, js, extras) in cases {
@@ -544,7 +578,7 @@ fn web_and_mini_emitters_produce_valid_js() {
                 "web state declaration shape changed: {app_js}"
             );
         } else {
-            let index_js = fs::read_to_string(dir.join("index.js")).unwrap();
+            let index_js = fs::read_to_string(dir.join("pages/index/index.js")).unwrap();
             assert!(
                 index_js.contains("setData"),
                 "{target}: missing state-set API"
@@ -564,6 +598,73 @@ fn web_and_mini_emitters_produce_valid_js() {
                 "{target}: internal state keys leak into the page data"
             );
         }
+    }
+}
+
+#[test]
+fn web_layout_places_children_of_every_container_kind() {
+    let ir = out_dir("gallery-ir").join("gallery.opuir.json");
+    let r = compile(&example("gallery.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let dir = out_dir("gallery-web");
+    let r = emit(&ir, "web", &dir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let app_js = fs::read_to_string(dir.join("app.js")).unwrap();
+    let draws: Vec<&str> = app_js
+        .lines()
+        .filter(|l| l.contains("ctx.fillText(") || l.contains("ctx.fillRect("))
+        .collect();
+    assert!(draws.len() > 100, "expected the full gallery to be drawn");
+    for draw in &draws {
+        assert!(
+            !draw.contains("(0, 0,") && !draw.contains(", 0, 0)"),
+            "a node is still drawn at the origin: {draw}"
+        );
+    }
+    assert!(app_js.contains("Gauge"), "unknown kinds lost their label");
+    node_check(&dir.join("app.js"));
+}
+
+#[test]
+fn mini_pages_declared_in_app_json_resolve_to_real_files() {
+    let ir = out_dir("page-ir").join("counter.opuir.json");
+    let r = compile(&spec("counter.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let cases: &[(&str, &str, &str)] = &[
+        ("wechat", "wxml", "wxss"),
+        ("alipay", "axml", "acss"),
+        ("qq", "qml", "qss"),
+        ("douyin", "ttml", "ttss"),
+        ("baidu", "swan", "css"),
+        ("kuaishou", "ksml", "css"),
+    ];
+    for &(target, ext, style_ext) in cases {
+        let dir = out_dir(&format!("page-{target}"));
+        let r = emit(&ir, target, &dir);
+        assert!(
+            r.status.success(),
+            "{target} emit failed: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let app_json: Json =
+            serde_json::from_slice(&fs::read(dir.join("app.json")).unwrap()).unwrap();
+        let pages = app_json["pages"].as_array().expect("pages array");
+        assert_eq!(pages.len(), 1, "{target}: expected one page");
+        let page = pages[0].as_str().expect("page path string");
+        assert_eq!(page, "pages/index/index", "{target}: wrong page path");
+        for suffix in ["js", ext, style_ext] {
+            let f = dir.join(format!("{page}.{suffix}"));
+            assert!(f.is_file(), "{target}: declared page missing {f:?}");
+            assert!(fs::metadata(&f).unwrap().len() > 0, "{f:?} is empty");
+        }
+        let app_js = fs::read_to_string(dir.join("app.js")).unwrap();
+        assert!(app_js.contains("App({})"), "{target}: missing App entry");
+        node_check(&dir.join("app.js"));
+        let markup = fs::read_to_string(dir.join(format!("{page}.{ext}"))).unwrap();
+        assert!(
+            !markup.contains("__stateKeys"),
+            "{target}: internal state keys leak into the page"
+        );
     }
 }
 
@@ -1478,7 +1579,7 @@ fn every_target_emits_effect_code() {
             "{target}: {}",
             String::from_utf8_lossy(&r.stderr)
         );
-        let js = fs::read_to_string(dir.join("index.js")).unwrap();
+        let js = fs::read_to_string(dir.join("pages/index/index.js")).unwrap();
         for marker in [
             "async function ()",
             "await new Promise",
@@ -1489,7 +1590,7 @@ fn every_target_emits_effect_code() {
         ] {
             assert!(js.contains(marker), "{target} index.js missing {marker}");
         }
-        node_check(&dir.join("index.js"));
+        node_check(&dir.join("pages/index/index.js"));
     }
 
     let wasm = out_dir("effect-wasm");
@@ -1944,12 +2045,12 @@ fn emitters_apply_computed_values_and_honor_unless() {
     node_check(&web.join("app.js"));
 
     let mini_cases: &[(&str, &str)] = &[
-        ("wechat", "index.wxml"),
-        ("alipay", "index.axml"),
-        ("qq", "index.qml"),
-        ("douyin", "index.ttml"),
-        ("baidu", "index.swan"),
-        ("kuaishou", "index.ksml"),
+        ("wechat", "pages/index/index.wxml"),
+        ("alipay", "pages/index/index.axml"),
+        ("qq", "pages/index/index.qml"),
+        ("douyin", "pages/index/index.ttml"),
+        ("baidu", "pages/index/index.swan"),
+        ("kuaishou", "pages/index/index.ksml"),
     ];
     for &(target, markup_name) in mini_cases {
         let dir = out_dir(&format!("emit-{target}"));
@@ -1959,7 +2060,7 @@ fn emitters_apply_computed_values_and_honor_unless() {
             "{target} emit failed: {}",
             String::from_utf8_lossy(&r.stderr)
         );
-        let index_js = fs::read_to_string(dir.join("index.js")).unwrap();
+        let index_js = fs::read_to_string(dir.join("pages/index/index.js")).unwrap();
         for marker in [
             "applyComputed: function ()",
             "this.applyComputed();",
@@ -1980,7 +2081,7 @@ fn emitters_apply_computed_values_and_honor_unless() {
             markup.contains("!visible"),
             "{target}: missing computed unless condition"
         );
-        node_check(&dir.join("index.js"));
+        node_check(&dir.join("pages/index/index.js"));
     }
 
     let wasm = out_dir("emit-wasm");
@@ -2203,12 +2304,12 @@ fn expanded_ir_keeps_emitters_catalog_and_optimizer() {
     let targets: &[(&str, &str)] = &[
         ("native", "src/main.rs"),
         ("web", "app.js"),
-        ("wechat", "index.js"),
-        ("alipay", "index.js"),
-        ("qq", "index.js"),
-        ("douyin", "index.js"),
-        ("baidu", "index.js"),
-        ("kuaishou", "index.js"),
+        ("wechat", "pages/index/index.js"),
+        ("alipay", "pages/index/index.js"),
+        ("qq", "pages/index/index.js"),
+        ("douyin", "pages/index/index.js"),
+        ("baidu", "pages/index/index.js"),
+        ("kuaishou", "pages/index/index.js"),
         ("wasm", "host.js"),
     ];
     let mut web_dir = PathBuf::new();

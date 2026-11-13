@@ -349,12 +349,12 @@ The compiler emits node ids pre-order from 0, keeps numeric props as JSON number
 | --- | --- | --- |
 | `native` | `Cargo.toml`, `src/main.rs` | std-only `State` struct, `apply(event_node_id)` with a generated `match` over tap/input actions, stdin loop `tap <id>` / `input <id> <text>` / `state` / `quit` printing state and patches |
 | `web` | `index.html`, `app.js`, `ir.json` | generated `state` object, event handlers, Canvas 2D draw calls with computed layout, `{}` interpolation resolved to `String(state.x)` (no mustache, no IR traversal) |
-| `wechat` | `app.json`, `index.wxml`, `index.wxss`, `index.js` | `wx:for`, `bindtap`/`bindinput`, `setData` |
-| `alipay` | `app.json`, `index.axml`, `index.acss`, `index.js` | `a:for`, `onTap`/`onInput`, `setData` |
-| `qq` | `app.json`, `index.qml`, `index.qss`, `index.js` | `qq:for`, `bindtap`/`bindinput`, `setData` |
-| `douyin` | `app.json`, `index.ttml`, `index.ttss`, `index.js` | `tt:for`, `bindtap`/`bindinput`, `setData` |
-| `baidu` | `app.json`, `index.swan`, `index.css`, `index.js` | `s-for`, `bindtap`/`bindinput`, `setData` |
-| `kuaishou` | `app.json`, `index.ksml`, `index.css`, `index.js` | `ks:for`, `bindtap`/`bindinput`, `setData` |
+| `wechat` | `app.json`, `app.js`, `pages/index/index.wxml`, `pages/index/index.wxss`, `pages/index/index.js` | `wx:for`, `bindtap`/`bindinput`, `setData` |
+| `alipay` | `app.json`, `app.js`, `pages/index/index.axml`, `pages/index/index.acss`, `pages/index/index.js` | `a:for`, `onTap`/`onInput`, `setData` |
+| `qq` | `app.json`, `app.js`, `pages/index/index.qml`, `pages/index/index.qss`, `pages/index/index.js` | `qq:for`, `bindtap`/`bindinput`, `setData` |
+| `douyin` | `app.json`, `app.js`, `pages/index/index.ttml`, `pages/index/index.ttss`, `pages/index/index.js` | `tt:for`, `bindtap`/`bindinput`, `setData` |
+| `baidu` | `app.json`, `app.js`, `pages/index/index.swan`, `pages/index/index.css`, `pages/index/index.js` | `s-for`, `bindtap`/`bindinput`, `setData` |
+| `kuaishou` | `app.json`, `app.js`, `pages/index/index.ksml`, `pages/index/index.css`, `pages/index/index.js` | `ks:for`, `bindtap`/`bindinput`, `setData` |
 | `wasm` | `Cargo.toml`, `src/lib.rs`, `index.html`, `host.js`, `README.md` | std-only `cdylib` for `wasm32-unknown-unknown` with the C ABI of [WASM_ABI](../opurom-spec/WASM_ABI.md): `opu_version`, `opu_state_len`, `opu_state`, `opu_tap`, `opu_input` |
 
 The six mini-program targets share one lowering pass and one small per-platform table
@@ -447,7 +447,7 @@ RUSTFLAGS="-D warnings" cargo test --offline   # zero compiler warnings
 ```
 
 The test harness drives the CLI binary from `tests/fixtures/`, compares golden IR byte-for-byte
-and parsed-JSON deep-equality, checks `node --check` on web + six mini `index.js`/`app.js` files
+and parsed-JSON deep-equality, checks `node --check` on web plus all six mini `pages/index/index.js` and `app.js` files
 plus the wasm `host.js`, runs `cargo build --release --offline` inside generated native crates
 followed by piped-stdin sessions, and builds generated wasm crates for
 `wasm32-unknown-unknown` before instantiating them in Node's `WebAssembly` runtime with an empty
