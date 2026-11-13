@@ -196,7 +196,63 @@ fn simple_ident(s: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Dead-state elimination only: nodes, ids, conditionals, component and state order survive.
+/// Identifiers a computed expression can read. Operators are separators too, so an expression
+/// written without spaces around `*` still keeps its source state.
+fn expr_idents(expr: &str) -> impl Iterator<Item = &str> + '_ {
+    expr.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .filter(|token| simple_ident(token))
+}
+
+/// Keep computed declarations whose names the tree or another surviving declaration reads.
+/// Operands of a surviving declaration stay live because emitters recompute from those states;
+/// a removed declaration must not keep its private source states alive.
+fn prune_dead_computed(ir: &mut Json, refs: &mut HashSet<String>) {
+    let exprs: Vec<(String, Vec<String>)> = match ir.get("computed").and_then(Json::as_array) {
+        Some(list) => list
+            .iter()
+            .filter_map(|entry| {
+                let name = entry.get("name").and_then(Json::as_str)?;
+                let expr = entry.get("expr").and_then(Json::as_str).unwrap_or("");
+                Some((
+                    name.to_string(),
+                    expr_idents(expr).map(str::to_string).collect(),
+                ))
+            })
+            .collect(),
+        None => return,
+    };
+    loop {
+        let before = refs.len();
+        for (name, operands) in &exprs {
+            if refs.contains(name) {
+                refs.extend(operands.iter().cloned());
+            }
+        }
+        if refs.len() == before {
+            break;
+        }
+    }
+    if let Some(list) = ir.get_mut("computed").and_then(Json::as_array_mut) {
+        list.retain(|entry| {
+            entry
+                .get("name")
+                .and_then(Json::as_str)
+                .is_some_and(|name| refs.contains(name))
+        });
+    }
+    if ir
+        .get("computed")
+        .and_then(Json::as_array)
+        .is_some_and(|list| list.is_empty())
+    {
+        if let Some(o) = ir.as_object_mut() {
+            o.remove("computed");
+        }
+    }
+}
+
+/// Dead-computed and dead-state elimination: nodes, ids, conditionals, component and state order
+/// survive.
 fn optimize(ir: &mut Json) {
     let states: Vec<String> = ir
         .get("state")
@@ -209,29 +265,14 @@ fn optimize(ir: &mut Json) {
         .unwrap_or_default();
     let mut refs = HashSet::new();
     collect_refs(&ir["tree"], &states, &mut refs);
-    let mut computed_names = HashSet::new();
-    if let Some(list) = ir.get("computed").and_then(Json::as_array) {
-        for entry in list {
-            if let Some(name) = entry.get("name").and_then(Json::as_str) {
-                computed_names.insert(name.to_string());
-                refs.insert(name.to_string());
-            }
-            if let Some(expr) = entry.get("expr").and_then(Json::as_str) {
-                for token in expr.split_whitespace() {
-                    if simple_ident(token) {
-                        refs.insert(token.to_string());
-                    }
-                }
-            }
-        }
-    }
+    prune_dead_computed(ir, &mut refs);
     if let Some(list) = ir.get_mut("state").and_then(Json::as_array_mut) {
         list.retain(|s| {
             let Some(name) = s.get("name").and_then(Json::as_str) else {
                 return false;
             };
             let is_list = s.get("type").and_then(Json::as_str) == Some("list");
-            is_list || computed_names.contains(name) || refs.contains(name)
+            is_list || refs.contains(name)
         });
     }
     drop_null_props(&mut ir["tree"]);
