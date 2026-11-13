@@ -146,13 +146,13 @@ mod tests {
     #[test]
     fn vendored_catalog_is_valid_and_large() {
         let catalog = parse_catalog(CATALOG_JSON).expect("vendored catalog");
-        assert_eq!(catalog.components.len(), 116);
+        assert_eq!(catalog.components.len(), 216);
         let unique: HashSet<&str> = catalog
             .components
             .iter()
             .map(|c| c.primitive.as_str())
             .collect();
-        assert_eq!(unique.len(), 32);
+        assert_eq!(unique.len(), 100);
         assert_eq!(catalog.get("VStack").unwrap().primitive, "Column");
         assert_eq!(catalog.get("DataTable").unwrap().primitive, "Table");
         assert_eq!(catalog.get("Hint").unwrap().primitive, "Tooltip");
