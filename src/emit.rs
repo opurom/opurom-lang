@@ -1320,17 +1320,40 @@ fn native_source(
             "fn print_state(state: &State) {{\n    println!(\"state {fmt}\", {args});\n}}\n\n"
         ));
     }
-    // The rendered frame: the app draws the embedded IR at startup and then
-    // keeps reading the state-machine commands on stdin. The viewport defaults
-    // to 800x600 and is overridable through OPUROM_FRAME_WIDTH/HEIGHT; the frame
-    // is written as PPM plus a PNG when the host platform supports it.
+    // The rendered frame: re-renders the embedded IR with the live state and
+    // writes the PPM frame. The viewport defaults to 800x600 and is overridable
+    // through OPUROM_FRAME_WIDTH/HEIGHT; the frame path is the first argument,
+    // defaulting to the system temp directory so running the state machine never
+    // writes into the caller's directory. The renderer's StateView holds the
+    // scalar state kinds only, so list state fields are left out of the frame.
+    let mut state_sets = String::new();
+    let mut renders_state = false;
+    for st in states {
+        if st.ty.as_str() == "list" {
+            continue;
+        }
+        renders_state = true;
+        let value = match st.ty.as_str() {
+            "int" => format!("opurom_render::StateValue::Int(state.{})", st.name),
+            "bool" => format!("opurom_render::StateValue::Bool(state.{})", st.name),
+            _ => format!("opurom_render::StateValue::Str(state.{}.clone())", st.name),
+        };
+        state_sets.push_str(&format!("    view.set(\"{}\", {});\n", st.name, value));
+    }
+    // A state whose fields are all lists cannot reach the renderer's StateView;
+    // read `state` so the parameter still counts as used and the build stays
+    // warning-free under -D warnings. The `mut` on `view` is only needed when
+    // there is at least one scalar field to set.
+    let view_mut = if renders_state { "mut " } else { "" };
+    if states.is_empty() || !renders_state {
+        state_sets.push_str("    let _ = state;\n");
+    }
     s.push_str(
-        &r##"// Rendered frame: draws the embedded IR at startup, then keeps reading
-// the state-machine commands on stdin. Default viewport 800x600, overridable
-// through OPUROM_FRAME_WIDTH and OPUROM_FRAME_HEIGHT. PPM always; PNG when the
-// host platform supports it. The frame path is the first argument, defaulting
-// to the system temp directory so running the state machine never writes into
-// the caller's directory.
+        &r##"// Rendered frame: re-renders the embedded IR with the live state, then
+// writes the PPM frame. Default viewport 800x600, overridable through
+// OPUROM_FRAME_WIDTH and OPUROM_FRAME_HEIGHT. The frame path is the first
+// argument, defaulting to the system temp directory so the state machine never
+// writes into the caller's directory.
 const IR_TEXT: &str = {IR_LIT};
 const FRAME_WIDTH: u32 = 800;
 const FRAME_HEIGHT: u32 = 600;
@@ -1367,7 +1390,7 @@ fn write_ppm(frame: &opurom_render::Frame, path: &str) -> std::io::Result<()> {
     std::fs::write(path, ppm)
 }
 
-fn render_frame() {
+fn render_frame(state: &State) {
     let ir = match opurom_render::parse_ir(IR_TEXT) {
         Ok(ir) => ir,
         Err(e) => {
@@ -1375,15 +1398,15 @@ fn render_frame() {
             return;
         }
     };
-    let state = opurom_render::StateView::from_ir(&ir);
-    let mut renderer = match opurom_render::Renderer::try_new(frame_width(), frame_height()) {
+    let {VIEW_MUT}view = opurom_render::StateView::from_ir(&ir);
+{STATE_SETS}    let mut renderer = match opurom_render::Renderer::try_new(frame_width(), frame_height()) {
         Ok(renderer) => renderer,
         Err(e) => {
             println!("error: invalid viewport: {e}");
             return;
         }
     };
-    let frame = renderer.render(&ir, &state);
+    let frame = renderer.render(&ir, &view);
     let out = std::env::args()
         .nth(1)
         .unwrap_or_else(frame_default_path);
@@ -1395,7 +1418,9 @@ fn render_frame() {
 }
 
 "##
-        .replace("{IR_LIT}", &ir_lit),
+        .replace("{IR_LIT}", &ir_lit)
+        .replace("{VIEW_MUT}", view_mut)
+        .replace("{STATE_SETS}", &state_sets),
     );
     s.push_str("fn main() {\n    let mut state = State {\n");
     for st in states {
@@ -1403,7 +1428,7 @@ fn render_frame() {
     }
     s.push_str("    };\n");
     s.push_str(concat!(
-        "    render_frame();\n",
+        "    render_frame(&state);\n",
         "    let stdin = io::stdin();\n",
         "    for line in stdin.lock().lines() {\n",
         "        let line = match line { Ok(l) => l, Err(_) => break };\n",
@@ -1429,6 +1454,7 @@ fn render_frame() {
         "                };\n",
         "                print_state(&state);\n",
         "                for p in patches { println!(\"patch {}={}\", p.name, p.value); }\n",
+        "                render_frame(&state);\n",
         "            }\n",
         "            other => println!(\"error: unknown command {:?}\", other),\n",
         "        }\n",

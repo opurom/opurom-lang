@@ -369,7 +369,7 @@ The compiler emits node ids pre-order from 0, keeps numeric props as JSON number
 
 | Target | Artifacts | Lowering notes |
 | --- | --- | --- |
-| `native` | `Cargo.toml`, `src/main.rs` | a `State` struct, `apply(event_node_id)` with a generated `match` over tap/input actions, stdin loop `tap <id>` / `input <id> <text>` / `state` / `quit` printing state and patches, plus a one-frame PPM render of the embedded IR through `opurom-render` at startup |
+| `native` | `Cargo.toml`, `src/main.rs` | a `State` struct, `apply(event_node_id)` with a generated `match` over tap/input actions, stdin loop `tap <id>` / `input <id> <text>` / `state` / `quit` printing state and patches, plus a PPM render of the embedded IR through `opurom-render` at startup and again after every state change, at the 800x600 default viewport (`OPUROM_FRAME_WIDTH`/`OPUROM_FRAME_HEIGHT` override it) |
 | `web` | `index.html`, `app.js`, `ir.json` | generated `state` object, event handlers, Canvas 2D draw calls with computed layout, `{}` interpolation resolved to `String(state.x)` (no mustache, no IR traversal) |
 | `wechat` | `app.json`, `app.js`, `pages/index/index.wxml`, `pages/index/index.wxss`, `pages/index/index.js` | `wx:for`, `bindtap`/`bindinput`, `setData` |
 | `alipay` | `app.json`, `app.js`, `pages/index/index.axml`, `pages/index/index.acss`, `pages/index/index.js` | `a:for`, `onTap`/`onInput`, `setData` |
@@ -514,7 +514,8 @@ plain IR, and the wasm ABI on a component-expanded tree.
   lists all 9 targets and `opuromc components` prints `216 components`.
 - Generated native output builds warning-free with `cargo build --release --offline` and runs with
   piped stdin. The native sequencer's local fallback and plain-HTTP `OPR_BASE_URL` path are
-  generated from the same IR.
+  generated from the same IR, and every state change re-renders the frame. The generated crate
+  depends only on the sibling `opurom-render` crate by path, so the build resolves offline.
 
 ### Scope and limits
 

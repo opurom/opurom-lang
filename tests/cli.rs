@@ -925,6 +925,26 @@ fn empty_state_program_emits_warning_free_native() {
     assert!(stdout.contains("state (empty)"), "{stdout}");
 }
 
+/// First node id in pre-order whose `tap` action adds a positive integer to a
+/// state, so the frame must actually change when it is tapped.
+fn first_positive_add_tap_id(value: &Json) -> Option<u32> {
+    if let Some(tap) = value.get("events").and_then(|e| e.get("tap")) {
+        if let Some(id) = value.get("id").and_then(Json::as_u64) {
+            if tap.get("op").and_then(Json::as_str) == Some("add") {
+                if tap.get("value").and_then(Json::as_i64).unwrap_or(0) > 0 {
+                    return Some(id as u32);
+                }
+            }
+        }
+    }
+    for child in value.get("children").and_then(Json::as_array)?.iter() {
+        if let Some(id) = first_positive_add_tap_id(child) {
+            return Some(id);
+        }
+    }
+    None
+}
+
 #[test]
 fn native_emitter_renders_and_writes_a_frame() {
     let ir = out_dir("native-frame-ir").join("counter.opuir.json");
@@ -947,7 +967,11 @@ fn native_emitter_renders_and_writes_a_frame() {
         !native_toml.contains("opurom-platform"),
         "native manifest must not depend on opurom-platform"
     );
-    for marker in ["opurom_render::Renderer", "render_frame()", "write_ppm"] {
+    for marker in [
+        "opurom_render::Renderer",
+        "render_frame(&state)",
+        "write_ppm",
+    ] {
         assert!(native_rs.contains(marker), "native source missing {marker}");
     }
 
@@ -959,33 +983,57 @@ fn native_emitter_renders_and_writes_a_frame() {
     );
 
     let exe = dir.join("target/release/opurom_native");
-    let frame = dir.join("frame.ppm");
-    let mut child = Command::new(&exe)
-        .arg(frame.to_str().expect("utf8 frame path"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn generated native binary");
-    {
-        let mut pipe = child.stdin.take().expect("stdin pipe");
-        pipe.write_all(b"quit\n").expect("write stdin");
-    }
-    let out = child.wait_with_output().expect("wait for native binary");
-    assert!(
-        out.status.success(),
-        "native frame render failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    let initial_frame = dir.join("initial-frame.ppm");
+    let tapped_frame = dir.join("tapped-frame.ppm");
+    let run_with = |frame: &Path, stdin: &str| {
+        let mut child = Command::new(&exe)
+            .arg(frame.to_str().expect("utf8 frame path"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn generated native binary");
+        {
+            let mut pipe = child.stdin.take().expect("stdin pipe");
+            pipe.write_all(stdin.as_bytes()).expect("write stdin");
+        }
+        let out = child.wait_with_output().expect("wait for native binary");
+        assert!(
+            out.status.success(),
+            "native frame render failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            fs::read(frame).expect("read rendered frame"),
+        )
+    };
+    let (stdout, bytes) = run_with(&initial_frame, "quit\n");
     assert!(stdout.contains("frame: 800x600 wrote"), "{stdout}");
-    assert!(frame.is_file(), "the rendered frame file was not written");
-    let bytes = fs::read(&frame).expect("read rendered frame");
     assert!(bytes.len() > 1000, "frame too small: {} bytes", bytes.len());
     let header = String::from_utf8_lossy(&bytes[..bytes.len().min(20)]);
     assert!(
         header.starts_with("P6\n800 600\n255\n"),
         "unexpected PPM header: {header}"
+    );
+
+    // A tap changes state, so the app must re-render and rewrite the frame.
+    let ir_json: Json =
+        serde_json::from_str(&fs::read_to_string(&ir).expect("read IR")).expect("IR is valid JSON");
+    let tap_id = first_positive_add_tap_id(ir_json.get("tree").expect("IR tree"))
+        .expect("counter has a positive add tap");
+    let (tap_stdout, tap_bytes) = run_with(&tapped_frame, &format!("tap {tap_id}\nquit\n"));
+    assert!(
+        tap_stdout.contains("state count=1"),
+        "the tap did not change state: {tap_stdout}"
+    );
+    assert!(
+        tap_stdout.contains("frame: 800x600 wrote"),
+        "the tap did not re-render: {tap_stdout}"
+    );
+    assert_ne!(
+        bytes, tap_bytes,
+        "the frame was not rewritten after the tap"
     );
 }
 
