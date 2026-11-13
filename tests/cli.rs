@@ -2025,6 +2025,156 @@ fn optimizer_preserves_computed_conditions_and_list_state() {
 }
 
 #[test]
+fn optimizer_removes_dead_computed_entries_and_state() {
+    let dir = out_dir("opt-dead-computed");
+    let ir_path = dir.join("dead_computed.opuir.json");
+    let out = dir.join("optimized.opuir.json");
+    let ir = json!({
+        "ir": "0.1",
+        "app": "DeadComputed",
+        "state": [
+            {"name": "count", "type": "int", "init": 2},
+            {"name": "spare", "type": "int", "init": 7},
+            {"name": "shown", "type": "int", "init": 4},
+            {"name": "unused", "type": "int", "init": 14}
+        ],
+        "computed": [
+            {"name": "shown", "type": "int", "expr": "count * 2"},
+            {"name": "unused", "type": "int", "expr": "spare + 1"}
+        ],
+        "tree": {
+            "id": 0, "kind": "Column", "props": {}, "children": [
+                {"id": 1, "kind": "Text", "props": {"value": "Total: {shown}"},
+                 "children": [], "events": {}},
+                {"id": 2, "kind": "Button", "props": {"label": "go"}, "children": [],
+                 "events": {"tap": {"op": "add", "target": "count", "value": 1}}}
+            ], "events": {}
+        },
+        "theme": {"mode": "system", "accent": "#097FEB", "radius": 12}
+    });
+    let text = pretty_ir(&ir);
+    fs::write(&ir_path, &text).unwrap();
+    let r = optimize(&ir_path, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let got: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+
+    assert_eq!(
+        got["computed"],
+        json!([{"name": "shown", "type": "int", "expr": "count * 2"}]),
+        "the unobserved computed declaration is removed"
+    );
+    assert_eq!(state_names(&got), vec!["count", "shown"]);
+    assert_eq!(node_ids(&got), node_ids(&ir), "nodes and ids survive");
+    assert_eq!(
+        got["tree"]["children"][0]["props"]["value"], "Total: {shown}",
+        "the surviving interpolation is untouched"
+    );
+    assert_eq!(
+        got["tree"]["children"][1]["events"]["tap"]["target"], "count",
+        "the action that feeds the surviving computed declaration is untouched"
+    );
+    assert!(
+        fs::metadata(&out).unwrap().len() < text.len() as u64,
+        "optimized IR must shrink"
+    );
+}
+
+#[test]
+fn optimizer_drops_empty_computed_array_and_is_idempotent() {
+    let dir = out_dir("opt-all-dead-computed");
+    let ir_path = dir.join("all_dead.opuir.json");
+    let out = dir.join("optimized.opuir.json");
+    let ir = json!({
+        "ir": "0.1",
+        "app": "AllDead",
+        "state": [
+            {"name": "count", "type": "int", "init": 2},
+            {"name": "spare", "type": "int", "init": 7},
+            {"name": "unused", "type": "int", "init": 14}
+        ],
+        "computed": [{"name": "unused", "type": "int", "expr": "spare + 1"}],
+        "tree": {
+            "id": 0, "kind": "Column", "props": {}, "children": [
+                {"id": 1, "kind": "Text", "props": {"value": "{count}"},
+                 "children": [], "events": {}}
+            ], "events": {}
+        },
+        "theme": {"mode": "system", "accent": "#097FEB", "radius": 12}
+    });
+    fs::write(&ir_path, pretty_ir(&ir)).unwrap();
+    let r = optimize(&ir_path, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let got: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert!(got.get("computed").is_none(), "an emptied array is removed");
+    assert_eq!(state_names(&got), vec!["count"]);
+    assert_eq!(node_ids(&got), node_ids(&ir));
+
+    let second = dir.join("twice.opuir.json");
+    let r2 = optimize(&out, &second);
+    assert!(
+        r2.status.success(),
+        "{}",
+        String::from_utf8_lossy(&r2.stderr)
+    );
+    assert_eq!(
+        fs::read(&second).unwrap(),
+        fs::read(&out).unwrap(),
+        "a second pass is a no-op"
+    );
+}
+
+#[test]
+fn optimizer_keeps_computed_chains_and_conditions() {
+    let dir = out_dir("opt-computed-chain");
+    let ir_path = dir.join("chain.opuir.json");
+    let out = dir.join("optimized.opuir.json");
+    let ir = json!({
+        "ir": "0.1",
+        "app": "Chain",
+        "state": [
+            {"name": "flag", "type": "bool", "init": false},
+            {"name": "base", "type": "int", "init": 3},
+            {"name": "scaled", "type": "int", "init": 4},
+            {"name": "shown", "type": "int", "init": 8},
+            {"name": "ready", "type": "bool", "init": false},
+            {"name": "orphan", "type": "int", "init": 11},
+            {"name": "hidden", "type": "int", "init": 22}
+        ],
+        "computed": [
+            {"name": "scaled", "type": "int", "expr": "base+1"},
+            {"name": "shown", "type": "int", "expr": "scaled * 2"},
+            {"name": "ready", "type": "bool", "expr": "flag"},
+            {"name": "hidden", "type": "int", "expr": "orphan * 2"}
+        ],
+        "tree": {
+            "id": 0, "kind": "Column", "props": {}, "children": [
+                {"id": 1, "kind": "Text", "when": "ready",
+                 "props": {"value": "Value: {shown}"}, "children": [], "events": {}}
+            ], "events": {}
+        },
+        "theme": {"mode": "system", "accent": "#097FEB", "radius": 12}
+    });
+    fs::write(&ir_path, pretty_ir(&ir)).unwrap();
+    let r = optimize(&ir_path, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let got: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+
+    let computed: Vec<&str> = got["computed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(computed, vec!["scaled", "shown", "ready"]);
+    assert_eq!(
+        state_names(&got),
+        vec!["flag", "base", "scaled", "shown", "ready"]
+    );
+    assert_eq!(got["tree"]["children"][0]["when"], "ready");
+    assert_eq!(node_ids(&got), node_ids(&ir));
+}
+
+#[test]
 fn emitters_apply_computed_values_and_honor_unless() {
     let ir = out_dir("emit-ir").join("features.opuir.json");
     let r = compile(&fixture("effects_features.opu"), &ir);

@@ -348,7 +348,7 @@ opuromc compile <src.opu> -o <out.opuir.json>             # lex -> parse -> type
 opuromc target <ir.json> --target <name> -o <dir>         # lower IR into target source
 opuromc targets                                           # list all 9 targets
 opuromc components                                        # list the 216 catalog names
-opuromc optimize <ir.json> -o <out.json>                  # dead-state elimination
+opuromc optimize <ir.json> -o <out.json>                  # dead-computed and dead-state elimination
 opuromc --version                                         # 0.2.0
 ```
 
@@ -438,14 +438,16 @@ remain compile-time aliases for primitives; they are not runtime components.
 
 ### Optimizer
 
-`opuromc optimize <ir.json> -o <out.json>` performs dead-state elimination: it removes `state`
-entries that no interpolation, `bind`, event action `target` or `valueFrom`, `when`, `unless`,
-async fetch `into` or a computed expression can observe. It drops props whose value is `null`,
-keeps empty `children`/`events` objects, preserves the optional top-level `computed` array and
-preserves `list` states and computed state entries. It never removes nodes, folds conditionals,
-changes ids, reorders state, strips `component`, or mutates `imports`/`effects`. IR versions other
-than `0.1` and fields outside the additive IR schema are rejected with a diagnostic and exit
-code 1.
+`opuromc optimize <ir.json> -o <out.json>` runs two passes. Dead computed elimination retains
+`computed` entries whose name the tree observes through an interpolation, `bind`, event action
+`target` or `valueFrom`, `when`, `unless`, async fetch `into`, or through another retained computed
+expression. A retained expression keeps its source states live; the state entry materialized for a
+removed computed value is removed with it, and an emptied `computed` array is omitted. Dead-state
+elimination then removes `state` entries that no such reference observes, keeping declaration
+order, `list` states and the state entries of retained computed values. The optimizer also drops
+props whose value is `null` and keeps empty `children`/`events` objects, node ids, conditionals,
+`component` keys, `imports` and `effects`. IR versions other than `0.1` and fields outside the
+additive IR schema are rejected with a diagnostic and exit code 1.
 
 Measured byte counts are printed to stdout as `optimize: <in> bytes in, <out> bytes out`; both
 numbers come from the actual files. A golden IR with no dead state optimizes to a deep-equal IR.
@@ -457,7 +459,7 @@ Optimization is opt-in: default `compile` output stays byte-identical.
 cd opurom-lang
 cargo fmt --all
 cargo fmt --all -- --check
-cargo test --offline                 # 62 tests: 5 unit + 51 CLI + 6 wasm
+cargo test --offline                 # 73 tests: 5 unit + 62 CLI + 6 wasm
 RUSTFLAGS="-D warnings" cargo test --offline   # zero compiler warnings
 ```
 
@@ -474,7 +476,7 @@ plain IR, and the wasm ABI on a component-expanded tree.
 
 ## Verified status
 
-- `cargo test --offline`: 62/62 tests pass (5 unit + 51 CLI + 6 wasm); `RUSTFLAGS="-D warnings"`
+- `cargo test --offline`: 73/73 tests pass (5 unit + 62 CLI + 6 wasm); `RUSTFLAGS="-D warnings"`
   is clean and `cargo fmt --all -- --check` passes.
 - UI-only programs (`counter.opu`, `profile.opu`, `todo.opu`) compile to **byte-identical** IR;
   no `imports`, `async`, `effects`, `computed`, `unless` or component keys are added to plain IR.
@@ -510,8 +512,9 @@ plain IR, and the wasm ABI on a component-expanded tree.
   state name, an expression, a list or a node is rejected. Components are not generic and have
   no conditional/loop parameters: conditional UI still comes from `if`/`else` and `for`.
   Component expansion is not size-capped beyond the existing 64-iteration `for` limit.
-- **The optimizer is dead-state elimination only.** It does not prune nodes, fold conditionals,
-  remove events or reorder anything; it adds `computed`, `unless` and `list` preservation.
+- **The optimizer removes dead computed values and dead state.** It retains node ids,
+  conditionals, events, declaration order, live `computed` entries, `unless` fields and `list`
+  states.
 - **Effects run before actions.** The IR has separate `effects` and `actions` arrays; source-level
   interleaving after an `await` is intentionally not represented. Wasm has no OS async IO.
 - **Modules are compile-time declaration merges.** There is no runtime module registry, no remote
