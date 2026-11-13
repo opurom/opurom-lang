@@ -2596,6 +2596,58 @@ fn type_diagnostics_name_expected_found_and_position() {
 }
 
 #[test]
+fn int_boundary_values_stay_valid() {
+    let ir = compile_ok(&fixture("int_boundary.opu"));
+    assert_eq!(
+        ir["state"],
+        json!([
+            {"name": "max", "type": "int", "init": i64::MAX},
+            {"name": "min", "type": "int", "init": -i64::MAX},
+            {"name": "atMax", "type": "int", "init": i64::MAX},
+            {"name": "atMin", "type": "int", "init": i64::MIN},
+            {"name": "maxTimesOne", "type": "int", "init": i64::MAX},
+        ])
+    );
+}
+
+#[test]
+fn integer_overflow_is_rejected_with_exact_message() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "computed_overflow_add.opu",
+            "2:18: error: computed expression '+' overflows int: 9223372036854775807 + 1\n  help: use smaller operands, e.g. '9223372036854775807 + 0'; int results must fit between -9223372036854775808 and 9223372036854775807\n",
+        ),
+        (
+            "computed_overflow_sub.opu",
+            "2:18: error: computed expression '-' overflows int: -9223372036854775807 - 2\n  help: use smaller operands, e.g. '-9223372036854775807 - 1'; int results must fit between -9223372036854775808 and 9223372036854775807\n",
+        ),
+        (
+            "computed_overflow_mul.opu",
+            "2:19: error: computed expression '*' overflows int: 9223372036854775807 * 2\n  help: use smaller operands, e.g. '9223372036854775807 * 1'; int results must fit between -9223372036854775808 and 9223372036854775807\n",
+        ),
+        (
+            "computed_overflow_state.opu",
+            "3:21: error: computed expression '+' overflows int: 9223372036854775807 + 1\n  help: use smaller operands, e.g. '9223372036854775807 + 0'; int results must fit between -9223372036854775808 and 9223372036854775807\n",
+        ),
+        (
+            "state_int_out_of_range.opu",
+            "2:15: error: integer literal '9223372036854775808' is out of range\n  help: use a value between -9223372036854775808 and 9223372036854775807\n",
+        ),
+    ];
+    for &(file, tail) in cases {
+        let path = error_fixture(file);
+        let r = bin().arg("check").arg(&path).output().expect("run check");
+        assert_eq!(r.status.code(), Some(1), "{file} must fail");
+        let expected = format!("{}:{}", path.display(), tail);
+        assert_eq!(String::from_utf8_lossy(&r.stderr), expected, "{file}");
+        let out = out_dir("overflow-reject").join(format!("{file}.opuir.json"));
+        let r2 = compile(&path, &out);
+        assert_eq!(r2.status.code(), Some(1), "{file}: compile must fail");
+        assert!(!out.exists(), "{file}: no IR may be written on error");
+    }
+}
+
+#[test]
 fn typed_and_untyped_source_lower_to_identical_ir() {
     let typed = compile_ok(&fixture("typed_program.opu"));
     assert_eq!(

@@ -157,7 +157,8 @@ app EffectsDemo {
   expression grammar is only `+`, `-`, `*`, integer literals and declared state names. Bool and
   string computed values come from a matching bool or string state; arithmetic requires int
   operands. Unknown names, computed-to-computed reads, list reads, string/bool operands,
-  parentheses, floats, division, duplicate names and writes to computed values are diagnostics.
+  parentheses, floats, division, duplicate names, writes to computed values and arithmetic whose
+  compile-time result does not fit in i64 are diagnostics.
   IR gains an optional top-level `"computed"` array, and each computed name is also materialized
   in `"state"` with its compile-time initial value:
 
@@ -165,9 +166,10 @@ app EffectsDemo {
   "computed": [{"name": "doubled", "type": "int", "expr": "count * 2"}]
   ```
 
-  Rust targets use saturating i64 arithmetic; JS targets use their normal `Number` arithmetic.
-  Earlier consumers ignore the `"computed"` array and therefore see only the compiled initial
-  value; this is the documented fallback, not a silent recomputation.
+  Compile-time initial values reject int overflow instead of saturating silently; Rust targets
+  still use saturating i64 arithmetic at runtime and JS targets use their normal `Number`
+  arithmetic. Earlier consumers ignore the `"computed"` array and therefore see only the compiled
+  initial value; this is the documented fallback, not a silent recomputation.
 - `state items = ["a", "b"]` declares a `"list"` state whose `init` is a JSON string array. A
   `for (item in items) { Text("{item}") }` block unrolls at compile time against that
   initializer; list values may not contain braces, and a list loop is limited to 64 values.
@@ -223,7 +225,8 @@ The checker resolves and checks:
 - `if` conditions, which must be `bool`; they become the `when` and `unless` IR fields, so both
   are checked against the same inferred types;
 - component parameter types: a declared annotation is checked at every call site, and an omitted
-  annotation is inferred from the first call site and checked against every later one.
+  annotation is inferred from the first call site and checked against every later one;
+- integer literals and the compile-time value of every computed expression, which must fit in i64.
 
 Type diagnostics name the expected type, the found type and the source position:
 
@@ -231,6 +234,19 @@ Type diagnostics name the expected type, the found type and the source position:
 counter.opu:3:24: error: cannot assign int to bool state 'flag': expected bool, found int
   help: use a bool literal or change the state initializer
 ```
+
+An out-of-range literal in a state initializer is rejected at lex time. Arithmetic that overflows
+during the compile-time evaluation of a computed expression names the operation, both operands and
+a concrete expression that fits:
+
+```text
+big.opu:2:18: error: computed expression '+' overflows int: 9223372036854775807 + 1
+  help: use smaller operands, e.g. '9223372036854775807 + 0'; int results must fit between -9223372036854775808 and 9223372036854775807
+```
+
+Values on the i64 boundary stay valid: a positive fixture keeps `i64::MAX` state and computed
+values, and lands a subtraction exactly on `i64::MIN`. Negative fixtures pin the exact message for
+`+`, `-` and `*` overflow, overflow through a state initializer and an out-of-range literal.
 
 Every error class has a negative fixture and a test: a mismatched state annotation, an unknown
 annotation, a literal assigned to a state of another type, a `valueFrom` source of another type,
@@ -464,11 +480,12 @@ plain IR, and the wasm ABI on a component-expanded tree.
   no `imports`, `async`, `effects`, `computed`, `unless` or component keys are added to plain IR.
   The 216/100 vendored catalog is byte-identical to the spec catalog.
 - Negative fixtures cover the v0.1 classes, the interactive UI classes, the async/import
-  classes, the `else`/computed/list classes, fifteen component classes and thirteen type classes.
-  No panics, no stack traces.
+  classes, the `else`/computed/list classes, fifteen component classes, thirteen type classes and
+  the integer overflow/range classes. No panics, no stack traces.
 - The type checker runs before lowering: state, computed, list, interpolation, action, `valueFrom`,
-  `bind`, condition and component parameter types are all resolved at compile time. Typed and
-  untyped source lower to identical IR, and the golden programs keep byte-identical IR.
+  `bind`, condition, component parameter types and compile-time int arithmetic are all resolved at
+  compile time. Typed and untyped source lower to identical IR, and the golden programs keep
+  byte-identical IR.
 - Components expand in the frontend: one, two, nested and in-app uses produce ordinary IR
   with pre-order ids, and all 9 emitters, the optimizer and the wasm ABI accept that IR.
 - The wasm target builds with `cargo build --release --target wasm32-unknown-unknown` and the

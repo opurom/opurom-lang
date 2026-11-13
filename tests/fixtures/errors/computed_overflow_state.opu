@@ -1,0 +1,5 @@
+app Bad {
+  state big = 9223372036854775807
+  computed bigger = big + 1
+  Text("{bigger}")
+}
