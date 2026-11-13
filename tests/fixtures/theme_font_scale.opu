@@ -1,0 +1,8 @@
+app ThemeScale {
+  state count = 0
+  theme { accent: "#097FEB", radius: 12, fontScale: 1.25 }
+  Column(p: 16, gap: 8) {
+    Text("Count: {count}", size: 16)
+    Text("Scaled", size: 16)
+  }
+}

@@ -225,6 +225,7 @@ fn each_error_class_is_a_friendly_diagnostic() {
         ("when_non_bool_state.opu", "'if' requires a bool state"),
         ("duplicate_theme.opu", "duplicate 'theme' block"),
         ("unknown_theme_key.opu", "unknown theme key 'spacing'"),
+        ("theme_font_scale_type.opu", "'fontScale' expects a number"),
         (
             "unknown_animate_value.opu",
             "unknown animate value 'bounce'",
@@ -3177,4 +3178,19 @@ fn web_sub_and_add_state_values_apply_at_tap() {
         let stdout = run_web_action(&dir.join("app.js"), tap_id);
         assert!(stdout.contains(expected), "{name}: {stdout}");
     }
+}
+
+#[test]
+fn theme_font_scale_lowers_to_the_documented_ir() {
+    let ir = compile_ok(&fixture("theme_font_scale.opu"));
+    assert_eq!(
+        ir["theme"],
+        json!({"mode": "system", "accent": "#097FEB", "radius": 12, "fontScale": 1.25})
+    );
+}
+
+#[test]
+fn theme_without_font_scale_stays_unchanged() {
+    let ir = compile_ok(&fixture("features.opu"));
+    assert_eq!(ir["theme"].get("fontScale"), None);
 }

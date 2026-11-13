@@ -2105,7 +2105,11 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
                     "write a radius such as 'radius: 8'".to_string(),
                 ));
             }
-            json!({"mode": mode, "accent": accent, "radius": radius})
+            let mut theme = json!({"mode": mode, "accent": accent, "radius": radius});
+            if let Some(fs) = t.font_scale {
+                theme["fontScale"] = json!(fs);
+            }
+            theme
         }
         None => json!({"mode": "system", "accent": "#097FEB", "radius": 12}),
     };
