@@ -488,7 +488,7 @@ fn host_source(
         "    ctx.fillStyle = node.color || \"#111111\";\n",
         "    ctx.fillText(textOf(node.value || \"\"), x, y);\n",
         "  } else if (node.kind === \"Button\") {\n",
-        "    ctx.fillStyle = \"#4F46E5\";\n",
+        "    ctx.fillStyle = \"#097FEB\";\n",
         "    ctx.fillRect(x, y, w, h);\n",
         "    ctx.fillStyle = \"#ffffff\";\n",
         "    ctx.font = \"16px sans-serif\";\n",

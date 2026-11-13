@@ -306,7 +306,7 @@ fn feature_program_lowers_every_v0_1_form() {
     assert_eq!(ir["app"], "Features");
     assert_eq!(
         ir["theme"],
-        json!({"mode": "system", "accent": "#4F46E5", "radius": 12})
+        json!({"mode": "system", "accent": "#097FEB", "radius": 12})
     );
     let state = ir["state"].as_array().unwrap();
     assert_eq!(state.len(), 3);
@@ -429,7 +429,7 @@ fn features_additive_lower_to_the_documented_ir() {
     // Visual props pass through.
     let card = &nodes[11];
     assert_eq!(card["props"]["shadow"], 2);
-    assert_eq!(card["props"]["gradient"], "#4F46E5,#101828");
+    assert_eq!(card["props"]["gradient"], "#097FEB,#101828");
     assert_eq!(card["props"]["glass"], true);
     assert_eq!(card["props"]["opacity"], 0.95);
     assert_eq!(card["props"]["border"], "#FFFFFF");
@@ -882,7 +882,7 @@ fn catalog_components_resolve_with_explicit_props_winning() {
     assert_eq!(button["props"]["label"], "Go");
     assert_eq!(
         button["props"]["color"], "#000000",
-        "explicit prop must beat the #4F46E5 default"
+        "explicit prop must beat the #097FEB default"
     );
 
     let heading = &children[1];

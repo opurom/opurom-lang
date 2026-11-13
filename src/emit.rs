@@ -1459,7 +1459,7 @@ fn draw_node(
         "Button" => {
             let label = js_lit(&Json::String(prop_str(&n.props, "label", "")));
             out.push_str(&format!(
-                "  ctx.fillStyle = \"#4F46E5\";\n  ctx.fillRect({x}, {y}, {w}, {h});\n  ctx.fillStyle = \"#ffffff\";\n  ctx.font = \"16px sans-serif\";\n  ctx.fillText({label}, {x} + 10, {y} + 8);\n"
+                "  ctx.fillStyle = \"#097FEB\";\n  ctx.fillRect({x}, {y}, {w}, {h});\n  ctx.fillStyle = \"#ffffff\";\n  ctx.font = \"16px sans-serif\";\n  ctx.fillText({label}, {x} + 10, {y} + 8);\n"
             ));
         }
         "Input" => {
@@ -1493,13 +1493,13 @@ fn draw_node(
         "Progress" => {
             let value = fmt_num(prop_num(&n.props, "value", 0.0).clamp(0.0, 100.0));
             out.push_str(&format!(
-                "  ctx.fillStyle = \"#e2e8f0\";\n  ctx.fillRect({x}, {y}, {w}, {h});\n  ctx.fillStyle = \"#4F46E5\";\n  ctx.fillRect({x}, {y}, {w} * {value} / 100, {h});\n"
+                "  ctx.fillStyle = \"#e2e8f0\";\n  ctx.fillRect({x}, {y}, {w}, {h});\n  ctx.fillStyle = \"#097FEB\";\n  ctx.fillRect({x}, {y}, {w} * {value} / 100, {h});\n"
             ));
         }
         "Switch" | "Checkbox" => {
             let bind = prop_str(&n.props, "bind", "");
             out.push_str(&format!(
-                "  ctx.strokeStyle = \"#94a3b8\";\n  ctx.strokeRect({x}, {y}, {h}, {h});\n  if (state.{bind}) {{ ctx.fillStyle = \"#4F46E5\"; ctx.fillRect({x} + 3, {y} + 3, {h} - 6, {h} - 6); }}\n"
+                "  ctx.strokeStyle = \"#94a3b8\";\n  ctx.strokeRect({x}, {y}, {h}, {h});\n  if (state.{bind}) {{ ctx.fillStyle = \"#097FEB\"; ctx.fillRect({x} + 3, {y} + 3, {h} - 6, {h} - 6); }}\n"
             ));
         }
         "Slider" => {
@@ -1507,7 +1507,7 @@ fn draw_node(
             let min = fmt_num(prop_num(&n.props, "min", 0.0));
             let max = fmt_num(prop_num(&n.props, "max", 100.0));
             out.push_str(&format!(
-                "  ctx.strokeStyle = \"#cbd5e1\";\n  ctx.beginPath();\n  ctx.moveTo({x}, {y} + {h} / 2);\n  ctx.lineTo({x} + {w}, {y} + {h} / 2);\n  ctx.stroke();\n  ctx.fillStyle = \"#4F46E5\";\n  ctx.beginPath();\n  ctx.arc({x} + {w} * (state.{bind} - ({min})) / (({max}) - ({min})), {y} + {h} / 2, 6, 0, 6.283185307179586);\n  ctx.fill();\n"
+                "  ctx.strokeStyle = \"#cbd5e1\";\n  ctx.beginPath();\n  ctx.moveTo({x}, {y} + {h} / 2);\n  ctx.lineTo({x} + {w}, {y} + {h} / 2);\n  ctx.stroke();\n  ctx.fillStyle = \"#097FEB\";\n  ctx.beginPath();\n  ctx.arc({x} + {w} * (state.{bind} - ({min})) / (({max}) - ({min})), {y} + {h} / 2, 6, 0, 6.283185307179586);\n  ctx.fill();\n"
             ));
         }
         "Radio" => {
@@ -1519,7 +1519,7 @@ fn draw_node(
                     .unwrap_or(Json::String(String::new())),
             );
             out.push_str(&format!(
-                "  ctx.strokeStyle = \"#94a3b8\";\n  ctx.beginPath();\n  ctx.arc({x} + {h} / 2, {y} + {h} / 2, {h} / 2 - 2, 0, 6.283185307179586);\n  ctx.stroke();\n  if (state.{bind} === {label}) {{ ctx.fillStyle = \"#4F46E5\"; ctx.fill(); }}\n"
+                "  ctx.strokeStyle = \"#94a3b8\";\n  ctx.beginPath();\n  ctx.arc({x} + {h} / 2, {y} + {h} / 2, {h} / 2 - 2, 0, 6.283185307179586);\n  ctx.stroke();\n  if (state.{bind} === {label}) {{ ctx.fillStyle = \"#097FEB\"; ctx.fill(); }}\n"
             ));
         }
         "Tabs" => {
@@ -1527,7 +1527,7 @@ fn draw_node(
             let bind = prop_str(&n.props, "bind", "");
             let label = js_lit(&Json::String(labels));
             out.push_str(&format!(
-                "  ctx.fillStyle = \"#334155\";\n  ctx.font = \"14px sans-serif\";\n  ctx.fillText({label}, {x} + 6, {y} + 6);\n  if (state.{bind}) {{ ctx.fillStyle = \"#4F46E5\"; ctx.fillRect({x}, {y} + {h} - 3, {w}, 3); }}\n"
+                "  ctx.fillStyle = \"#334155\";\n  ctx.font = \"14px sans-serif\";\n  ctx.fillText({label}, {x} + 6, {y} + 6);\n  if (state.{bind}) {{ ctx.fillStyle = \"#097FEB\"; ctx.fillRect({x}, {y} + {h} - 3, {w}, 3); }}\n"
             ));
         }
         // Documented fallback: an unknown kind renders as a Container or Text.

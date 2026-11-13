@@ -338,7 +338,7 @@ opuromc --version                                         # 0.2.0
 
 The compiler emits node ids pre-order from 0, keeps numeric props as JSON numbers, puts
 `events: {}` and `children: []` on every node, and adds the default theme
-`{"mode":"system","accent":"#4F46E5","radius":12}`. Compiling
+`{"mode":"system","accent":"#097FEB","radius":12}`. Compiling
 [`counter.opu`](../opurom-spec/counter.opu) is deep-equal to
 [`counter.opuir.json`](../opurom-spec/counter.opuir.json); `counter.opu`, `profile.opu` and
 `todo.opu` also have byte-level golden IR fixtures in `tests/fixtures/golden/`.

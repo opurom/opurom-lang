@@ -158,7 +158,7 @@ mod tests {
         assert_eq!(catalog.get("Hint").unwrap().primitive, "Tooltip");
         assert_eq!(
             catalog.get("PrimaryButton").unwrap().props["color"],
-            "#4F46E5"
+            "#097FEB"
         );
     }
 

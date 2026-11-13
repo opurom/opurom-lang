@@ -739,7 +739,7 @@ fn check_color(ctx: &Ctx, pos: Pos, key: &str, value: &str) -> DResult<()> {
     Err(ctx.err(
         pos,
         format!("invalid color '{value}' for '{key}'"),
-        "write a color as '#RRGGBB', for example '#4F46E5'".to_string(),
+        "write a color as '#RRGGBB', for example '#097FEB'".to_string(),
     ))
 }
 
@@ -814,7 +814,7 @@ fn prop_value(ctx: &Ctx, _kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> 
                         "prop '{key}' expects a color string, found {}",
                         value_desc(other)
                     ),
-                    "write a color as '#RRGGBB', for example '#4F46E5'".to_string(),
+                    "write a color as '#RRGGBB', for example '#097FEB'".to_string(),
                 ))
             }
         };
@@ -840,7 +840,7 @@ fn prop_value(ctx: &Ctx, _kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> 
             return Err(ctx.err(
                 arg.pos,
                 format!("gradient needs exactly two colors, found {}", stops.len()),
-                "write two colors as '#4F46E5,#101828'".to_string(),
+                "write two colors as '#097FEB,#101828'".to_string(),
             ));
         }
         for stop in stops {
@@ -2089,7 +2089,7 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
     let theme = match &program.theme {
         Some(t) => {
             let mode = t.mode.clone().unwrap_or_else(|| "system".to_string());
-            let accent = t.accent.clone().unwrap_or_else(|| "#4F46E5".to_string());
+            let accent = t.accent.clone().unwrap_or_else(|| "#097FEB".to_string());
             check_color(&ctx, t.pos, "accent", &accent)?;
             let radius = t.radius.unwrap_or(12);
             if radius < 0 {
@@ -2101,7 +2101,7 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             }
             json!({"mode": mode, "accent": accent, "radius": radius})
         }
-        None => json!({"mode": "system", "accent": "#4F46E5", "radius": 12}),
+        None => json!({"mode": "system", "accent": "#097FEB", "radius": 12}),
     };
     let mut out = JsonMap::new();
     out.insert("ir".to_string(), json!("0.1"));

@@ -40,7 +40,7 @@ app FeaturesAdditive {
       Text("Item {i}")
     }
 
-    Card(p: 16, shadow: 2, gradient: "#4F46E5,#101828", glass: true, opacity: 0.95, border: "#FFFFFF", animate: spring) {
+    Card(p: 16, shadow: 2, gradient: "#097FEB,#101828", glass: true, opacity: 0.95, border: "#FFFFFF", animate: spring) {
       Text("Hi", color: "#FFFFFF", size: 20)
     }
 
