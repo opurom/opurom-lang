@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde_json::{json, Map as JsonMap, Value as Json};
 
@@ -40,6 +41,19 @@ pub const TARGETS: &[(&str, &str)] = &[
         "Cargo.toml, src/lib.rs, index.html, host.js, README.md",
     ),
 ];
+
+/// Responsive DOM build target. It is deliberately kept out of [`TARGETS`] so
+/// `opuromc targets` still reports exactly the nine v0.1 IR emitters; it is
+/// dispatched explicitly in [`emit`].
+pub const WEB_DOM_TARGET: &str = "web-dom";
+
+/// Path of the sibling responsive DOM emitter, resolved next to this crate.
+fn web_dom_emitter_path() -> PathBuf {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("opurom-lang manifest dir has a parent workspace");
+    root.join("opurom-web").join("bin").join("opurom-web.mjs")
+}
 
 #[derive(Clone)]
 pub struct EState {
@@ -821,19 +835,17 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
             ))
         }
     }
-    let known = TARGETS.iter().any(|(n, _)| *n == target);
+    let known = TARGETS.iter().any(|(n, _)| *n == target) || target == WEB_DOM_TARGET;
     if !known {
+        let names: Vec<&str> = TARGETS
+            .iter()
+            .map(|(n, _)| *n)
+            .chain(std::iter::once(WEB_DOM_TARGET))
+            .collect();
         return Err(Diagnostic::file(
             ir_path,
             format!("unknown target '{target}'"),
-            format!(
-                "choose one of: {}",
-                TARGETS
-                    .iter()
-                    .map(|(n, _)| *n)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            format!("choose one of: {}", names.join(", ")),
         ));
     }
     let app = ir
@@ -864,6 +876,7 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
     match target {
         "native" => emit_native(&app, &states, &computed, &tree, out, ir_path, has_effects),
         "web" => emit_web(&ir, &app, &states, &computed, &tree, out, ir_path),
+        "web-dom" => emit_web_dom(ir_path, out),
         "wasm" => {
             crate::wasm::emit_wasm(&app, &states, &computed, &tree, out, ir_path, has_effects)
         }
@@ -1663,6 +1676,43 @@ fn web_computed(states: &[EState], computed: &[Computed], ir_path: &str) -> DRes
     }
     s.push_str("}\n\n");
     Ok(s)
+}
+
+/// Emits the responsive DOM page by delegating to the sibling `opurom-web`
+/// emitter, which bakes the IR into static HTML/CSS at build time. The
+/// compiler shells out rather than embedding the emitter: the DOM emitter is a
+/// Node tool, so reimplementing it here would duplicate it.
+fn emit_web_dom(ir_path: &str, out: &Path) -> DResult<()> {
+    let emitter = web_dom_emitter_path();
+    if !emitter.is_file() {
+        return Err(Diagnostic::file(
+            ir_path,
+            format!("responsive DOM emitter not found: {}", emitter.display()),
+            "keep the opurom-web sibling next to opurom-lang, or build with --target web",
+        ));
+    }
+    let output = Command::new("node")
+        .arg(&emitter)
+        .arg("emit")
+        .arg(ir_path)
+        .arg(out)
+        .output()
+        .map_err(|e| {
+            Diagnostic::file(
+                ir_path,
+                format!("cannot run the responsive DOM emitter: {e}"),
+                "install Node.js on PATH and build again",
+            )
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(Diagnostic::file(
+            ir_path,
+            format!("responsive DOM emitter failed: {}", stderr.trim()),
+            "run the opurom-web emit command by hand to see the full detail",
+        ));
+    }
+    Ok(())
 }
 
 fn emit_web(

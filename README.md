@@ -384,6 +384,14 @@ The six mini-program targets share one lowering pass and one small per-platform 
 key and binding delimiters). All emitters generate code, not an IR parser. They understand the
 the interactive UI and async IR plus `when`, `unless`, `computed` and `list` state entries.
 
+`web-dom` is an additional build target that is not part of the nine-emitter matrix, so
+`opuromc targets` stays at nine. It delegates to the sibling `opurom-web` DOM emitter, which
+bakes the IR into a standalone `index.html` with a viewport meta tag and flex layout; the page
+reflows when the browser is resized. Use
+`opurom build --src <src.opu> --target web-dom --out <dir>`. The sibling `opurom-web` repository
+must be present next to `opurom-lang`; a missing emitter is a readable diagnostic. The `web`
+target and every golden fixture are unchanged.
+
 ### Per-target effect status
 
 | Target | Status | Implementation |

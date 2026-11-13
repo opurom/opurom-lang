@@ -707,6 +707,55 @@ fn rejects_bad_ir_version_and_unknown_target() {
     assert!(err.contains("  help: "), "{err}");
 }
 
+#[test]
+fn web_dom_target_emits_responsive_dom_page() {
+    let emitter = workspace()
+        .join("..")
+        .join("opurom-web")
+        .join("bin")
+        .join("opurom-web.mjs");
+    let ir = out_dir("web-dom-ir").join("counter.opuir.json");
+    let r = compile(&spec("counter.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let dir = out_dir("web-dom");
+    let r = emit(&ir, "web-dom", &dir);
+    if !emitter.is_file() {
+        // standalone checkout: the sibling web repo is optional
+        assert_eq!(r.status.code(), Some(1));
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(err.contains("responsive DOM emitter"), "{err}");
+        assert!(err.contains("  help: "), "{err}");
+        return;
+    }
+    assert!(
+        r.status.success(),
+        "web-dom emit failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let html = fs::read_to_string(dir.join("index.html")).expect("responsive DOM page");
+    assert!(
+        !html.contains("width=\"800\""),
+        "fixed canvas width survived:\n{html}"
+    );
+    assert!(
+        !html.contains("height=\"600\""),
+        "fixed canvas height survived:\n{html}"
+    );
+    assert!(
+        html.contains("viewport"),
+        "missing responsive viewport meta:\n{html}"
+    );
+    assert!(
+        html.contains("<main id=\"app\">"),
+        "missing responsive app container:\n{html}"
+    );
+    assert!(
+        html.contains("display: flex"),
+        "missing flex layout:\n{html}"
+    );
+}
+
 fn cargo_path() -> PathBuf {
     PathBuf::from(std::env::var("HOME").expect("HOME")).join(".cargo/bin/cargo")
 }
