@@ -5618,3 +5618,79 @@ fn mini_program_stage_falls_back_and_rejects_injected_colours() {
         "no injected CSS reaches the page"
     );
 }
+
+#[test]
+fn mini_program_glass_uses_the_normative_lamina_in_both_modes() {
+    // the default UI token values 2.9 is normative: the blur chain, translucent lamina
+    // and specular/interior edges must match web-dom on every mini-program
+    // target, with only the lamina tint and edge colour changing for dark mode.
+    for (target, style_ext) in [
+        ("wechat", "wxss"),
+        ("alipay", "acss"),
+        ("qq", "qss"),
+        ("douyin", "ttss"),
+        ("baidu", "css"),
+        ("kuaishou", "css"),
+    ] {
+        let dir = out_dir(&format!("mini-glass-{target}"));
+        let src = dir.join("glass.opu");
+        fs::write(
+            &src,
+            "app Glass { theme { mode: light, accent: \"#0F766E\", radius: 8 } Column { Card(glass: true) { Text(\"hi\") } } }\n",
+        )
+        .unwrap();
+        let ir = dir.join("glass.opuir.json");
+        assert!(compile(&src, &ir).status.success(), "{target} compile");
+        let out = dir.join("page");
+        assert!(emit(&ir, target, &out).status.success(), "{target} emit");
+        let css = fs::read_to_string(out.join(format!("pages/index/index.{style_ext}"))).unwrap();
+        assert!(
+            css.contains("backdrop-filter:blur(2px) saturate(1.5) contrast(1.12) brightness(1.04)"),
+            "{target} must use the normative blur chain"
+        );
+        assert!(
+            css.contains("background:rgba(255, 255, 255, 0.42)"),
+            "{target} light lamina"
+        );
+        assert!(
+            css.contains("inset 0 1px 0 rgba(255, 255, 255, 0.6)"),
+            "{target} specular top edge"
+        );
+        assert!(
+            css.contains("inset 0 -12px 28px rgba(17, 24, 39, 0.07)"),
+            "{target} lower interior edge"
+        );
+        assert!(
+            !css.contains("blur(6px)"),
+            "{target} must not use the legacy frost"
+        );
+
+        // A dark theme swaps the lamina, border and specular edge, not the blur.
+        let dark = dir.join("dark.opuir.json");
+        let mut doc: serde_json::Value = serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap();
+        doc["theme"]["mode"] = serde_json::json!("dark");
+        fs::write(&dark, serde_json::to_vec(&doc).unwrap()).unwrap();
+        let out2 = dir.join("page-dark");
+        assert!(
+            emit(&dark, target, &out2).status.success(),
+            "{target} dark emit"
+        );
+        let css2 = fs::read_to_string(out2.join(format!("pages/index/index.{style_ext}"))).unwrap();
+        assert!(
+            css2.contains("background:rgba(30, 35, 46, 0.38)"),
+            "{target} dark lamina"
+        );
+        assert!(
+            css2.contains("inset 0 1px 0 rgba(255, 255, 255, 0.22)"),
+            "{target} dark specular edge"
+        );
+        assert!(
+            css2.contains("border:1px solid rgba(255, 255, 255, 0.14)"),
+            "{target} dark glass border"
+        );
+        assert!(
+            css2.contains("backdrop-filter:blur(2px) saturate(1.5)"),
+            "{target} dark keeps the same blur chain"
+        );
+    }
+}
