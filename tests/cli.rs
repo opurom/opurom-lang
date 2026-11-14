@@ -5229,3 +5229,43 @@ fn forms_layer_keeps_golden_ir_byte_identical() {
         }
     }
 }
+
+#[test]
+fn image_fit_and_radius_lower_to_the_canonical_props() {
+    // The native PNG decoder consumes `fit` and `radius`; the source layer must
+    // accept them on Image so a project can request cover/contain/fill without
+    // hand-editing IR. Documents without them emit no such keys.
+    let dir = out_dir("image-fit");
+    let src = dir.join("fit.opu");
+    fs::write(
+        &src,
+        r##"app Fitted {
+  theme { mode: light, accent: "#097FEB", radius: 8 }
+  Column {
+    Image(src: "assets/photo1.png", width: 120, height: 60, fit: "cover", rounded: 8)
+  }
+}
+"##,
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let image = nodes_of(&ir)
+        .into_iter()
+        .find(|n| n["kind"] == "Image")
+        .expect("an Image node is emitted");
+    assert_eq!(image["props"]["fit"], "cover");
+    assert_eq!(image["props"]["radius"], 8);
+
+    let plain = dir.join("plain.opu");
+    fs::write(
+        &plain,
+        "app Plain { Column { Image(src: \"x.png\", width: 10, height: 10) } }\n",
+    )
+    .unwrap();
+    let ir2 = compile_ok(&plain);
+    let image2 = nodes_of(&ir2)
+        .into_iter()
+        .find(|n| n["kind"] == "Image")
+        .unwrap();
+    assert!(image2["props"].get("fit").is_none(), "no fit without the prop");
+}
