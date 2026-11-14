@@ -134,18 +134,20 @@ pub fn resolve(project_root: &Path) -> JsonMap<String, Json> {
 
 /// The project root for a source file: the nearest directory with
 /// `opurom.json`, walking up but stopping at a repository boundary, exactly
-/// like the module resolver's own project discovery.
+/// like the module resolver's own project discovery. The result is canonical
+/// so containment checks against canonicalized package directories hold even
+/// when the compiler was invoked with a relative source path.
 pub fn project_root(source_path: &str) -> PathBuf {
     let start = Path::new(source_path).parent().unwrap_or_else(|| Path::new("."));
     for dir in start.ancestors() {
         if dir.join("opurom.json").is_file() {
-            return dir.to_path_buf();
+            return fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
         }
         if dir.join(".git").exists() {
             break;
         }
     }
-    start.to_path_buf()
+    fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf())
 }
 
 /// A diagnostics helper for an unknown name that also is not in any package.
