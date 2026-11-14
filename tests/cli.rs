@@ -5724,10 +5724,19 @@ fn every_emitter_rejects_an_undeclared_event_name() {
     ] {
         let out = dir.join(target);
         let r = emit(&ir, target, &out);
-        assert!(!r.status.success(), "{target} must reject the unknown event name");
+        assert!(
+            !r.status.success(),
+            "{target} must reject the unknown event name"
+        );
         let err = String::from_utf8_lossy(&r.stderr);
-        assert!(err.contains("unknown event name 'bogusEvent'"), "{target}: {err}");
-        assert!(!out.exists(), "{target} must not create an output directory on failure");
+        assert!(
+            err.contains("unknown event name 'bogusEvent'"),
+            "{target}: {err}"
+        );
+        assert!(
+            !out.exists(),
+            "{target} must not create an output directory on failure"
+        );
     }
 }
 
@@ -5753,6 +5762,408 @@ fn emitters_accept_every_declared_event_name() {
         "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
     ] {
         let r = emit(&ir, target, &dir.join(target));
-        assert!(r.status.success(), "{target}: {}", String::from_utf8_lossy(&r.stderr));
+        assert!(
+            r.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
     }
+}
+
+// ------------------------------- design-system node props ------------------
+
+/// One `.opu` document exercising every accepted value of `state`, `variant`
+/// and `tone` across the primitives the renderer draws them on, alongside
+/// declared state variables. Reused by the lowering, emitter and render tests.
+const DESIGN_SOURCE: &str = r#"app DesignProbe {
+  state flag = false
+  state label = "hi"
+  state level = 5
+  Column(gap: 6) {
+    Button("OK", state: hover, variant: primary, tone: success) { flag.toggle() }
+    Text("Caption", state: focus, variant: danger, tone: error)
+    Card(state: disabled, variant: ghost, tone: info) { Text("inside") }
+    Input(placeholder: "name", bind: label, state: active, variant: secondary, tone: warning)
+    Checkbox(bind: flag, state: default, variant: text, tone: neutral)
+    Switch(bind: flag, state: hover, variant: fab, tone: success)
+    Radio(bind: label, value: "hi", state: active, variant: primary, tone: info)
+    Slider(bind: level, min: 0, max: 10, state: focus, variant: secondary, tone: warning)
+    Image(src: "pic.png", state: disabled, variant: text, tone: error)
+  }
+}
+"#;
+
+#[test]
+fn design_props_lower_under_node_props_and_coexist_with_state() {
+    let dir = out_dir("design-lower");
+    let src = dir.join("design.opu");
+    fs::write(&src, DESIGN_SOURCE).unwrap();
+    let ir = compile_ok(&src);
+
+    // The top-level `state` array keeps its documented shape: only the three
+    // declared states, each with name/type/init. The `state` node prop is never
+    // hoisted into it, and no design value leaks in as a state name.
+    let states = ir["state"].as_array().expect("top-level state array");
+    let names: Vec<&str> = states.iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["flag", "label", "level"]);
+    for entry in states {
+        assert!(entry.get("name").is_some());
+        assert!(entry.get("type").is_some());
+        assert!(entry.get("init").is_some());
+    }
+
+    // Every drawn primitive carries all three design props under its own
+    // `props` map with string values the renderer accepts.
+    let drawn = [
+        "Button", "Input", "Checkbox", "Switch", "Radio", "Slider", "Card", "Image", "Text",
+    ];
+    for kind in drawn {
+        let node = nodes_of(&ir)
+            .into_iter()
+            .find(|n| n["kind"] == kind)
+            .unwrap_or_else(|| panic!("missing {kind} node"));
+        for key in ["state", "variant", "tone"] {
+            assert!(
+                node["props"][key].is_string(),
+                "{kind} lost the '{key}' design prop"
+            );
+        }
+    }
+}
+
+#[test]
+fn state_prop_does_not_collide_with_state_or_repeat_lowering() {
+    // `state` is a top-level keyword for declarations and `for item in
+    // state.items`; using it as a node prop must leave both intact.
+    let dir = out_dir("design-coexist");
+    let src = dir.join("coexist.opu");
+    fs::write(
+        &src,
+        r#"app Coexist {
+  state flag = false
+  state items = ["a", "b"]
+  Column(gap: 4) {
+    Button("OK", state: hover, variant: primary, tone: success) { flag.toggle() }
+    for item in state.items {
+      Text("{item}", state: focus, variant: danger, tone: info)
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+
+    let states = ir["state"].as_array().expect("top-level state array");
+    assert_eq!(states.len(), 2, "only the two declared states remain");
+    assert_eq!(states[0]["name"], "flag");
+    assert_eq!(states[1]["type"], "list");
+
+    // The `for` subtree still lowers to a repeat node whose child keeps its
+    // design props and its `{item}` interpolation.
+    let repeat = nodes_of(&ir)
+        .into_iter()
+        .find(|n| n.get("repeat").is_some())
+        .expect("for/repeat node must survive");
+    assert_eq!(repeat["repeat"]["list"], "items");
+    let button = nodes_of(&ir)
+        .into_iter()
+        .find(|n| n["kind"] == "Button")
+        .unwrap();
+    assert_eq!(button["props"]["state"], "hover");
+    assert_eq!(button["props"]["variant"], "primary");
+    assert_eq!(button["props"]["tone"], "success");
+}
+
+#[test]
+fn unknown_design_values_are_rejected_with_help() {
+    let dir = out_dir("design-invalid");
+    let cases: &[(&str, &str, &str, &str)] = &[
+        (
+            "state",
+            "app Bad { Text(\"x\", state: bogus) }",
+            "unknown state value 'bogus'",
+            "default, hover, active, focus, disabled",
+        ),
+        (
+            "variant",
+            "app Bad { Button(\"x\", variant: bogus) }",
+            "unknown variant value 'bogus'",
+            "primary, secondary, text, danger, ghost, fab",
+        ),
+        (
+            "tone",
+            "app Bad { Card { Text(\"x\", tone: bogus) } }",
+            "unknown tone value 'bogus'",
+            "success, warning, error, info, neutral",
+        ),
+        (
+            "type",
+            "app Bad { Button(\"x\", tone: 7) }",
+            "prop 'tone' expects a keyword, found int",
+            "success, warning, error, info, neutral",
+        ),
+    ];
+    for &(name, source, expected, allowed) in cases {
+        let path = dir.join(format!("{name}.opu"));
+        fs::write(&path, source).unwrap();
+        let r = bin().arg("check").arg(&path).output().expect("run check");
+        assert_eq!(r.status.code(), Some(1), "{name} must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            err.contains(expected),
+            "{name}: unexpected diagnostic: {err}"
+        );
+        assert!(
+            err.contains(allowed),
+            "{name}: help must list allowed values: {err}"
+        );
+        assert_error_shape(&err);
+        let out = dir.join(format!("{name}.opuir.json"));
+        let capability = compile(&path, &out);
+        assert_eq!(capability.status.code(), Some(1), "{name}: compile must fail");
+        assert!(!out.exists(), "{name}: no IR may be written on error");
+    }
+}
+
+#[test]
+fn all_nine_emitters_preserve_design_props() {
+    let dir = out_dir("design-emit");
+    let src = dir.join("design.opu");
+    fs::write(&src, DESIGN_SOURCE).unwrap();
+    let ir_path = dir.join("design.opuir.json");
+    let r = compile(&src, &ir_path);
+    assert!(
+        r.status.success(),
+        "design compile failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let ir_doc: Json = serde_json::from_slice(&fs::read(&ir_path).unwrap()).unwrap();
+
+    // The artifact that carries the node props for each of the nine targets.
+    let cases: &[(&str, &str)] = &[
+        ("native", "src/main.rs"),
+        ("web", "ir.json"),
+        ("wechat", "pages/index/index.wxml"),
+        ("alipay", "pages/index/index.axml"),
+        ("qq", "pages/index/index.qml"),
+        ("douyin", "pages/index/index.ttml"),
+        ("baidu", "pages/index/index.swan"),
+        ("kuaishou", "pages/index/index.ksml"),
+        ("wasm", "host.js"),
+    ];
+    for &(target, artifact) in cases {
+        let out = dir.join(format!("out-{target}"));
+        let e = emit(&ir_path, target, &out);
+        let stderr = String::from_utf8_lossy(&e.stderr);
+        assert!(e.status.success(), "{target} emit failed: {stderr}");
+        assert!(!stderr.contains("panicked"), "{target} emitter panicked");
+        let text = fs::read_to_string(out.join(artifact))
+            .unwrap_or_else(|_| panic!("{target}: missing {artifact}"));
+        for marker in ["state", "variant", "tone", "hover", "primary", "success"] {
+            assert!(
+                text.contains(marker),
+                "{target}/{artifact} silently dropped '{marker}'"
+            );
+        }
+        match target {
+            "native" => {
+                // The full IR is embedded as an escaped Rust string literal
+                // (`\"variant\"`), so the marker loop above is the reliable
+                // proof that the three keys and their values survive.
+            }
+            "web" => {
+                assert!(
+                    text.contains("\"variant\"") && text.contains("\"tone\""),
+                    "web ir.json lost design prop keys"
+                );
+                node_check(&out.join("app.js"));
+            }
+            "wasm" => {
+                node_check(&out.join("host.js"));
+                assert!(text.contains("\"design\""), "wasm lost design metadata");
+                assert!(
+                    text.contains("variant: \"primary\""),
+                    "wasm TREE lost design props"
+                );
+            }
+            _ => {
+                node_check(&out.join("pages/index/index.js"));
+                assert!(
+                    text.contains("data-state=")
+                        && text.contains("data-variant=")
+                        && text.contains("data-tone="),
+                    "{target} markup lost design data attributes"
+                );
+                let index_js = fs::read_to_string(out.join("pages/index/index.js")).unwrap();
+                assert!(
+                    index_js.contains("\"design\""),
+                    "{target} lost design metadata"
+                );
+            }
+        }
+    }
+
+    // The native target still builds and runs with the new props present.
+    let native_dir = dir.join("out-native");
+    let (built, build_log) = build_native(&native_dir);
+    assert!(built, "generated native design crate failed: {build_log}");
+    let tap_id = find_tap_id(&ir_doc);
+    let (ran, stdout) = run_native(
+        &native_dir.join("target/release/opurom_native"),
+        &format!("tap {tap_id}\nstate\nquit\n"),
+    );
+    assert!(ran, "generated native design app exited nonzero");
+    assert!(
+        stdout.contains("flag=true"),
+        "tap handler did not run: {stdout}"
+    );
+}
+
+#[test]
+fn design_props_keep_golden_ir_byte_identical() {
+    let dir = out_dir("design-golden");
+    let cases = [
+        (contract("counter.opu"), fixture("golden/counter.opuir.json")),
+        (example("profile.opu"), fixture("golden/profile.opuir.json")),
+        (
+            fixture("golden/todo.opu"),
+            fixture("golden/todo.opuir.json"),
+        ),
+        (
+            example("showcase.opu"),
+            fixture("golden/showcase.opuir.json"),
+        ),
+        (example("gallery.opu"), fixture("golden/gallery.opuir.json")),
+    ];
+    for (index, (src, golden)) in cases.iter().enumerate() {
+        if !src.is_file() {
+            continue; // standalone checkout: the sibling example repo is optional
+        }
+        let out = dir.join(format!("golden-{index}.opuir.json"));
+        let r = compile(src, &out);
+        assert!(
+            r.status.success(),
+            "{} compile failed: {}",
+            src.display(),
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let got = fs::read(&out).expect("read compiled golden IR");
+        let expected = fs::read(golden).expect("read byte-level golden IR");
+        assert_eq!(got, expected, "{} changed its bytes", golden.display());
+        // A program that does not use the new props emits no such keys, and the
+        // top-level `state` array keeps exactly its original shape.
+        let ir: Json = serde_json::from_slice(&got).unwrap();
+        assert!(
+            ir["state"].is_array(),
+            "{} lost its top-level state array",
+            golden.display()
+        );
+        for node in nodes_of(&ir) {
+            for key in ["state", "variant", "tone"] {
+                assert!(
+                    node["props"].get(key).is_none(),
+                    "{} gained {key}",
+                    golden.display()
+                );
+            }
+        }
+    }
+}
+
+/// Remove the three design props from every node of an IR tree.
+fn strip_design_props(node: &mut Json) {
+    if let Some(props) = node.get_mut("props").and_then(Json::as_object_mut) {
+        for key in ["state", "variant", "tone"] {
+            props.remove(key);
+        }
+    }
+    if let Some(children) = node.get_mut("children").and_then(Json::as_array_mut) {
+        for child in children {
+            strip_design_props(child);
+        }
+    }
+}
+
+/// Locate a prebuilt sibling renderer binary, if one is available.
+fn sibling_renderer_bin() -> Option<PathBuf> {
+    let root = workspace().join("..").join("opurom-render");
+    for rel in ["target/release/opurom-render", "target/debug/opurom-render"] {
+        let p = root.join(rel);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    if let Ok(paths) = std::env::var("PATH") {
+        for dir in paths.split(':') {
+            let p = Path::new(dir).join("opurom-render");
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn design_props_render_end_to_end_with_stable_digest() {
+    let Some(renderer) = sibling_renderer_bin() else {
+        eprintln!("skip: sibling opurom-render binary is absent");
+        return;
+    };
+    let dir = out_dir("design-render");
+    let src = dir.join("design.opu");
+    fs::write(&src, DESIGN_SOURCE).unwrap();
+    let ir_path = dir.join("design.opuir.json");
+    let r = compile(&src, &ir_path);
+    assert!(
+        r.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+
+    let run = |ir: &Path, ppm: &Path| -> (bool, String) {
+        let out = Command::new(&renderer)
+            .arg(ir)
+            .arg("320")
+            .arg("240")
+            .arg(ppm)
+            .output()
+            .expect("run opurom-render");
+        (
+            out.status.success(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+    let a = dir.join("a.ppm");
+    let b = dir.join("b.ppm");
+    let (ok1, out1) = run(&ir_path, &a);
+    let (ok2, out2) = run(&ir_path, &b);
+    assert!(ok1 && ok2, "render failed:\n{out1}\n{out2}");
+    let d1 = render_digest(&out1);
+    let d2 = render_digest(&out2);
+    assert_eq!(d1.len(), 16, "missing 16-hex digest:\n{out1}");
+    assert_eq!(d1, d2, "rendered digest must be stable across runs");
+    assert_eq!(
+        fs::read(&a).unwrap(),
+        fs::read(&b).unwrap(),
+        "rendered pixels must be byte-identical"
+    );
+
+    // The renderer must actually draw the props: stripping them changes the frame.
+    let mut doc: Json = serde_json::from_slice(&fs::read(&ir_path).unwrap()).unwrap();
+    strip_design_props(doc.get_mut("tree").unwrap());
+    let base_ir = dir.join("stripped.opuir.json");
+    fs::write(&base_ir, serde_json::to_vec(&doc).unwrap()).unwrap();
+    let (ok3, out3) = run(&base_ir, &dir.join("c.ppm"));
+    assert!(ok3, "stripped render failed:\n{out3}");
+    assert_ne!(
+        render_digest(&out3),
+        d1,
+        "design props must change the rendered digest"
+    );
 }

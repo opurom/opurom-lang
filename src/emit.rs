@@ -7,7 +7,7 @@ use serde_json::{json, Map as JsonMap, Value as Json};
 
 use crate::diag::{DResult, Diagnostic};
 use crate::icons;
-use crate::lower::{interp_parts, offset_pos, Part, EXTENDED_PRIMITIVE_KINDS};
+use crate::lower::{interp_parts, offset_pos, Part, DESIGN_PROPS, EXTENDED_PRIMITIVE_KINDS};
 use crate::parser::Pos;
 
 pub const TARGETS: &[(&str, &str)] = &[
@@ -269,10 +269,12 @@ fn read_node(v: &Json, ir_path: &str) -> DResult<ENode> {
     // the IR format declares a closed event-name set. Reject an undeclared name
     // here, at the shared entry for all nine emitters, instead of silently
     // dropping the binding: the web-dom validator applies the same rule.
-    if let Some(unknown) = events
-        .keys()
-        .find(|k| !matches!(k.as_str(), "tap" | "input" | "doubleTap" | "longPress" | "drag"))
-    {
+    if let Some(unknown) = events.keys().find(|k| {
+        !matches!(
+            k.as_str(),
+            "tap" | "input" | "doubleTap" | "longPress" | "drag"
+        )
+    }) {
         return Err(bad_ir(
             ir_path,
             format!("IR node has unknown event name '{unknown}' (expected tap|input|doubleTap|longPress|drag)"),
@@ -760,6 +762,24 @@ fn validation_attrs(props: &JsonMap<String, Json>) -> String {
     out
 }
 
+/// Whether a prop key is one of the interaction/variant/tone design props.
+fn is_design_prop(key: &str) -> bool {
+    DESIGN_PROPS.iter().any(|(k, _)| *k == key)
+}
+
+/// Preserve the design props on every node as `data-*` attributes, so a
+/// mini-program stylesheet or script can drive the same states the renderer
+/// draws. Nodes without any of them emit nothing (byte-identical output).
+fn design_attrs(props: &JsonMap<String, Json>) -> String {
+    let mut out = String::new();
+    for (key, _) in DESIGN_PROPS {
+        if let Some(Json::String(value)) = props.get(*key) {
+            out.push_str(&format!(" data-{}=\"{}\"", key, html_attr(value)));
+        }
+    }
+    out
+}
+
 fn markup_text(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -934,14 +954,15 @@ pub fn event_actions(event: &Json) -> Vec<&Json> {
     }
 }
 
-/// Preserve repeat, validator and validate-action metadata in targets that do
-/// not have native form or builder runtimes yet.
+/// Preserve repeat, validator, validate-action and design metadata in targets
+/// that do not have native form or builder runtimes yet.
 pub fn additive_meta(tree: &ENode) -> Option<String> {
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
     let mut repeat = Vec::new();
     let mut validation = Vec::new();
     let mut validate = Vec::new();
+    let mut design = Vec::new();
     for n in &nodes {
         if let Some(meta) = &n.repeat {
             repeat.push(json!({"id": n.id, "repeat": meta.clone()}));
@@ -955,6 +976,15 @@ pub fn additive_meta(tree: &ENode) -> Option<String> {
         if !props.is_empty() {
             validation.push(json!({"id": n.id, "props": Json::Object(props)}));
         }
+        let mut dprops = JsonMap::new();
+        for (key, _) in DESIGN_PROPS {
+            if let Some(value) = n.props.get(*key) {
+                dprops.insert((*key).to_string(), value.clone());
+            }
+        }
+        if !dprops.is_empty() {
+            design.push(json!({"id": n.id, "props": Json::Object(dprops)}));
+        }
         for (event, action) in &n.events {
             for one in event_actions(action) {
                 if one.get("op").and_then(Json::as_str) == Some("validate") {
@@ -967,15 +997,26 @@ pub fn additive_meta(tree: &ENode) -> Option<String> {
             }
         }
     }
-    if repeat.is_empty() && validation.is_empty() && validate.is_empty() {
+    if repeat.is_empty() && validation.is_empty() && validate.is_empty() && design.is_empty() {
         return None;
     }
-    serde_json::to_string(&json!({
-        "repeat": repeat,
-        "validation": validation,
-        "validate": validate,
-    }))
-    .ok()
+    // Only add the `design` field when present, so IR without the new props
+    // keeps byte-identical metadata.
+    let meta = if design.is_empty() {
+        json!({
+            "repeat": repeat,
+            "validation": validation,
+            "validate": validate,
+        })
+    } else {
+        json!({
+            "repeat": repeat,
+            "validation": validation,
+            "validate": validate,
+            "design": design,
+        })
+    };
+    serde_json::to_string(&meta).ok()
 }
 
 fn interp_error(s: &str, off: usize, msg: String, ir_path: &str) -> Diagnostic {
@@ -2657,7 +2698,13 @@ fn markup_node(
 ) -> DResult<()> {
     let pad = "  ".repeat(depth);
     let id = n.id;
-    let style = style_of(&n.props, n.kind == "Container", is_text_kind(&n.kind), dark, is_elevated_glass_kind(&n.kind));
+    let style = style_of(
+        &n.props,
+        n.kind == "Container",
+        is_text_kind(&n.kind),
+        dark,
+        is_elevated_glass_kind(&n.kind),
+    );
     let anim = anim_class(&n.props);
     let style_attr = if style.is_empty() {
         String::new()
@@ -2707,6 +2754,7 @@ fn markup_node(
             html_attr(&meta.to_string())
         ));
     }
+    a11y_attr.push_str(&design_attrs(&n.props));
     match n.kind.as_str() {
         "Text" => {
             let value = markup_interp(&prop_str(&n.props, "value", ""), p, ir_path)?;
@@ -2780,7 +2828,13 @@ fn markup_node(
                         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"{path}\"/></svg>"
                     );
                     let b64 = base64_encode(&svg);
-                    let mut style = style_of(&n.props, false, is_text_kind(&n.kind), dark, is_elevated_glass_kind(&n.kind));
+                    let mut style = style_of(
+                        &n.props,
+                        false,
+                        is_text_kind(&n.kind),
+                        dark,
+                        is_elevated_glass_kind(&n.kind),
+                    );
                     if !style.contains("width:") {
                         style = if style.is_empty() {
                             "width:16px;height:16px".to_string()
@@ -2824,6 +2878,11 @@ fn markup_node(
             let slug = k.to_lowercase();
             let mut data = format!(" data-kind=\"{}\"", html_attr(k));
             for (key, value) in &n.props {
+                // Design props ride on `a11y_attr`, so skip them here to avoid
+                // emitting the same data attribute twice.
+                if is_design_prop(key) {
+                    continue;
+                }
                 let rendered = match value {
                     Json::String(s) => markup_interp(s, p, ir_path)?,
                     other => other.to_string(),
@@ -3077,7 +3136,13 @@ fn emit_mini(
         "page {{ background-color: {stage}; }}\n.col {{ display: flex; flex-direction: column; }}\n.row {{ display: flex; flex-direction: row; }}\n.grid {{ display: flex; flex-direction: row; flex-wrap: wrap; }}\n@keyframes opurom-entry {{ from {{ transform: scale(0); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}\n.anim-entry {{ transform-origin: center; animation: opurom-entry 480ms ease-out both; }}\n.anim-spring {{ animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }}\n.anim-ease {{ animation-timing-function: ease-out; }}\n.anim-inertia {{ animation-timing-function: ease-in-out; }}\n.anim-collision {{ animation-timing-function: cubic-bezier(0.5, 1.6, 0.4, 1); }}\n",
     ));
     for n in &nodes {
-        let s = style_of(&n.props, n.kind == "Container", is_text_kind(&n.kind), dark, is_elevated_glass_kind(&n.kind));
+        let s = style_of(
+            &n.props,
+            n.kind == "Container",
+            is_text_kind(&n.kind),
+            dark,
+            is_elevated_glass_kind(&n.kind),
+        );
         if !s.is_empty() {
             style.push_str(&format!(".n{} {{ {}; }}\n", n.id, s));
         }

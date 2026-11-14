@@ -806,7 +806,9 @@ fn node_table(tree: &ENode) -> String {
     fn write_node(n: &ENode, out: &mut String, depth: usize) {
         let pad = "  ".repeat(depth);
         let mut props = String::new();
-        for key in ["value", "label", "color", "title", "name", "pattern"] {
+        for key in [
+            "value", "label", "color", "title", "name", "pattern", "state", "variant", "tone",
+        ] {
             if let Some(Json::String(v)) = n.props.get(key) {
                 props.push_str(&format!(
                     ", {}: {}",

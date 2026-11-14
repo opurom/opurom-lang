@@ -80,6 +80,7 @@ computed_factor = [ "-" ] INT | IDENT ;
 | Theme block | `theme { mode: dark, accent: "#FF4D6D", radius: 8 }` | `IR.theme` |
 | Atomic shortcuts | `p` / `m` / `bg` / `rounded` | `padding` / `margin` / `color` / `radius` |
 | Visual props | `shadow`, `gradient`, `glass`, `opacity`, `border`, `animate` | passed through |
+| Design-system props | `Button("x", state: hover, variant: primary, tone: success)` | same-named `props` on any node |
 | Gesture binding | `Button("x", gesture: longPress) { ... }` | handler under the `longPress` event |
 | Particle field | `particles: "count=64,seed=7,radius=2"` | bounded `props.particles` object |
 | Repeatable list | `for item in state.items { Text("{item}") }` | node-level `"repeat": {"item":"item","list":"items"}` with template `children` |
@@ -155,6 +156,44 @@ These emitters do not yet implement runtime repetition or field-level validation
 graceful fallback renders the template once, reserves `@validate` as a signal, and keeps every
 additive field available to a consumer that does. Plain programs gain no `repeat`, validator or
 validate keys, and the golden IR fixtures remain byte-identical.
+
+### Design-system node props
+
+`state`, `variant` and `tone` are visual props accepted on every node kind, including catalog
+components that resolve onto a drawn primitive. They lower unchanged into the node's `props` so
+the renderer can draw them:
+
+| Prop | Allowed values |
+| --- | --- |
+| `state` | `default`, `hover`, `active`, `focus`, `disabled` |
+| `variant` | `primary`, `secondary`, `text`, `danger`, `ghost`, `fab` |
+| `tone` | `success`, `warning`, `error`, `info`, `neutral` |
+
+```opu
+app DesignDemo {
+  Column {
+    Button("Save", state: hover, variant: primary, tone: success)
+    Text("Check your input", state: focus, variant: danger, tone: error)
+  }
+}
+```
+
+Values are validated at compile time: an unknown value is rejected with a friendly diagnostic
+whose help line lists the allowed set, matching the `animate` and `gesture` props. `state` is a
+node prop key only — it lives under each node's `props` and never collides with state variable
+declarations, `{name}` interpolation or `for item in state.items`.
+
+The nine emitters preserve all three props rather than silently dropping them:
+
+| Emitter | Preservation |
+| --- | --- |
+| `native` | `src/main.rs` embeds the full IR. |
+| `web` | `ir.json` embeds the full IR. |
+| `wechat`, `alipay`, `qq`, `douyin`, `baidu`, `kuaishou` | markup carries `data-state`, `data-variant` and `data-tone` on every node; `pages/index/index.js` carries the props under `Opurom_META.design`. |
+| `wasm` | `host.js` carries them in `TREE` and under `Opurom_META.design`. |
+
+Plain programs that omit the props emit identical bytes, and the golden IR fixtures remain
+byte-identical.
 
 ### Gestures and navigation
 

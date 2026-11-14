@@ -233,6 +233,31 @@ const ANIMATE_VALUES: &[&str] = &["spring", "ease", "inertia", "collision", "non
 /// callbacks that this layer exposes.
 const GESTURE_VALUES: &[&str] = &["tap", "doubleTap", "longPress", "drag"];
 
+/// Interaction state, design-system variant and semantic tone are node props
+/// every kind accepts; the values mirror opurom-render's `ir.rs`. Emitters
+/// share this table so all nine preserve the same keys. `state` is only a prop
+/// key here: node props live under each node's `props`, so it never collides
+/// with state declarations, `{name}` interpolation or `for item in state.items`.
+pub const DESIGN_PROPS: &[(&str, &[&str])] = &[
+    (
+        "state",
+        &["default", "hover", "active", "focus", "disabled"],
+    ),
+    (
+        "variant",
+        &["primary", "secondary", "text", "danger", "ghost", "fab"],
+    ),
+    ("tone", &["success", "warning", "error", "info", "neutral"]),
+];
+
+/// Allowed values for a design prop, or `None` if `key` is not a design prop.
+fn design_allowed(key: &str) -> Option<&'static [&'static str]> {
+    DESIGN_PROPS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, values)| *values)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Ty {
     Int,
@@ -1105,6 +1130,29 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         }
         return Ok(json!(s));
     }
+    if let Some(allowed) = design_allowed(key) {
+        let s = match &arg.value {
+            AstValue::Lit(Lit::Str(s)) | AstValue::Ident(s) => s.clone(),
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop '{key}' expects a keyword, found {}",
+                        value_desc(other)
+                    ),
+                    format!("use one of: {}", allowed.join(", ")),
+                ))
+            }
+        };
+        if !allowed.contains(&s.as_str()) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("unknown {key} value '{s}'"),
+                format!("use one of: {}", allowed.join(", ")),
+            ));
+        }
+        return Ok(json!(s));
+    }
     if key == "particles" {
         return particles_value(ctx, arg);
     }
@@ -1405,7 +1453,10 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
         if key == "maxLength" {
             max_length_pos = Some(arg.pos);
         }
-        if !info.props.contains(&key.as_str()) && !GENERIC_PROPS.contains(&key.as_str()) {
+        if !info.props.contains(&key.as_str())
+            && !GENERIC_PROPS.contains(&key.as_str())
+            && design_allowed(&key).is_none()
+        {
             return Err(ctx.err(
                 arg.pos,
                 format!("unknown prop '{raw_key}' on {source_kind}"),
