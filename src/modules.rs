@@ -213,6 +213,7 @@ impl Merge {
             theme,
             models,
             apis,
+            pages,
         } = main;
         self.states.extend(states);
         self.models.extend(models);
@@ -227,6 +228,7 @@ impl Merge {
             theme: self.theme.or(theme),
             models: self.models,
             apis: self.apis,
+            pages,
         }
     }
 }

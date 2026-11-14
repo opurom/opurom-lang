@@ -453,6 +453,11 @@ impl<'a> Checker<'a> {
     }
 
     fn statement(&self, stmt: &Stmt) -> DResult<()> {
+        // `push:` targets a declared page, not a state; the page set is checked
+        // during lowering, where the app's `page` declarations are available.
+        if matches!(stmt.kind, StmtKind::Push) {
+            return Ok(());
+        }
         let target = self
             .state_of(&stmt.target)
             .ok_or_else(|| self.unknown_event_state(&stmt.target, stmt.pos))?;
@@ -549,6 +554,7 @@ impl<'a> Checker<'a> {
                     ));
                 }
             }
+            StmtKind::Push => {}
         }
         Ok(())
     }

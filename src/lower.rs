@@ -202,6 +202,7 @@ const GENERIC_PROPS: &[&str] = &[
     "opacity",
     "border",
     "animate",
+    "gesture",
     "label",
     "role",
     "fontScale",
@@ -223,6 +224,10 @@ const GENERIC_NUMERIC: &[&str] = &["padding", "margin", "radius"];
 const HANDLER_VERBS: &[&str] = &["list", "get", "create", "update", "delete"];
 
 const ANIMATE_VALUES: &[&str] = &["spring", "ease", "inertia", "none"];
+
+/// Gesture names the renderer binds, matching Flutter's `GestureDetector`
+/// callbacks that this layer exposes.
+const GESTURE_VALUES: &[&str] = &["tap", "doubleTap", "longPress", "drag"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Ty {
@@ -690,6 +695,8 @@ struct Ctx<'a> {
     lists: HashMap<String, Vec<String>>,
     /// Loop variables of enclosing `for` blocks, innermost last.
     loops: Vec<(String, LoopValue)>,
+    /// Page names declared by `page Name;`, used to validate `push:` targets.
+    pages: HashSet<String>,
 }
 
 impl<'a> Ctx<'a> {
@@ -708,6 +715,20 @@ impl<'a> Ctx<'a> {
             "(no states declared)".to_string()
         } else {
             self.order.join(", ")
+        }
+    }
+
+    fn page_list(&self) -> String {
+        if self.pages.is_empty() {
+            "(no pages declared)".to_string()
+        } else {
+            let mut names: Vec<&String> = self.pages.iter().collect();
+            names.sort();
+            names
+                .iter()
+                .map(|n| n.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         }
     }
 
@@ -987,6 +1008,30 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         }
         return Ok(json!(s));
     }
+    if key == "gesture" {
+        let s =
+            match &arg.value {
+                AstValue::Lit(Lit::Str(s)) => s.clone(),
+                AstValue::Ident(s) => s.clone(),
+                other => return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop 'gesture' expects a keyword, found {}",
+                        value_desc(other)
+                    ),
+                    "write gesture: tap, gesture: doubleTap, gesture: longPress or gesture: drag"
+                        .to_string(),
+                )),
+            };
+        if !GESTURE_VALUES.contains(&s.as_str()) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("unknown gesture value '{s}'"),
+                "use one of: tap, doubleTap, longPress, drag".to_string(),
+            ));
+        }
+        return Ok(json!(s));
+    }
     if key == "particles" {
         return particles_value(ctx, arg);
     }
@@ -1175,6 +1220,20 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
                 Ok(json!({"op": "set", "target": stmt.target, "valueFrom": name}))
             }
         },
+        StmtKind::Push => {
+            if !ctx.pages.contains(&stmt.target) {
+                return Err(ctx.err(
+                    stmt.pos,
+                    format!("unknown page '{}'", stmt.target),
+                    format!(
+                        "declare 'page {}' in the app or use one of: {}",
+                        stmt.target,
+                        ctx.page_list()
+                    ),
+                ));
+            }
+            Ok(json!({"op": "push", "target": stmt.target}))
+        }
         StmtKind::Toggle => Ok(json!({"op": "toggle", "target": stmt.target})),
     }
 }
@@ -1326,6 +1385,12 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
     }
 
     let mut events = JsonMap::new();
+    // A `gesture` prop is a gesture binding, not a visual prop: it is removed
+    // from `props` and lowered into the event map under its own name.
+    let gesture = match props.remove("gesture") {
+        Some(Json::String(s)) => Some(s),
+        _ => None,
+    };
     let mut children = Vec::new();
     if let Some(block) = &node.block {
         if block.is_async && !info.tap {
@@ -1359,7 +1424,8 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
                 object.insert("effects".to_string(), Json::Array(effects));
             }
             if block.is_async || has_actions || has_effects {
-                events.insert("tap".to_string(), event);
+                // `gesture: longPress` binds the handler to the matching event.
+                events.insert(gesture.clone().unwrap_or_else(|| "tap".to_string()), event);
             }
         } else if info.children {
             if let Some(stmt) = block.stmts.first() {
@@ -1386,6 +1452,13 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
             ));
         }
     }
+    // A gesture without a handler still needs the renderer to bind it, so emit
+    // a legal no-op action (IR_ADDITIONS section 1).
+    if let Some(g) = &gesture {
+        if !events.contains_key(g) {
+            events.insert(g.clone(), json!({ "actions": [] }));
+        }
+    }
     match kind {
         "Input" => {
             if let Some(Json::String(name)) = props.get("bind") {
@@ -1395,7 +1468,7 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
         "Switch" | "Checkbox" => {
             if let Some(Json::String(name)) = props.get("bind") {
                 events
-                    .entry("tap".to_string())
+                    .entry(gesture.clone().unwrap_or_else(|| "tap".to_string()))
                     .or_insert(json!({"op": "toggle", "target": name}));
             }
         }
@@ -1409,11 +1482,13 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
         "Radio" => {
             if let (Some(Json::String(name)), Some(value)) = (props.get("bind"), props.get("value"))
             {
-                events.entry("tap".to_string()).or_insert(json!({
-                    "op": "set",
-                    "target": name,
-                    "value": value,
-                }));
+                events
+                    .entry(gesture.clone().unwrap_or_else(|| "tap".to_string()))
+                    .or_insert(json!({
+                        "op": "set",
+                        "target": name,
+                        "value": value,
+                    }));
             }
         }
         "Tabs" => {
@@ -1421,11 +1496,13 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
                 (props.get("bind"), props.get("labels"))
             {
                 let first = labels.split(',').next().unwrap_or(labels.as_str()).trim();
-                events.entry("tap".to_string()).or_insert(json!({
-                    "op": "set",
-                    "target": name,
-                    "value": first,
-                }));
+                events
+                    .entry(gesture.clone().unwrap_or_else(|| "tap".to_string()))
+                    .or_insert(json!({
+                        "op": "set",
+                        "target": name,
+                        "value": first,
+                    }));
             }
         }
         _ => {}
@@ -1799,6 +1876,7 @@ fn substitute_stmt(path: &str, stmt: &Stmt, bindings: &HashMap<String, Lit>) -> 
         StmtKind::Sub(v, p) => StmtKind::Sub(substitute_value(v, bindings), *p),
         StmtKind::Set(v, p) => StmtKind::Set(substitute_value(v, bindings), *p),
         StmtKind::Toggle => StmtKind::Toggle,
+        StmtKind::Push => StmtKind::Push,
     };
     Ok(Stmt {
         target: stmt.target.clone(),
@@ -2209,6 +2287,7 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         inits: HashMap::new(),
         lists: HashMap::new(),
         loops: Vec::new(),
+        pages: program.pages.iter().map(|p| p.name.clone()).collect(),
     };
     let mut state_json = Vec::new();
     let (state_types, state_inits) = typecheck::infer_states(program, path)?;
@@ -2360,6 +2439,14 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             .map(|i| json!(i.path))
             .collect::<Vec<Json>>();
         out.insert("imports".to_string(), Json::Array(imports));
+    }
+    if !program.pages.is_empty() {
+        let pages = program
+            .pages
+            .iter()
+            .map(|p| json!(p.name))
+            .collect::<Vec<Json>>();
+        out.insert("pages".to_string(), Json::Array(pages));
     }
     if !computed_json.is_empty() {
         out.insert("computed".to_string(), Json::Array(computed_json));

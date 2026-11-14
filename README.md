@@ -12,7 +12,7 @@ without them produces byte-identical IR and gains no new IR fields.
 ## Grammar summary (LANG_SPEC v0.1 + the additive layers)
 
 ```ebnf
-program       = { import_decl | component_decl } "app" IDENT "{" { state_decl | computed_decl | component_decl | model_decl | api_decl | theme_decl | node } "}" ;
+program       = { import_decl | component_decl } "app" IDENT "{" { state_decl | computed_decl | component_decl | model_decl | api_decl | theme_decl | page_decl | node } "}" ;
 component_decl = "component" IDENT "(" [ params ] ")" "{" { node } "}" ;
 params        = param { "," param } [ "," ] ;
 param         = IDENT [ ":" ( "int" | "bool" | "string" ) ] ;
@@ -24,13 +24,15 @@ field_decl    = IDENT ":" ( "int" | "string" | "bool" ) [ "primary" ] [ "=" lite
 api_decl      = "api" STRING "{" { handler_decl } "}" ;
 handler_decl  = ( "list" | "get" | "create" | "update" | "delete" ) IDENT [";"] ;
 theme_decl    = "theme" "{" ( "mode" | "accent" | "radius" ) ":" value { "," } "}" ;
+page_decl     = "page" IDENT [";"] ;
 node          = KIND [ "(" [ args ] ")" ] [ "async" ] [ ";" | "{" { node | statement | effect } "}" ]
               | "if" "(" IDENT ")" "{" { node } "}" [ "else" "{" { node } "}" ]
               | "for" "(" IDENT "in" ( INT | IDENT ) ")" "{" { node } "}" ;
 args          = ( IDENT ":" value | value ) { "," ... } [ "," ] ;
 value         = INT | FLOAT | STRING | BOOL | IDENT ;
 statement     = IDENT ( "+=" | "-=" | "=" ) expr [";"]
-              | IDENT "." "toggle" "(" ")" [";"] ;
+              | IDENT "." "toggle" "(" ")" [";"]
+              | "push" ":" IDENT [";"] ;
 effect        = "await" "delay" "(" INT ")" [";"]
               | "await" "fetch" "(" STRING "," IDENT ")" [";"] ;
 expr          = literal | IDENT ;
@@ -76,12 +78,50 @@ computed_factor = [ "-" ] INT | IDENT ;
 | Theme block | `theme { mode: dark, accent: "#FF4D6D", radius: 8 }` | `IR.theme` |
 | Atomic shortcuts | `p` / `m` / `bg` / `rounded` | `padding` / `margin` / `color` / `radius` |
 | Visual props | `shadow`, `gradient`, `glass`, `opacity`, `border`, `animate` | passed through |
+| Gesture binding | `Button("x", gesture: longPress) { ... }` | handler under the `longPress` event |
 | Particle field | `particles: "count=64,seed=7,radius=2"` | bounded `props.particles` object |
 
 `for` integer counts are limited to 0..64; colors are `#RRGGBB`; `opacity` is 0..1; `shadow` is
 0..8. `particles` is a comma-separated `name=value` list: `count` is required and must be
 0..512, `seed` is 0..4294967295 (default 1), `radius` is 0..32 (default 2), `alpha` is 0..1024
 (default 1024) and `color` is an optional `#RRGGBB` that falls back to the node accent.
+
+### Gestures and navigation
+
+`gesture` is a binding prop, not a visual prop, accepted by every node and validated against
+`tap`, `doubleTap`, `longPress` and `drag` (the values the renderer binds). A gesture names the
+event that carries the node's handler:
+
+```opu
+app GestureDemo {
+  state count = 0
+  Button("Double", gesture: doubleTap) { count += 1 }
+  Button("Long", gesture: longPress) { count += 2 }
+  Button("Drag", gesture: drag) { count += 3 }
+  Button("Plain") { count += 4 }
+}
+```
+
+`Button("Double", gesture: doubleTap) { ... }` lowers to `events.doubleTap` and
+`Button("Plain") { ... }` lowers to `events.tap`. A gesture with no handler still binds the
+gesture as a legal no-op action (`{"actions": []}`). An unknown gesture value is a friendly
+diagnostic. `gesture` is removed from `props` because it is a binding, not a visual style.
+
+Named pages are declared inside the app and a handler navigates with `push`:
+
+```opu
+app NavDemo {
+  page Home
+  page Settings
+
+  Button("Go") { push: Settings }
+}
+```
+
+`page Name;` registers a named route; the IR gains an optional top-level `"pages"` array of the
+declared names in declaration order. `push: PageName` inside a handler lowers to the action
+`{"op": "push", "target": "Settings"}`, which the runtime executes as a navigation. A `push` to
+an undeclared page is a friendly diagnostic that lists the declared pages.
 
 ### Async/await effects
 
