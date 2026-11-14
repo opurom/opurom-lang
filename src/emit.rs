@@ -3027,7 +3027,9 @@ fn emit_mini(
             // wins; otherwise the authored column count applies. Cells without
             // an explicit width share the row equally. WXSS has no CSS grid, so
             // percentage widths on a wrapping flex row are the native form.
-            let cols = n.props.get("compactColumns")
+            let cols = n
+                .props
+                .get("compactColumns")
                 .or_else(|| n.props.get("columns"))
                 .and_then(Json::as_i64)
                 .unwrap_or(2)
