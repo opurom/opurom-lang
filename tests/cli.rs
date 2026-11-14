@@ -4433,13 +4433,13 @@ app Conflict {
 fn example_programs_keep_byte_identical_ir() {
     let cases = [
         (contract("counter.opu"), fixture("golden/counter.opuir.json")),
-        (example("profile.opu"), fixture("golden/profile.opuir.json")),
-        (example("todo.opu"), fixture("golden/todo.opuir.json")),
+        (fixture("golden/profile.opu"), fixture("golden/profile.opuir.json")),
+        (fixture("golden/todo.opu"), fixture("golden/todo.opuir.json")),
         (
-            example("showcase.opu"),
+            fixture("golden/showcase.opu"),
             fixture("golden/showcase.opuir.json"),
         ),
-        (example("gallery.opu"), fixture("golden/gallery.opuir.json")),
+        (fixture("golden/gallery.opu"), fixture("golden/gallery.opuir.json")),
     ];
     for (src, golden) in cases {
         if !src.is_file() {
@@ -5378,16 +5378,16 @@ fn forms_layer_keeps_golden_ir_byte_identical() {
     let dir = out_dir("forms-golden");
     let cases = [
         (contract("counter.opu"), fixture("golden/counter.opuir.json")),
-        (example("profile.opu"), fixture("golden/profile.opuir.json")),
+        (fixture("golden/profile.opu"), fixture("golden/profile.opuir.json")),
         (
             fixture("golden/todo.opu"),
             fixture("golden/todo.opuir.json"),
         ),
         (
-            example("showcase.opu"),
+            fixture("golden/showcase.opu"),
             fixture("golden/showcase.opuir.json"),
         ),
-        (example("gallery.opu"), fixture("golden/gallery.opuir.json")),
+        (fixture("golden/gallery.opu"), fixture("golden/gallery.opuir.json")),
     ];
     for (index, (src, golden)) in cases.iter().enumerate() {
         if !src.is_file() {
@@ -6025,16 +6025,16 @@ fn design_props_keep_golden_ir_byte_identical() {
     let dir = out_dir("design-golden");
     let cases = [
         (contract("counter.opu"), fixture("golden/counter.opuir.json")),
-        (example("profile.opu"), fixture("golden/profile.opuir.json")),
+        (fixture("golden/profile.opu"), fixture("golden/profile.opuir.json")),
         (
             fixture("golden/todo.opu"),
             fixture("golden/todo.opuir.json"),
         ),
         (
-            example("showcase.opu"),
+            fixture("golden/showcase.opu"),
             fixture("golden/showcase.opuir.json"),
         ),
-        (example("gallery.opu"), fixture("golden/gallery.opuir.json")),
+        (fixture("golden/gallery.opu"), fixture("golden/gallery.opuir.json")),
     ];
     for (index, (src, golden)) in cases.iter().enumerate() {
         if !src.is_file() {
