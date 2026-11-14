@@ -65,6 +65,8 @@ enum Step {
     Nav,
     /// A form validation signal; the host mirror records `@validate`.
     Validate,
+    /// A pop navigation signal; the host mirror records `@nav = "@pop"`.
+    Pop,
 }
 
 fn int_index(states: &[WasmState], name: &str) -> Option<usize> {
@@ -94,6 +96,10 @@ fn steps_of(event: &Json, states: &[WasmState], ir_path: &str) -> DResult<Vec<St
                 ));
             }
             out.push(Step::Validate);
+            continue;
+        }
+        if op == "pop" {
+            out.push(Step::Pop);
             continue;
         }
         let target = action
@@ -189,7 +195,7 @@ fn emit_steps(steps: &[Step], indent: &str) -> String {
                 out.push_str(&format!("{indent}set_state({target}, state({from}));\n"))
             }
             // Navigation and validation are host-side signals; no WASM state step.
-            Step::Nav | Step::Validate => {}
+            Step::Nav | Step::Validate | Step::Pop => {}
         }
     }
     out
@@ -707,6 +713,25 @@ fn host_source(
         "}\n\n",
         "boot();\n",
     ));
+    // A pop navigation signal is only in the IR when routes are present; add its
+    // host branch only then, so single-page host.js stays byte-identical.
+    let has_pop = {
+        let mut nodes = Vec::new();
+        collect(tree, &mut nodes);
+        nodes.iter().any(|n| {
+            n.events.values().any(|event| {
+                event_actions(event)
+                    .iter()
+                    .any(|a| a.get("op").and_then(Json::as_str) == Some("pop"))
+            })
+        })
+    };
+    if has_pop {
+        s = s.replace(
+            "    } else if (action.op === \"validate\") {",
+            "    } else if (action.op === \"pop\") {\n      mirror[\"@nav\"] = \"@pop\";\n    } else if (action.op === \"validate\") {",
+        );
+    }
     let computed_fn = host_computed_source(states, computed, ir_path)?;
     if !computed_fn.is_empty() {
         s = s.replace(
@@ -762,6 +787,11 @@ fn mirror_actions(tree: &ENode, states: &[WasmState]) -> String {
                 let Some(op) = one.get("op").and_then(Json::as_str) else {
                     continue;
                 };
+                // A pop carries no target; the host mirror records "@pop".
+                if op == "pop" {
+                    entries.push("{ op: \"pop\" }".to_string());
+                    continue;
+                }
                 let Some(target) = one.get("target").and_then(Json::as_str) else {
                     continue;
                 };
@@ -946,6 +976,80 @@ pub fn emit_wasm(
         out,
         "README.md",
         &readme(app, has_effects, computed, additive_meta(tree).is_some()),
+        ir_path,
+    )?;
+    Ok(())
+}
+
+/// Multi-page wasm: the ABI module exposes handlers for every route tree, and
+/// the host carries a `ROUTES` table plus `INITIAL_ROUTE` so the page can pick
+/// which route to render and drive push/pop. Rendering itself lives in the host.
+pub fn emit_wasm_multipage(
+    app: &str,
+    states: &[EState],
+    computed: &[Computed],
+    routes: &crate::emit::ERoutes,
+    out: &Path,
+    ir_path: &str,
+    has_effects: bool,
+    font_stack: &str,
+) -> DResult<()> {
+    let int_states = read_int_states(states);
+    // A reserved synthetic root carries every route tree so the generated
+    // handler set covers all pages; it is never treated as a renderable node.
+    let combined = ENode {
+        id: u64::MAX,
+        kind: "Column".to_string(),
+        props: serde_json::Map::new(),
+        events: serde_json::Map::new(),
+        children: routes.pages.iter().map(|p| p.tree.clone()).collect(),
+        when: None,
+        unless: None,
+        repeat: None,
+    };
+    let src = lib_source(app, states, &int_states, computed, &combined, ir_path)?;
+    crate::emit::write(out, "Cargo.toml", &manifest(), ir_path)?;
+    crate::emit::write(out, "src/lib.rs", &src, ir_path)?;
+    let page = index_html(app).replace(
+        "font-family: sans-serif",
+        &format!("font-family: {font_stack}"),
+    );
+    crate::emit::write(out, "index.html", &page, ir_path)?;
+    let mut host = host_source(
+        app,
+        states,
+        &int_states,
+        computed,
+        &combined,
+        ir_path,
+        has_effects,
+    )?
+    .replace("sans-serif", font_stack);
+    // The frozen contract only needs the route table and initial route carried
+    // through on wasm; the host picks the section to draw from these.
+    let mut route_map = serde_json::Map::new();
+    for p in &routes.pages {
+        route_map.insert(
+            p.name.clone(),
+            serde_json::json!(p.title.clone().unwrap_or_else(|| p.name.clone())),
+        );
+    }
+    let routes_json = serde_json::to_string(&Json::Object(route_map))
+        .map_err(|e| bad_ir(ir_path, format!("cannot serialize ROUTES: {e}")))?;
+    host.push_str(&format!(
+        "const ROUTES = {routes_json};\nconst INITIAL_ROUTE = {};\n",
+        js_str(&routes.initial)
+    ));
+    crate::emit::write(out, "host.js", &host, ir_path)?;
+    crate::emit::write(
+        out,
+        "README.md",
+        &readme(
+            app,
+            has_effects,
+            computed,
+            additive_meta(&combined).is_some(),
+        ),
         ir_path,
     )?;
     Ok(())

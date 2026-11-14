@@ -350,6 +350,75 @@ pub fn collect<'a>(n: &'a ENode, out: &mut Vec<&'a ENode>) {
     }
 }
 
+/// One page of a multi-page IR: its route name, optional title, and content tree.
+pub struct EPage {
+    pub name: String,
+    pub title: Option<String>,
+    pub tree: ENode,
+}
+
+/// The additive multi-page shape: an initial route plus an ordered route table.
+/// Single-page IR has neither field, so `read_routes` returns `None` and every
+/// emitter keeps its byte-identical single-page output.
+pub struct ERoutes {
+    pub initial: String,
+    pub pages: Vec<EPage>,
+}
+
+/// A route name is used verbatim as a mini-program page path segment and as a
+/// `data-current-route` value, so it must be a plain identifier: no slashes,
+/// dots or quotes can reach a generated path or attribute.
+fn valid_route_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Read the additive `initialRoute` + `routes` record. Returns `None` for a
+/// single-page IR that has only a top-level `tree`.
+fn read_routes(ir: &Json, ir_path: &str) -> DResult<Option<ERoutes>> {
+    let Some(routes) = ir.get("routes") else {
+        return Ok(None);
+    };
+    let map = routes
+        .as_object()
+        .ok_or_else(|| bad_ir(ir_path, "IR 'routes' must be an object"))?;
+    if map.is_empty() {
+        return Err(bad_ir(ir_path, "IR 'routes' must not be empty"));
+    }
+    let mut pages = Vec::with_capacity(map.len());
+    for (name, route) in map {
+        if !valid_route_name(name) {
+            return Err(bad_ir(
+                ir_path,
+                format!("route name '{name}' must be an identifier (letters, digits, '_' or '-')"),
+            ));
+        }
+        let obj = route
+            .as_object()
+            .ok_or_else(|| bad_ir(ir_path, format!("route '{name}' must be an object")))?;
+        let tree_value = obj
+            .get("tree")
+            .ok_or_else(|| bad_ir(ir_path, format!("route '{name}' is missing 'tree'")))?;
+        let tree = read_node(tree_value, ir_path)?;
+        let title = obj.get("title").and_then(Json::as_str).map(str::to_string);
+        pages.push(EPage {
+            name: name.clone(),
+            title,
+            tree,
+        });
+    }
+    // serde_json maps keep insertion order only with the preserve_order feature;
+    // the emitted `routes` object is authored, so honour `initialRoute` when it
+    // is a known route, else fall back to the first route in document order.
+    let initial = match ir.get("initialRoute").and_then(Json::as_str) {
+        Some(name) if map.contains_key(name) => name.to_string(),
+        _ => pages[0].name.clone(),
+    };
+    Ok(Some(ERoutes { initial, pages }))
+}
+
 fn prop_num(props: &JsonMap<String, Json>, key: &str, default: f64) -> f64 {
     props.get(key).and_then(Json::as_f64).unwrap_or(default)
 }
@@ -1078,12 +1147,59 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
         .and_then(Json::as_array)
         .cloned()
         .unwrap_or_default();
+    let states = read_state(&state_values, ir_path)?;
+    let computed = read_computed(&ir, &states, ir_path)?;
+    // The additive `routes` record means multi-page; otherwise a single top-level
+    // `tree` drives the byte-identical single-page emitters.
+    let routes = read_routes(&ir, ir_path)?;
+    if let Some(routes) = routes {
+        for page in &routes.pages {
+            validate_actions(&states, &computed, &page.tree, ir_path)?;
+        }
+        let has_effects = routes
+            .pages
+            .iter()
+            .map(|p| tree_has_effects(&states, &p.tree, ir_path))
+            .collect::<DResult<Vec<_>>>()?
+            .into_iter()
+            .any(|v| v);
+        fs::create_dir_all(out).map_err(|e| {
+            Diagnostic::file(
+                ir_path,
+                format!("cannot create output directory {}: {e}", out.display()),
+                "check the -o path and permissions",
+            )
+        })?;
+        return match target {
+            "native" => emit_native_multipage(
+                &app,
+                &states,
+                &computed,
+                &routes,
+                &ir,
+                out,
+                ir_path,
+                has_effects,
+            ),
+            "web" => emit_web_multipage(&ir, &app, &states, &computed, &routes, out, ir_path),
+            "web-dom" => emit_web_dom(ir_path, out),
+            "wasm" => crate::wasm::emit_wasm_multipage(
+                &app,
+                &states,
+                &computed,
+                &routes,
+                out,
+                ir_path,
+                has_effects,
+                &theme_font_stack(&ir),
+            ),
+            _ => emit_mini_multipage(target, &app, &states, &computed, &routes, &ir, out, ir_path),
+        };
+    }
     let tree_value = ir
         .get("tree")
         .ok_or_else(|| bad_ir(ir_path, "IR is missing the 'tree' field"))?;
-    let states = read_state(&state_values, ir_path)?;
     let tree = read_node(tree_value, ir_path)?;
-    let computed = read_computed(&ir, &states, ir_path)?;
     validate_actions(&states, &computed, &tree, ir_path)?;
     let has_effects = tree_has_effects(&states, &tree, ir_path)?;
     fs::create_dir_all(out).map_err(|e| {
@@ -1190,6 +1306,13 @@ fn patch_value(states: &[EState], target: &str) -> String {
 
 fn native_action(action: &Json, states: &[EState], ir_path: &str) -> DResult<(String, String)> {
     let op = action_str(action, "op", ir_path)?;
+    // A pop carries no target; it is a reserved "@pop" navigation signal.
+    if op == "pop" {
+        return Ok((
+            String::new(),
+            "Patch { name: \"@nav\", value: \"@pop\".to_string() }".to_string(),
+        ));
+    }
     let target = action_str(action, "target", ir_path)?;
     // A push is a navigation signal, mirroring the kernel's reserved patch.
     if op == "push" {
@@ -2481,6 +2604,246 @@ fn emit_web(
     write(out, "index.html", &html, ir_path)
 }
 
+// ---------------------------------------------------- web multi-page ----
+
+/// Per-route draw code plus the tap action chains, generated the same way as the
+/// single-page emitter but one function per route. A `routeStack` array of route
+/// names drives which function runs; push appends, pop removes.
+fn web_route_draw(
+    page: &EPage,
+    ir_path: &str,
+) -> DResult<(String, Vec<(u64, String)>, Vec<(u64, String)>)> {
+    let mut boxes = HashMap::new();
+    layout(&page.tree, 16.0, 16.0, &mut boxes);
+    let mut nodes = Vec::new();
+    collect(&page.tree, &mut nodes);
+
+    let mut draw = String::new();
+    draw_node(&page.tree, &boxes, &mut draw, ir_path)?;
+
+    let mut input_arms = Vec::new();
+    let mut taps = Vec::new();
+    for n in &nodes {
+        if let Some(action) = n.events.get("tap") {
+            let code = web_multipage_action_chain(action, ir_path)?;
+            taps.push((n.id, code));
+        }
+        if let Some(action) = n.events.get("input") {
+            let target = action_str(action, "target", ir_path)?;
+            input_arms.push((n.id, target.to_string()));
+        }
+    }
+    Ok((draw, taps, input_arms))
+}
+
+/// Emit the multi-page web bundle: one canvas, per-route draw functions, a
+/// route stack with push/pop, and full-page redraw on navigation. ids stay
+/// globally unique across routes because lowering numbers them app-wide.
+fn emit_web_multipage(
+    ir: &Json,
+    app: &str,
+    states: &[EState],
+    computed: &[Computed],
+    routes: &ERoutes,
+    out: &Path,
+    ir_path: &str,
+) -> DResult<()> {
+    let pretty = serde_json::to_string_pretty(ir)
+        .map_err(|e| bad_ir(ir_path, format!("cannot serialize IR: {e}")))?;
+    write(out, "ir.json", &(pretty + "\n"), ir_path)?;
+
+    let mut state_map = JsonMap::new();
+    for st in states {
+        state_map.insert(st.name.clone(), st.init.clone());
+    }
+    let state_js = js_lit(&Json::Object(state_map));
+    let computed_fn = web_computed(states, computed, ir_path)?;
+    let computed_call = if computed.is_empty() {
+        ""
+    } else {
+        "applyComputed(); "
+    };
+
+    let mut draw_fns = String::new();
+    let mut tap_arms = String::new();
+    let mut all_taps: Vec<(String, Vec<(u64, String)>)> = Vec::new();
+    let mut input_arms = String::new();
+    let mut input_html = String::new();
+    let mut input_listeners = String::new();
+    let mut route_title_map = JsonMap::new();
+    route_title_map.insert(routes.initial.clone(), json!(app));
+    for page in &routes.pages {
+        let (draw, taps, in_arms) = web_route_draw(page, ir_path)?;
+        let fn_name = format!("draw_{}", page.name);
+        draw_fns.push_str(&format!("function {fn_name}() {{\n  {draw}}}\n\n"));
+        for (id, target) in in_arms {
+            input_arms.push_str(&format!(
+                "  if (id === {id}) {{ state.{target} = String(text); return; }}\n"
+            ));
+        }
+        all_taps.push((page.name.clone(), taps));
+        route_title_map.insert(
+            page.name.clone(),
+            json!(page.title.clone().unwrap_or_else(|| page.name.clone())),
+        );
+    }
+    // Gather input widgets across every route; ids are app-wide unique.
+    for page in &routes.pages {
+        let mut nodes = Vec::new();
+        collect(&page.tree, &mut nodes);
+        for n in &nodes {
+            if n.kind == "Input" {
+                let placeholder = html_attr(&prop_str(&n.props, "placeholder", ""));
+                let validation = validation_attrs(&n.props);
+                input_html.push_str(&format!(
+                    "    <input id=\"n{}\" placeholder=\"{}\"{}>\n",
+                    n.id, placeholder, validation
+                ));
+                input_listeners.push_str(&format!(
+                    "const el{} = document.getElementById(\"n{}\");\nif (el{}) {{ el{}.addEventListener(\"input\", function (e) {{ applyInput({}, e.target.value); }}); }}\n",
+                    n.id, n.id, n.id, n.id, n.id
+                ));
+            }
+        }
+    }
+    for (_route, taps) in &all_taps {
+        for (id, code) in taps {
+            tap_arms.push_str(&format!(
+                "  if (id === {id}) {{ {code}  {computed_call}render(); return; }}\n",
+            ));
+        }
+    }
+    let draw_dispatch = routes
+        .pages
+        .iter()
+        .map(|p| {
+            format!(
+                "  if (route === {}) {{ draw_{}(); return; }}",
+                js_lit(&Json::String(p.name.clone())),
+                p.name
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let initial_js = js_lit(&Json::String(routes.initial.clone()));
+    let title_js = js_lit(&Json::Object(route_title_map));
+
+    let mut app_js = String::new();
+    app_js.push_str(&format!(
+        "// Generated by opuromc for app {app}; multi-page, straight-line code, no IR interpreter.\n"
+    ));
+    app_js.push_str("\"use strict\";\n");
+    app_js.push_str("const canvas = document.getElementById(\"app\");\n");
+    app_js.push_str("const ctx = canvas.getContext(\"2d\");\n");
+    app_js.push_str(&format!("const state = {state_js};\n"));
+    app_js.push_str(&format!("const ROUTES = {title_js};\n"));
+    app_js.push_str(&format!("const routeStack = [{initial_js}];\n\n"));
+    app_js.push_str(&computed_fn);
+    app_js.push_str(&draw_fns);
+    app_js.push_str("function currentRoute() { return routeStack[routeStack.length - 1]; }\n");
+    app_js.push_str("function render() {\n");
+    app_js.push_str("  ctx.clearRect(0, 0, canvas.width, canvas.height);\n");
+    app_js.push_str("  ctx.textBaseline = \"top\";\n");
+    app_js.push_str("  const route = currentRoute();\n");
+    app_js.push_str(&draw_dispatch);
+    app_js.push_str("}\n\n");
+    app_js.push_str("function push(route) { if (!ROUTES[route]) return; routeStack.push(route); document.title = ROUTES[route]; }\n");
+    app_js.push_str("function pop() { if (routeStack.length > 1) routeStack.pop(); document.title = ROUTES[currentRoute()]; }\n\n");
+    app_js.push_str("async function applyTap(id) {\n");
+    app_js.push_str(&tap_arms);
+    app_js.push_str("}\n\n");
+    app_js.push_str("function applyInput(id, text) {\n");
+    app_js.push_str(&input_arms);
+    app_js.push_str("}\n\n");
+    if !input_listeners.is_empty() {
+        app_js.push_str(&input_listeners);
+        app_js.push('\n');
+    }
+    app_js.push_str("canvas.addEventListener(\"click\", function (e) {\n");
+    app_js.push_str("  const rect = canvas.getBoundingClientRect();\n");
+    app_js.push_str("  const x = e.clientX - rect.left;\n");
+    app_js.push_str("  const y = e.clientY - rect.top;\n");
+    app_js.push_str("  const hits = tapHitTest(x, y);\n");
+    app_js.push_str("  if (hits >= 0) applyTap(hits);\n");
+    app_js.push_str("});\n\n");
+    // A hit-test per route: the button boxes of the active route decide the tap.
+    app_js.push_str("function tapHitTest(x, y) {\n  const route = currentRoute();\n");
+    for page in &routes.pages {
+        let mut boxes = HashMap::new();
+        layout(&page.tree, 16.0, 16.0, &mut boxes);
+        let mut nodes = Vec::new();
+        collect(&page.tree, &mut nodes);
+        let mut arms = String::new();
+        for n in &nodes {
+            if n.kind == "Button" && n.events.contains_key("tap") {
+                let b = boxes.get(&n.id).copied().unwrap_or(Box2 {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.0,
+                    h: 0.0,
+                });
+                arms.push_str(&format!(
+                    "    if (x >= {} && x <= {} && y >= {} && y <= {}) return {};\n",
+                    fmt_num(b.x),
+                    fmt_num(b.x + b.w),
+                    fmt_num(b.y),
+                    fmt_num(b.y + b.h),
+                    n.id
+                ));
+            }
+        }
+        app_js.push_str(&format!(
+            "  if (route === {}) {{\n{arms}    return -1;\n  }}\n",
+            js_lit(&Json::String(page.name.clone()))
+        ));
+    }
+    app_js.push_str("  return -1;\n}\n\n");
+    if computed.is_empty() {
+        app_js.push_str("document.title = ROUTES[currentRoute()];\nrender();\n");
+    } else {
+        app_js.push_str("applyComputed();\ndocument.title = ROUTES[currentRoute()];\nrender();\n");
+    }
+    let font_stack = theme_font_stack(ir);
+    let app_js = app_js.replace("sans-serif", &font_stack);
+    write(out, "app.js", &app_js, ir_path)?;
+
+    let title = html_attr(app);
+    let sr_css = ".sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}";
+    let html = format!(
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>{title}</title>\n<style>body {{ font-family: sans-serif; margin: 0; padding: 16px; }} canvas {{ background: #fff; border: 1px solid #ddd; }} #inputs {{ margin-top: 12px; }}{sr_css}</style>\n</head>\n<body>\n<canvas id=\"app\" width=\"800\" height=\"600\"></canvas>\n<div id=\"inputs\">\n{input_html}</div>\n<script src=\"app.js\"></script>\n</body>\n</html>\n"
+    );
+    let html = html.replace(
+        "font-family: sans-serif",
+        &format!("font-family: {font_stack}"),
+    );
+    write(out, "index.html", &html, ir_path)
+}
+
+/// A route-aware JS action chain: `push`/`pop` map onto the route stack, other
+/// ops mutate state exactly as the single-page `js_action` does.
+fn web_multipage_action_chain(event: &Json, ir_path: &str) -> DResult<String> {
+    let mut code = String::new();
+    for action in event_actions(event) {
+        let op = action_str(action, "op", ir_path)?;
+        match op {
+            "push" => {
+                let target = action_str(action, "target", ir_path)?;
+                code.push_str(&format!(
+                    "  push({});\n",
+                    js_lit(&Json::String(target.to_string()))
+                ));
+            }
+            "pop" => code.push_str("  pop();\n"),
+            _ => {
+                code.push_str("  ");
+                code.push_str(&js_action(action, ir_path)?);
+                code.push('\n');
+            }
+        }
+    }
+    Ok(code)
+}
+
 // ----------------------------------------------------------- mini programs ----
 
 /// Pure white on a dark background, pure black on a light one, from the integer
@@ -3268,4 +3631,230 @@ fn emit_mini(
     }
     let index_js = format!("{prefix}Page({{\n  data: {},\n{}}});\n", data_js, methods);
     write(out, "pages/index/index.js", &index_js, ir_path)
+}
+
+// --------------------------------------------------- mini multi-page ----
+
+/// Mini-program route-aware action chain. `push`/`pop` update the page's route
+/// stack through setData; every other op reuses the single-page action emitter.
+fn mini_multipage_action_chain(event: &Json, p: &Platform, ir_path: &str) -> DResult<String> {
+    let mut code = String::new();
+    let set = &p.state_set;
+    for action in event_actions(event) {
+        let op = action_str(action, "op", ir_path)?;
+        match op {
+            "push" => {
+                let target = action_str(action, "target", ir_path)?;
+                code.push_str(&format!(
+                    "this.{set}({{ routeStack: this.data.routeStack.concat([{}]), currentRoute: {} }}); ",
+                    js_lit(&Json::String(target.to_string())),
+                    js_lit(&Json::String(target.to_string()))
+                ));
+            }
+            "pop" => code.push_str(&format!(
+                "if (this.data.routeStack.length > 1) {{ const s = this.data.routeStack.slice(0, -1); this.{set}({{ routeStack: s, currentRoute: s[s.length - 1] }}); }} "
+            )),
+            _ => {
+                code.push_str(&mini_action(action, p, ir_path)?);
+                code.push(' ');
+            }
+        }
+    }
+    Ok(code)
+}
+
+/// Emit a multi-page mini-program bundle. All routes live in one page file; each
+/// route is a conditional section (`cond_attr="{{currentRoute === 'Name'}}"`)
+/// so the platform's own conditional renderer swaps visibility, which works
+/// identically across wechat/alipay/qq/douyin/baidu/kuaishou. A `routeStack` in
+/// page data drives push/pop; the section carries its own markup and styles.
+fn emit_mini_multipage(
+    target: &str,
+    app: &str,
+    states: &[EState],
+    computed: &[Computed],
+    routes: &ERoutes,
+    ir: &Json,
+    out: &Path,
+    ir_path: &str,
+) -> DResult<()> {
+    let p = PLATFORMS
+        .iter()
+        .find(|p| p.key == target)
+        .ok_or_else(|| bad_ir(ir_path, format!("no platform table entry for '{target}'")))?;
+
+    let mut window = JsonMap::new();
+    window.insert(p.title_key.to_string(), json!(app));
+    let mut app_obj = JsonMap::new();
+    app_obj.insert("pages".to_string(), json!(["pages/index/index"]));
+    app_obj.insert("window".to_string(), Json::Object(window));
+    let app_json = serde_json::to_string_pretty(&Json::Object(app_obj))
+        .map_err(|e| bad_ir(ir_path, format!("cannot serialize app.json: {e}")))?;
+    write(out, "app.json", &(app_json + "\n"), ir_path)?;
+    let app_js = format!(
+        "// Generated by opuromc for {}; no IR interpreter.\nApp({{}});\n",
+        p.key
+    );
+    write(out, "app.js", &app_js, ir_path)?;
+
+    let dark = ir
+        .get("theme")
+        .and_then(|t| t.get("mode"))
+        .and_then(Json::as_str)
+        == Some("dark");
+
+    let mut markup = String::new();
+    markup.push_str(&format!(
+        "<!-- Generated by opuromc for {}; multi-page sections, no IR interpreter. -->\n",
+        p.key
+    ));
+    for page in &routes.pages {
+        markup.push_str(&format!(
+            "<view class=\"route\" data-route=\"{}\" {}=\"{}currentRoute === '{}'{}\">\n",
+            html_attr(&page.name),
+            p.cond_attr,
+            p.open,
+            page.name,
+            p.close
+        ));
+        markup_node(&page.tree, p, 1, &mut markup, ir_path, dark)?;
+        markup.push_str("</view>\n");
+    }
+    write(
+        out,
+        &format!("pages/index/index.{}", p.markup_ext),
+        &markup,
+        ir_path,
+    )?;
+
+    let tokens = ir.get("theme").and_then(|t| t.get("tokens"));
+    let stage = tokens
+        .and_then(|t| t.get("stage"))
+        .or_else(|| tokens.and_then(|t| t.get("surface")))
+        .and_then(Json::as_str)
+        .filter(|s| {
+            let digits = s.strip_prefix('#').unwrap_or("");
+            (digits.len() == 6 || digits.len() == 8)
+                && digits.bytes().all(|b| b.is_ascii_hexdigit())
+        })
+        .unwrap_or("#ffffff");
+    let mut style = String::from(&format!(
+        "page {{ background-color: {stage}; }}\n.route {{ display: flex; flex-direction: column; }}\n.col {{ display: flex; flex-direction: column; }}\n.row {{ display: flex; flex-direction: row; }}\n.grid {{ display: flex; flex-direction: row; flex-wrap: wrap; }}\n@keyframes opurom-entry {{ from {{ transform: scale(0); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}\n.anim-entry {{ transform-origin: center; animation: opurom-entry 480ms ease-out both; }}\n.anim-spring {{ animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }}\n.anim-ease {{ animation-timing-function: ease-out; }}\n.anim-inertia {{ animation-timing-function: ease-in-out; }}\n.anim-collision {{ animation-timing-function: cubic-bezier(0.5, 1.6, 0.4, 1); }}\n",
+    ));
+    let mut all_nodes: Vec<&ENode> = Vec::new();
+    for page in &routes.pages {
+        collect(&page.tree, &mut all_nodes);
+    }
+    for n in &all_nodes {
+        let s = style_of(
+            &n.props,
+            n.kind == "Container",
+            is_text_kind(&n.kind),
+            dark,
+            is_elevated_glass_kind(&n.kind),
+        );
+        if !s.is_empty() {
+            style.push_str(&format!(".n{} {{ {}; }}\n", n.id, s));
+        }
+        if n.kind == "Grid" {
+            let cols = n
+                .props
+                .get("compactColumns")
+                .or_else(|| n.props.get("columns"))
+                .and_then(Json::as_i64)
+                .unwrap_or(2)
+                .clamp(1, 16);
+            let pct = 100.0 / cols as f64;
+            for child in &n.children {
+                if child.props.contains_key("width") {
+                    continue;
+                }
+                style.push_str(&format!(
+                    ".n{} {{ width: {pct:.4}%; box-sizing: border-box; }}\n",
+                    child.id
+                ));
+            }
+        }
+    }
+    write(
+        out,
+        &format!("pages/index/index.{}", p.style_ext),
+        &style,
+        ir_path,
+    )?;
+
+    let mut data = JsonMap::new();
+    for st in states {
+        data.insert(st.name.clone(), st.init.clone());
+    }
+    data.insert("currentRoute".to_string(), json!(routes.initial));
+    data.insert("routeStack".to_string(), json!([routes.initial]));
+    let data_js = js_lit(&Json::Object(data));
+    let mut methods = mini_computed(p, states, computed, ir_path)?;
+    let computed_call = if computed.is_empty() {
+        ""
+    } else {
+        " this.applyComputed();"
+    };
+    for n in &all_nodes {
+        if let Some(action) = n.events.get("tap") {
+            let effect_code = mini_effects(&event_effects(action, ir_path)?, p, ir_path)?;
+            let code = mini_multipage_action_chain(action, p, ir_path)?;
+            methods.push_str(&format!(
+                "  onTap{}: async function () {{ {effect_code}{code}{computed_call} }},\n",
+                n.id
+            ));
+        }
+        if let Some(action) = n.events.get("input") {
+            let target_name = action_str(action, "target", ir_path)?;
+            methods.push_str(&format!(
+                "  onInput{}: function (e) {{ this.{}({{\"{}\": e.detail.value}});{} }},\n",
+                n.id, p.state_set, target_name, computed_call
+            ));
+        }
+    }
+    let prefix = format!(
+        "// Generated by opuromc for {}; multi-page, no IR interpreter.\n",
+        p.key
+    );
+    let index_js = format!("{prefix}Page({{\n  data: {},\n{}}});\n", data_js, methods);
+    write(out, "pages/index/index.js", &index_js, ir_path)
+}
+
+// ------------------------------------------------- native multi-page ----
+
+/// Multi-page native: the generated program embeds the whole IR (routes and
+/// initialRoute included) so the render host resolves the route stack, and its
+/// event dispatcher enumerates handlers across every route tree.
+fn emit_native_multipage(
+    app: &str,
+    states: &[EState],
+    computed: &[Computed],
+    routes: &ERoutes,
+    ir: &Json,
+    out: &Path,
+    ir_path: &str,
+    has_effects: bool,
+) -> DResult<()> {
+    write(
+        out,
+        "Cargo.toml",
+        &native_manifest(&native_dep_root()),
+        ir_path,
+    )?;
+    // A synthetic root carries every route tree as a child purely so the event
+    // dispatcher sees all handlers; it is never rendered (the host reads the
+    // embedded IR). Its id is reserved so it cannot collide with a real node.
+    let combined = ENode {
+        id: u64::MAX,
+        kind: "Column".to_string(),
+        props: JsonMap::new(),
+        events: JsonMap::new(),
+        children: routes.pages.iter().map(|p| p.tree.clone()).collect(),
+        when: None,
+        unless: None,
+        repeat: None,
+    };
+    let src = native_source(app, states, computed, &combined, ir, ir_path, has_effects)?;
+    write(out, "src/main.rs", &src, ir_path)
 }
