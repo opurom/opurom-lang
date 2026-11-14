@@ -8,7 +8,7 @@ use serde_json::{json, Value as Json};
 
 static CASE: AtomicUsize = AtomicUsize::new(0);
 
-/// a framework-aligned familiar mobile design / familiar mobile-component names added to the component
+/// Mobile-component alias names added to the component
 /// catalog; each maps onto an existing drawn primitive, never a new one.
 const MOBILE_ALIAS_NAMES: &[&str] = &[
     "Scaffold",
@@ -104,11 +104,11 @@ fn workspace() -> PathBuf {
 }
 
 fn contract(name: &str) -> PathBuf {
-    workspace().join("..").join("opurom-examples").join(name)
+    workspace().join("..").join("opurom-examples").join("golden").join(name)
 }
 
 fn example(name: &str) -> PathBuf {
-    workspace().join("..").join("opurom-examples").join(name)
+    workspace().join("..").join("opurom-examples").join("golden").join(name)
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -643,20 +643,130 @@ fn gesture_and_navigation_lower_to_the_documented_ir() {
 }
 
 #[test]
-fn targets_lists_all_nine_emitters() {
+fn targets_lists_all_ten_emitters() {
     let r = bin().arg("targets").output().expect("run targets");
     assert!(r.status.success());
     let text = String::from_utf8_lossy(&r.stdout);
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 9, "targets output: {text}");
+    assert_eq!(lines.len(), 10, "targets output: {text}");
     for name in [
-        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm", "harmony",
     ] {
         assert!(
             lines.iter().any(|l| l.starts_with(name)),
             "missing target {name}"
         );
     }
+
+    let r = bin()
+        .arg("emit")
+        .arg("--list")
+        .output()
+        .expect("run emit --list");
+    assert!(r.status.success());
+    let text = String::from_utf8_lossy(&r.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 10, "emit --list output: {text}");
+    for name in [
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm", "harmony",
+    ] {
+        assert!(
+            lines.iter().any(|l| l.starts_with(name)),
+            "emit --list missing target {name}"
+        );
+    }
+}
+
+#[test]
+fn harmony_emitter_produces_a_valid_arkts_project() {
+    let dir = out_dir("emit-harmony");
+    let ir = dir.join("harmony.opuir.json");
+    let src = dir.join("harmony.opu");
+    fs::write(
+        &src,
+        "app HarmonyProbe {\n  page Home;\n  page Detail;\n  state count = 0\n  state name = \"\"\n  state visible = true\n  \
+         computed doubled = count + count\n  Column(padding: 8) {\n    Row {\n      \
+         Text(\"{count}\")\n      Text(\"{doubled}\")\n    }\n    \
+         Button(\"Go\", variant: primary, tone: success) { count += 1 }\n    \
+         Input(bind: name, placeholder: \"Type\", required: true, minLength: 3, maxLength: 12)\n    \
+         Button(\"Open\") { push: Detail }\n    Button(\"Check\") { form.validate() }\n  }\n}\n",
+    )
+    .unwrap();
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let r = emit(&ir, "harmony", &dir.join("out"));
+    assert!(
+        r.status.success(),
+        "harmony emit failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let out = dir.join("out");
+
+    // The genuine ArkUI project files, not placeholder stubs.
+    for artifact in [
+        "oh-package.json5",
+        "build-profile.json5",
+        "hvigorfile.ts",
+        "AppScope/app.json5",
+        "AppScope/resources/base/element/string.json",
+        "src/main/module.json5",
+        "src/main/ets/entryability/EntryAbility.ets",
+        "src/main/ets/pages/Index.ets",
+        "src/main/ets/pages/Index.ir.json",
+        "src/main/resources/base/profile/main_pages.json",
+    ] {
+        assert!(out.join(artifact).is_file(), "missing {artifact}");
+    }
+
+    // The heavy artifacts embed the *full* IR.
+    let embedded = fs::read_to_string(out.join("src/main/ets/pages/Index.ir.json")).unwrap();
+    let original = fs::read_to_string(&ir).unwrap();
+    assert_eq!(embedded, original, "Index.ir.json must equal the input IR");
+
+    let ets = fs::read_to_string(out.join("src/main/ets/pages/Index.ets")).unwrap();
+    for marker in [
+        "@Entry",
+        "@Component",
+        "struct Index",
+        "build()",
+        "Column()",
+        "Row()",
+        "Text(",
+        "Button()",
+        "TextInput(",
+        "@State s0",
+        "@State s1",
+        "@State s2",
+        "Opurom_IR_JSON",
+        "this.push(",
+        "this.validateForm(",
+        "OpuromDesign",
+        "OpuromValidator",
+        "new OpuromValidator(5, true, 3, 12, ",
+        "\"primary\"",
+        "\"success\"",
+    ] {
+        assert!(ets.contains(marker), "Index.ets missing {marker}");
+    }
+    // Computed values lower to ArkTS arithmetic over the state fields.
+    assert!(
+        ets.contains("this.s3 = (this.s0 + this.s0);"),
+        "computed value was not lowered to ArkTS"
+    );
+    assert!(
+        ets.contains("Text(this.opuText([String(this.s0)]))"),
+        "IR text interpolation did not map to a Text() call"
+    );
+    assert!(!ets.contains("TODO"), "harmony emitter left a TODO stub");
+
+    // Syntax sanity: balanced code braces and the ArkTS entry shape.
+    let opens = ets.matches('{').count();
+    let closes = ets.matches('}').count();
+    assert_eq!(opens, closes, "unbalanced braces in Index.ets");
+    assert!(
+        ets.contains("@Entry\n@Component\nstruct Index"),
+        "ArkUI entry decorators are not adjacent"
+    );
 }
 
 #[test]
@@ -2254,7 +2364,7 @@ fn components_lists_260_rows() {
     for name in MOBILE_ALIAS_NAMES {
         assert!(
             lines.iter().any(|l| l.starts_with(&format!("{name} | "))),
-            "missing a framework-aligned catalog row {name}"
+            "missing mobile-alias catalog row {name}"
         );
     }
     for name in [
@@ -2302,13 +2412,13 @@ fn vendored_catalog_matches_spec_when_present() {
     let expected_bytes = fs::read(&upstream).unwrap();
     assert_eq!(
         vendored_bytes, expected_bytes,
-        "vendored catalog must be byte-identical to opurom-examples"
+        "vendored catalog must be byte-identical to the upstream catalog"
     );
     let vendored: Json = serde_json::from_slice(&vendored_bytes).unwrap();
     let expected: Json = serde_json::from_slice(&expected_bytes).unwrap();
     assert_eq!(
         vendored, expected,
-        "vendored catalog drifted from opurom-examples"
+        "vendored catalog drifted from the upstream catalog"
     );
     assert_eq!(vendored["count"], 260);
     assert_eq!(vendored["primitives"], 100);
@@ -3786,6 +3896,7 @@ fn expanded_ir_keeps_emitters_catalog_and_optimizer() {
         ("baidu", "pages/index/index.js"),
         ("kuaishou", "pages/index/index.js"),
         ("wasm", "host.js"),
+        ("harmony", "src/main/ets/pages/Index.ets"),
     ];
     let mut web_dir = PathBuf::new();
     for &(target, artifact) in targets {
@@ -3925,7 +4036,7 @@ fn extended_primitives_and_catalog_names_are_accepted() {
 }
 
 #[test]
-fn all_nine_emitters_keep_working() {
+fn all_ten_emitters_keep_working() {
     let kinds = canonical_extended_kinds();
     let dir = out_dir("extended-emit");
     let src_path = dir.join("kinds.opu");
@@ -3939,7 +4050,7 @@ fn all_nine_emitters_keep_working() {
     let r = compile(&src_path, &ir_path);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     for target in [
-        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm", "harmony",
     ] {
         let out = dir.join(format!("out-{target}"));
         let e = emit(&ir_path, target, &out);
@@ -3953,11 +4064,11 @@ fn all_nine_emitters_keep_working() {
 }
 
 #[test]
-fn mobile-alias-catalog_components_compile_and_emit_every_target() {
-    let dir = out_dir("a framework-catalog");
+fn mobile_alias_catalog_components_compile_and_emit_every_target() {
+    let dir = out_dir("mobile-alias-catalog");
     let src_path = dir.join("mobile-alias.opu");
     let mut src = String::from(
-        "app a frameworkCatalog {\n  state enabled = false\n  state volume = 0\n  \
+        "app MobileAliasCatalog {\n  state enabled = false\n  state volume = 0\n  \
          state selection = \"Surfing\"\n  Column {\n",
     );
     for name in MOBILE_ALIAS_NAMES {
@@ -3981,7 +4092,7 @@ fn mobile-alias-catalog_components_compile_and_emit_every_target() {
         );
     }
     for target in [
-        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm", "harmony",
     ] {
         let out = dir.join(format!("out-{target}"));
         let e = emit(&ir_path, target, &out);
@@ -3996,7 +4107,7 @@ fn mobile-alias-catalog_components_compile_and_emit_every_target() {
 
 #[test]
 fn unknown_prop_on_new_component_is_a_friendly_diagnostic() {
-    let dir = out_dir("a framework-badprop");
+    let dir = out_dir("mobile-alias-badprop");
     let src_path = dir.join("bad.opu");
     fs::write(
         &src_path,
@@ -4056,6 +4167,7 @@ fn feedback_and_display_catalog_components_compile_and_emit_every_target() {
         ("baidu", "pages/index/index.js"),
         ("kuaishou", "pages/index/index.js"),
         ("wasm", "host.js"),
+        ("harmony", "src/main/ets/pages/Index.ets"),
     ];
     for &(target, artifact) in cases {
         let out = out_dir(&format!("feedback-display-{target}"));
@@ -5289,7 +5401,7 @@ fn invalid_validator_values_are_rejected_with_help() {
 }
 
 #[test]
-fn all_nine_emitters_preserve_forms_metadata() {
+fn all_ten_emitters_preserve_forms_metadata() {
     let dir = out_dir("forms-emit");
     let src = dir.join("forms.opu");
     fs::write(&src, FORMS_SOURCE).unwrap();
@@ -5311,6 +5423,7 @@ fn all_nine_emitters_preserve_forms_metadata() {
         ("baidu", "pages/index/index.js"),
         ("kuaishou", "pages/index/index.js"),
         ("wasm", "host.js"),
+        ("harmony", "src/main/ets/pages/Index.ets"),
     ];
     for &(target, artifact) in cases {
         let out = dir.join(format!("out-{target}"));
@@ -5352,6 +5465,15 @@ fn all_nine_emitters_preserve_forms_metadata() {
                 assert!(text.contains("Opurom_META"), "wasm lost metadata");
                 assert!(text.contains("@validate"), "wasm lost validate signal");
                 node_check(&out.join("host.js"));
+            }
+            "harmony" => {
+                assert!(text.contains("Opurom_META_JSON"), "harmony lost metadata");
+                assert!(text.contains("@validate"), "harmony lost validate signal");
+                assert!(text.contains("OpuromValidator"), "harmony lost validators");
+                assert!(
+                    text.contains("new OpuromValidator(5, true, 3, 12, "),
+                    "harmony lost the Input validator fields"
+                );
             }
             _ => {
                 assert!(text.contains("Opurom_META"), "{target} lost metadata");
@@ -5719,7 +5841,7 @@ fn mini_program_glass_uses_the_normative_lamina_in_both_modes() {
 #[test]
 fn every_emitter_rejects_an_undeclared_event_name() {
     // the IR format declares a closed event-name set. The check lives in the
-    // shared read_node so all nine emitters reject a typo instead of silently
+    // shared read_node so all ten emitters reject a typo instead of silently
     // dropping the binding, matching the web-dom validator.
     let dir = out_dir("unknown-event");
     let ir = dir.join("bad.opuir.json");
@@ -5736,7 +5858,7 @@ fn every_emitter_rejects_an_undeclared_event_name() {
     });
     fs::write(&ir, serde_json::to_vec(&doc).unwrap()).unwrap();
     for target in [
-        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm", "harmony",
     ] {
         let out = dir.join(target);
         let r = emit(&ir, target, &out);
@@ -5775,7 +5897,7 @@ fn emitters_accept_every_declared_event_name() {
     });
     fs::write(&ir, serde_json::to_vec(&doc).unwrap()).unwrap();
     for target in [
-        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm", "harmony",
     ] {
         let r = emit(&ir, target, &dir.join(target));
         assert!(
@@ -5943,7 +6065,7 @@ fn unknown_design_values_are_rejected_with_help() {
 }
 
 #[test]
-fn all_nine_emitters_preserve_design_props() {
+fn all_ten_emitters_preserve_design_props() {
     let dir = out_dir("design-emit");
     let src = dir.join("design.opu");
     fs::write(&src, DESIGN_SOURCE).unwrap();
@@ -5956,7 +6078,7 @@ fn all_nine_emitters_preserve_design_props() {
     );
     let ir_doc: Json = serde_json::from_slice(&fs::read(&ir_path).unwrap()).unwrap();
 
-    // The artifact that carries the node props for each of the nine targets.
+    // The artifact that carries the node props for each of the ten targets.
     let cases: &[(&str, &str)] = &[
         ("native", "src/main.rs"),
         ("web", "ir.json"),
@@ -5967,6 +6089,7 @@ fn all_nine_emitters_preserve_design_props() {
         ("baidu", "pages/index/index.swan"),
         ("kuaishou", "pages/index/index.ksml"),
         ("wasm", "host.js"),
+        ("harmony", "src/main/ets/pages/Index.ets"),
     ];
     for &(target, artifact) in cases {
         let out = dir.join(format!("out-{target}"));
@@ -6001,6 +6124,14 @@ fn all_nine_emitters_preserve_design_props() {
                 assert!(
                     text.contains("variant: \"primary\""),
                     "wasm TREE lost design props"
+                );
+            }
+            "harmony" => {
+                assert!(
+                    text.contains("new OpuromDesign(")
+                        && text.contains("\"primary\"")
+                        && text.contains("\"success\""),
+                    "harmony lost design metadata"
                 );
             }
             _ => {
@@ -6740,7 +6871,7 @@ fn input_text_buffer_props_lower_and_unknown_still_rejected() {
     assert!(stderr.contains("textBuffer"), "{stderr}");
 }
 
-/// Read the primary artifact each of the nine emitters writes, so the test can
+/// Read the primary artifact each of the ten emitters writes, so the test can
 /// assert the new theme keys and Input text-buffer props survive per target.
 fn primary_artifact(dir: &Path, target: &str) -> PathBuf {
     match target {
@@ -6753,12 +6884,13 @@ fn primary_artifact(dir: &Path, target: &str) -> PathBuf {
         "douyin" => dir.join("pages/index/index.ttml"),
         "baidu" => dir.join("pages/index/index.swan"),
         "kuaishou" => dir.join("pages/index/index.ksml"),
+        "harmony" => dir.join("src/main/ets/pages/Index.ets"),
         _ => panic!("unknown target {target}"),
     }
 }
 
 #[test]
-fn all_nine_emitters_preserve_theme_keys_and_input_props() {
+fn all_ten_emitters_preserve_theme_keys_and_input_props() {
     let dir = out_dir("emit-theme-input");
     let src = dir.join("app.opu");
     fs::write(
@@ -6771,7 +6903,7 @@ fn all_nine_emitters_preserve_theme_keys_and_input_props() {
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
 
     for target in [
-        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm", "harmony",
     ] {
         let out = out_dir(&format!("emit-theme-input-{target}"));
         let r = emit(&ir, target, &out);
@@ -6781,11 +6913,11 @@ fn all_nine_emitters_preserve_theme_keys_and_input_props() {
             String::from_utf8_lossy(&r.stderr)
         );
         let artifact = fs::read_to_string(primary_artifact(&out, target)).unwrap();
-        // The nine IR emitters must carry the theme keys: embedded IR (native,
+        // The ten IR emitters must carry the theme keys: embedded IR (native,
         // web) or the mini-program's app.js. wasm is a bonus host-only target.
         if target != "wasm" {
             let theme_carrier = match target {
-                "native" | "web" => artifact.clone(),
+                "native" | "web" | "harmony" => artifact.clone(),
                 _ => fs::read_to_string(out.join("app.js")).unwrap(),
             };
             assert!(
@@ -6805,7 +6937,7 @@ fn all_nine_emitters_preserve_theme_keys_and_input_props() {
         );
         // Generated JS must be syntactically valid in every target that emits JS.
         let js = match target {
-            "native" => None, // native emits Rust, checked by the native suite.
+            "native" | "harmony" => None, // Rust and ArkTS are checked elsewhere.
             "web" => Some(out.join("app.js")),
             "wasm" => Some(out.join("host.js")),
             _ => Some(out.join("pages/index/index.js")),

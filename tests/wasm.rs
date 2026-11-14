@@ -1,5 +1,5 @@
 //! The `wasm` emitter conformance: the generated crate builds for
-//! `wasm32-unknown-unknown` and the module satisfies the ABI of the wasm ABI.
+//! `wasm32-unknown-unknown` and the module satisfies the ABI of the WASM ABI.
 
 use std::fs;
 use std::path::{Path, PathBuf};

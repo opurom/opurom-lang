@@ -9,7 +9,7 @@ produces byte-identical IR, and `counter.opu`, `profile.opu` and `todo.opu` keep
 byte-identical IR at every stage. Custom components are expanded at compile time, so a program
 without them produces byte-identical IR and gains no new IR fields.
 
-## Grammar summary (the language syntax 0.1.0 + the additive layers)
+## Grammar summary (IR 0.1.0 and the additive layers)
 
 ```ebnf
 program       = { import_decl | component_decl } "app" IDENT "{" { state_decl | computed_decl | component_decl | model_decl | api_decl | theme_decl | page_decl | node } "}" ;
@@ -94,10 +94,6 @@ computed_factor = [ "-" ] INT | IDENT ;
 
 ### Repeatable lists and form validation
 
-a framework's [form validation](https://raw.githubusercontent.com/a framework/a framework/main/packages/a framework/lib/src/widgets/form.dart)
-iterates registered fields, while [list builders](https://raw.githubusercontent.com/a framework/a framework/main/packages/a framework/lib/src/widgets/list-builder reference)
-and [indexed child builders](https://raw.githubusercontent.com/a framework/a framework/main/packages/a framework/lib/src/widgets/scroll_delegate.dart)
-build list children by index. Opurom lowers those ideas into additive IR metadata instead of
 runtime callbacks:
 
 ```opu
@@ -143,7 +139,7 @@ The four props lower unchanged to `props` on `Input` nodes, and `form.validate()
 `{"op": "validate", "target": "form"}` on the tap event. Genuinely unknown props are still
 rejected. `opuromc optimize` preserves the repeat field, validator props and validate action.
 
-The nine emitters preserve these fields rather than silently dropping them:
+The ten emitters preserve these fields rather than silently dropping them:
 
 | Emitter | Preservation |
 | --- | --- |
@@ -151,6 +147,7 @@ The nine emitters preserve these fields rather than silently dropping them:
 | `web` | `ir.json` embeds the full IR; `index.html` carries `data-required`, `data-min-length`, `data-max-length` and `data-pattern`; `app.js` records `state["@validate"]`. |
 | `wechat`, `alipay`, `qq`, `douyin`, `baidu`, `kuaishou` | `pages/index/index.js` carries `Opurom_META` and an `@validate` set signal; markup carries `data-repeat` and validator data attributes. |
 | `wasm` | `host.js` carries `Opurom_META`, repeat/validator fields in `TREE`, and `@validate` in the host mirror; the module counts a reserved validation patch. |
+| `harmony` | `Index.ets` carries the full IR as `Opurom_IR_JSON`, repeat metadata as `Opurom_META_JSON`, validator fields in `OpuromValidator`, and `@validate` in the runtime signal. |
 
 These emitters do not yet implement runtime repetition or field-level validation: the documented
 graceful fallback renders the template once, reserves `@validate` as a signal, and keeps every
@@ -183,7 +180,7 @@ whose help line lists the allowed set, matching the `animate` and `gesture` prop
 node prop key only — it lives under each node's `props` and never collides with state variable
 declarations, `{name}` interpolation or `for item in state.items`.
 
-The nine emitters preserve all three props rather than silently dropping them:
+The ten emitters preserve all three props rather than silently dropping them:
 
 | Emitter | Preservation |
 | --- | --- |
@@ -191,6 +188,7 @@ The nine emitters preserve all three props rather than silently dropping them:
 | `web` | `ir.json` embeds the full IR. |
 | `wechat`, `alipay`, `qq`, `douyin`, `baidu`, `kuaishou` | markup carries `data-state`, `data-variant` and `data-tone` on every node; `pages/index/index.js` carries the props under `Opurom_META.design`. |
 | `wasm` | `host.js` carries them in `TREE` and under `Opurom_META.design`. |
+| `harmony` | `Index.ets` carries them as `OpuromDesign` entries and uses them through `nodeColor()`. |
 
 Plain programs that omit the props emit identical bytes, and the golden IR fixtures remain
 byte-identical.
@@ -457,8 +455,8 @@ becomes:
 ```
 
 There is **no runtime component registry and no IR interpreter**: the IR contains no component
-declarations, no component nodes and no new top-level field, so all nine emitters, the optimizer
-and the wasm ABI consume it unchanged. `opuromc components` still lists only the 240 built-in
+declarations, no component nodes and no new top-level field, so all ten emitters, the optimizer
+and the wasm ABI consume it unchanged. `opuromc components` still lists only the 260 built-in
 catalog names.
 
 Friendly diagnostics cover recursive and mutually cyclic components (including unused ones),
@@ -469,7 +467,7 @@ iterables, statement targets), component declarations inside node blocks or impo
 app name that collides with a component, and a component used as the top-level app instead of an
 `app Name { ... }` block. Every diagnostic has a negative fixture and a test.
 
-### Full-stack syntax (the framework implementation)
+### Full-stack syntax
 
 ```opu
 app TodoApp {
@@ -505,8 +503,9 @@ Diagnostics go to stderr as `path:line:col: error: message` plus a `  help: ...`
 opuromc check <src.opu>                                   # diagnostics only
 opuromc compile <src.opu> -o <out.opuir.json>             # lex -> parse -> typecheck -> IR
 opuromc target <ir.json> --target <name> -o <dir>         # lower IR into target source
-opuromc targets                                           # list all 9 targets
-opuromc components                                        # list the 240 catalog names
+opuromc emit --list                                       # list all 10 targets
+opuromc targets                                           # list all 10 targets
+opuromc components                                        # list the 260 catalog names
 opuromc optimize <ir.json> -o <out.json>                  # dead-computed and dead-state elimination
 opuromc --version                                         # 0.1.0
 ```
@@ -514,8 +513,8 @@ opuromc --version                                         # 0.1.0
 The compiler emits node ids pre-order from 0, keeps numeric props as JSON numbers, puts
 `events: {}` and `children: []` on every node, and adds the default theme
 `{"mode":"system","accent":"#097FEB","radius":12}`. Compiling
-[`counter.opu`](counter.opu) is deep-equal to
-[`counter.opuir.json`](counter.opuir.json); `counter.opu`, `profile.opu` and
+[`counter.opu`](../opurom-examples/golden/counter.opu) is deep-equal to
+[`counter.opuir.json`](../opurom-examples/golden/counter.opuir.json); `counter.opu`, `profile.opu` and
 `todo.opu` also have byte-level golden IR fixtures in `tests/fixtures/golden/`.
 
 ## Emitters
@@ -530,7 +529,8 @@ The compiler emits node ids pre-order from 0, keeps numeric props as JSON number
 | `douyin` | `app.json`, `app.js`, `pages/index/index.ttml`, `pages/index/index.ttss`, `pages/index/index.js` | `tt:for`, `bindtap`/`bindinput`, `setData` |
 | `baidu` | `app.json`, `app.js`, `pages/index/index.swan`, `pages/index/index.css`, `pages/index/index.js` | `s-for`, `bindtap`/`bindinput`, `setData` |
 | `kuaishou` | `app.json`, `app.js`, `pages/index/index.ksml`, `pages/index/index.css`, `pages/index/index.js` | `ks:for`, `bindtap`/`bindinput`, `setData` |
-| `wasm` | `Cargo.toml`, `src/lib.rs`, `index.html`, `host.js`, `README.md` | std-only `cdylib` for `wasm32-unknown-unknown` with the C ABI of [the wasm ABI](the wasm ABI): `opu_version`, `opu_state_len`, `opu_state`, `opu_tap`, `opu_input` |
+| `wasm` | `Cargo.toml`, `src/lib.rs`, `index.html`, `host.js`, `README.md` | std-only `cdylib` for `wasm32-unknown-unknown` with the C ABI of the WASM ABI in the framework rules: `opu_version`, `opu_state_len`, `opu_state`, `opu_tap`, `opu_input` |
+| `harmony` | `oh-package.json5`, `build-profile.json5`, `hvigorfile.ts`, `AppScope/app.json5`, `AppScope/resources/base/element/string.json`, `src/main/module.json5`, `src/main/ets/entryability/EntryAbility.ets`, `src/main/ets/pages/Index.ets`, `src/main/ets/pages/Index.ir.json`, `src/main/resources/base/profile/main_pages.json` | a native HarmonyOS Stage-model HAP module with `@Entry @Component struct Index`; `Column`/`Row`/`Text`/`Button`/`Input` map to ArkUI `Column()`/`Row()`/`Text()`/`Button()`/`TextInput()`, actions become `onClick`/`onChange` methods, `push`/`pop`/`validate` become runtime signals, and state, theme tokens, design props and validators ride in typed ArkTS metadata plus the full `Index.ir.json` |
 
 The six mini-program targets share one lowering pass and one small per-platform table
 (extensions, loop/key directives, tap/input directives, state-set API, request API, window title
@@ -556,8 +556,8 @@ without an explicit `role` add no attributes. A page with no explicit roles emit
 container. The `native` target pairs each PPM frame with a sibling `<frame>.a11y.json` file holding
 the renderer's deterministic accessibility tree, rewritten on every render.
 
-`web-dom` is an additional build target that is not part of the nine-emitter matrix, so
-`opuromc targets` stays at nine. It delegates to the sibling `opurom-web` DOM emitter, which
+`web-dom` is an additional build target that is not part of the ten-emitter matrix, so
+`opuromc targets` stays at ten. It delegates to the sibling `opurom-web` DOM emitter, which
 bakes the IR into a standalone `index.html` with a viewport meta tag and flex layout; the page
 reflows when the browser is resized. Use
 `opurom build --src <src.opu> --target web-dom --out <dir>`. The sibling `opurom-web` repository
@@ -572,6 +572,7 @@ target and every golden fixture are unchanged.
 | `native` | **Full within the std-only contract** | A deterministic source-order sequencer uses `Instant`-measured `thread::sleep` (busy-free) and a `TcpStream` HTTP/1.1 GET against `OPR_BASE_URL`. With the variable unset, the documented local result is `local: <path>`. Plain HTTP only: no TLS, redirects, IPv6 literals or HTTP/2. |
 | `wechat`, `alipay`, `qq`, `douyin`, `baidu`, `kuaishou` | **Approximate** | `async` handlers await `setTimeout` promises and call each platform's `request` API (`wx.request`, `my.request`, `qq.request`, `tt.request`, `swan.request`, `ks.request`). The generated URL is the literal IR path; a real deployment needs a configured absolute base and domain allowlist. No simulator or device conformance runs. |
 | `wasm` | **Approximate** | `host.js` exposes `HOST_CALLBACKS` for `setTimeout` and `fetch`, runs them through `runEffects(id)` before the synchronous `opu_tap`, and keeps string state in the host mirror. The wasm module has no imports and no OS async IO; browser host behavior is not automated here. |
+| `harmony` | **Approximate** | `async` ArkTS methods await `Promise` delays and call `@kit.NetworkKit` HTTP requests through `http.createHttp()`. The generated URL is `Opurom_BASE_URL + path`; a real deployment needs a configured absolute base and network permission. No simulator or device conformance runs. |
 
 ### Per-target computed status
 
@@ -587,7 +588,7 @@ keeps only compiled initial values; that is the documented consumer-side fallbac
 
 ### Component catalog
 
-[components.json](components.json) is vendored **byte-for-byte** as
+[components.json](src/catalog.json) is vendored **byte-for-byte** as
 [src/catalog.json](src/catalog.json) and embedded with `include_str!`, so the crate builds
 standalone. Its 240 tuples are `[name, primitive, category, defaultProps]`, mapping onto
 100 distinct primitive kinds (32 core kinds + 68 extended kinds). A source `Kind` that is a
@@ -606,9 +607,9 @@ the native renderer; a node without the key is unchanged.
 `particles` is accepted on any node too and lowers to the bounded `props.particles` object
 the renderer scatters.
 
-### Component catalog expansion (the component catalog rules framework rules)
+### Component catalog expansion (framework rules)
 
-The vendored [components.json](components.json) now has **260
+The vendored [components.json](src/catalog.json) now has **260
 named components mapped onto 100 DISTINCT primitive kinds**: the 32 core kinds
 plus 68 new ones. Each new primitive has its own deterministic software drawing,
 a documented prop schema and a default a11y role in `opurom-render`; the catalog
@@ -617,7 +618,7 @@ prints the `260 components` count, and the compiler's `KINDS` validator accepts 
 primitives through one documented, reasonable prop schema (all props optional,
 `value` positional, no children, no tap handler).
 
-`opuromc check` / `compile` accept every new kind and catalog name, and all nine
+`opuromc check` / `compile` accept every new kind and catalog name, and all ten
 emitters still lower an IR containing them. Plain `counter.opu`, `profile.opu`
 and `todo.opu` keep byte-identical IR: the new kinds are additive and no existing
 kind changed its lowering.
@@ -625,8 +626,7 @@ kind changed its lowering.
 Each kind has one deterministic software drawing (in `opurom-render`). Catalog names
 remain compile-time aliases for primitives; they are not runtime components.
 
-The catalog also carries an additive **familiar mobile-component names** of 24 familiar mobile design
-and familiar mobile-component names: `Scaffold`, `AppBar`, `FloatingActionButton`, `NavigationBar`,
+The catalog also carries an additive set of 24 familiar mobile-component names: `Scaffold`, `AppBar`, `FloatingActionButton`, `NavigationBar`,
 `NavigationRail`, `NavigationDrawer`, `InputChip`, `SnackBar`, `BottomSheet`,
 `ModalBottomSheet`, `SegmentedButton`, `DividerVertical`, `ListTile`, `ExpansionTile`,
 `TooltipCard`, and the nine `Cupertino*` names (`CupertinoButton`, `CupertinoSwitch`,
@@ -637,7 +637,7 @@ action op is introduced. Every entry carries real `defaultProps` (radius, paddin
 shadow and the brand accent `#097FEB` where it fits the component); they are validated
 at compile time along with the rest of the catalog, and an unknown prop on one of them
 is rejected with the existing friendly `unknown prop ... on ...` diagnostic instead of
-being silently dropped. The defaults were chosen from familiar mobile components
+being silently dropped. The defaults follow familiar mobile-component conventions from
 component vocabulary and only reuse existing drawn primitives.
 
 ### Optimizer
@@ -663,7 +663,7 @@ Optimization is opt-in: default `compile` output stays byte-identical.
 cd opurom-lang
 cargo fmt --all
 cargo fmt --all -- --check
-cargo test --offline                 # 111 tests: 5 unit + 99 CLI + 7 wasm
+cargo test --offline                 # 153 tests: 7 unit + 133 CLI + 6 packages + 7 wasm
 RUSTFLAGS="-D warnings" cargo test --offline   # zero compiler warnings
 ```
 
@@ -672,21 +672,23 @@ and parsed-JSON deep-equality, checks `node --check` on web plus all six mini `p
 plus the wasm `host.js`, runs `cargo build --release --offline` inside generated native crates
 followed by piped-stdin sessions, and builds generated wasm crates for
 `wasm32-unknown-unknown` before instantiating them in Node's `WebAssembly` runtime with an empty
-import object. The language tests cover `else`/`unless`, computed values, list unroll, every new
-diagnostic, all nine emitters, computed native runtime patches and computed wasm ABI state. Six
-new CLI tests cover repeatable-list IR and optimizer preservation, all nine emitters' additive
-metadata, unknown list names, validator props/actions, validator diagnostics and golden bytes. The
-component tests cover one, two, nested and in-app component uses, the exact expanded IR, all
-fifteen negative classes, all nine emitters and the optimizer on expanded IR, byte-identical
-plain IR, and the wasm ABI on a component-expanded tree.
+import object. The harmony test checks the complete project layout, full-IR embedding, ArkUI
+markers, generated state/design/validator metadata and balanced ArkTS braces. The language tests
+cover `else`/`unless`, computed values, list unroll, every new diagnostic, all ten emitters,
+computed native runtime patches and computed wasm ABI state. Six new CLI tests cover repeatable-list
+IR and optimizer preservation, all ten emitters' additive metadata, unknown list names, validator
+props/actions, validator diagnostics and golden bytes. The component tests cover one, two, nested
+and in-app component uses, the exact expanded IR, all fifteen negative classes, all ten emitters
+and the optimizer on expanded IR, byte-identical plain IR, and the wasm ABI on a component-expanded
+tree.
 
 ## Verified status
 
-- `cargo test --offline`: 111/111 tests pass (5 unit + 99 CLI + 7 wasm); `RUSTFLAGS="-D warnings"`
-  is clean and `cargo fmt --all -- --check` passes.
+- `cargo test --offline`: 153/153 tests pass (7 unit + 133 CLI + 6 packages + 7 wasm);
+  `RUSTFLAGS="-D warnings"` is clean and `cargo fmt --all -- --check` passes.
 - UI-only programs (`counter.opu`, `profile.opu`, `todo.opu`) compile to **byte-identical** IR;
   no `imports`, `async`, `effects`, `computed`, `unless`, component, `repeat`, validator or
-  `validate` keys are added to plain IR. The 240/100 vendored catalog is byte-identical to the framework rules
+  `validate` keys are added to plain IR. The 260/100 vendored catalog is byte-identical to the reference catalog
   catalog.
 - Negative fixtures cover the 0.1.0 classes, the interactive UI classes, the async/import
   classes, the `else`/computed/list classes, fifteen component classes, thirteen type classes,
@@ -696,13 +698,13 @@ plain IR, and the wasm ABI on a component-expanded tree.
   compile time. Typed and untyped source lower to identical IR, and the golden programs keep
   byte-identical IR.
 - Components expand in the frontend: one, two, nested and in-app uses produce ordinary IR
-  with pre-order ids, and all 9 emitters, the optimizer and the wasm ABI accept that IR.
+  with pre-order ids, and all 10 emitters, the optimizer and the wasm ABI accept that IR.
 - The wasm target builds with `cargo build --release --target wasm32-unknown-unknown` and the
   `.wasm` instantiates in Node with an empty import object; `opu_version() == 1`, int computed
   state is recomputed after a tap, and async effects remain host-side callbacks without wasm
   imports.
 - Every generated JS file passes `node --check` (web + 6 mini + wasm host); `opuromc targets`
-  lists all 9 targets and `opuromc components` prints `260 components`.
+  lists all 10 targets and `opuromc components` prints `260 components`.
 - Generated native output builds warning-free with `cargo build --release --offline` and runs with
   piped stdin. The native sequencer's local fallback and plain-HTTP `OPR_BASE_URL` path are
   generated from the same IR, and every state change re-renders the frame. The generated crate
@@ -737,7 +739,7 @@ plain IR, and the wasm ABI on a component-expanded tree.
 
 - OS async IO in wasm, runtime list mutation, generic or conditional components, component
   libraries shared through imports, nested `else if` chains, Vulkan/ANGLE/D3D backends, full GPU
-  UI rasterization, Windows/Linux/Harmony native windows, real device conformance, TLS, SCRAM,
+  UI rasterization, Windows/Linux native windows, real HarmonyOS device conformance, TLS, SCRAM,
   MySQL, a remote package marketplace, an IntelliJ runtime plugin and OS screen-reader
   integration.
 - LSP, plugin sandboxing and a perf harness.

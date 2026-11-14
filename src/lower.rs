@@ -229,13 +229,13 @@ const HANDLER_VERBS: &[&str] = &["list", "get", "create", "update", "delete"];
 
 const ANIMATE_VALUES: &[&str] = &["spring", "ease", "inertia", "collision", "none"];
 
-/// Gesture names the renderer binds, matching a framework's `GestureDetector`
+/// Gesture names the renderer binds
 /// callbacks that this layer exposes.
 const GESTURE_VALUES: &[&str] = &["tap", "doubleTap", "longPress", "drag"];
 
 /// Interaction state, design-system variant and semantic tone are node props
 /// every kind accepts; the values mirror opurom-render's `ir.rs`. Emitters
-/// share this table so all nine preserve the same keys. `state` is only a prop
+/// share this table so all ten preserve the same keys. `state` is only a prop
 /// key here: node props live under each node's `props`, so it never collides
 /// with state declarations, `{name}` interpolation or `for item in state.items`.
 pub const DESIGN_PROPS: &[(&str, &[&str])] = &[

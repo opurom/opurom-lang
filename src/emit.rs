@@ -41,6 +41,10 @@ pub const TARGETS: &[(&str, &str)] = &[
         "wasm",
         "Cargo.toml, src/lib.rs, index.html, host.js, README.md",
     ),
+    (
+        "harmony",
+        "oh-package.json5, build-profile.json5, hvigorfile.ts, AppScope/app.json5, AppScope/resources/base/element/string.json, src/main/module.json5, src/main/ets/entryability/EntryAbility.ets, src/main/ets/pages/Index.ets, src/main/ets/pages/Index.ir.json, src/main/resources/base/profile/main_pages.json",
+    ),
 ];
 
 /// Additive `Input` validator props preserved in generated metadata and markup.
@@ -52,7 +56,7 @@ const VALIDATOR_PROPS: &[&str] = &["required", "minLength", "maxLength", "patter
 const TEXT_BUFFER_PROPS: &[&str] = &["textBuffer", "secure", "value"];
 
 /// Responsive DOM build target. It is deliberately kept out of [`TARGETS`] so
-/// `opuromc targets` still reports exactly the nine 0.1.0 IR emitters; it is
+/// `opuromc targets` still reports exactly the ten 0.1.0 IR emitters; it is
 /// dispatched explicitly in [`emit`].
 pub const WEB_DOM_TARGET: &str = "web-dom";
 
@@ -272,7 +276,7 @@ fn read_node(v: &Json, ir_path: &str) -> DResult<ENode> {
         .cloned()
         .unwrap_or_default();
     // the IR format declares a closed event-name set. Reject an undeclared name
-    // here, at the shared entry for all nine emitters, instead of silently
+    // here, at the shared entry for all ten emitters, instead of silently
     // dropping the binding: the web-dom validator applies the same rule.
     if let Some(unknown) = events.keys().find(|k| {
         !matches!(
@@ -1199,6 +1203,17 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
                 has_effects,
                 &theme_font_stack(&ir),
             ),
+            "harmony" => emit_harmony(
+                &app,
+                &states,
+                &computed,
+                &harmony_pages(&routes),
+                &routes.initial,
+                true,
+                &ir,
+                out,
+                ir_path,
+            ),
             _ => emit_mini_multipage(target, &app, &states, &computed, &routes, &ir, out, ir_path),
         };
     }
@@ -1238,6 +1253,12 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
             has_effects,
             &theme_font_stack(&ir),
         ),
+        "harmony" => {
+            let pages = [("Index".to_string(), &tree)];
+            emit_harmony(
+                &app, &states, &computed, &pages, "Index", false, &ir, out, ir_path,
+            )
+        }
         _ => emit_mini(target, &app, &states, &computed, &tree, &ir, out, ir_path),
     }
 }
@@ -3905,4 +3926,1158 @@ fn emit_native_multipage(
     };
     let src = native_source(app, states, computed, &combined, ir, ir_path, has_effects)?;
     write(out, "src/main.rs", &src, ir_path)
+}
+
+// ------------------------------------------------------------- harmony ----
+
+fn harmony_pages(routes: &ERoutes) -> Vec<(String, &ENode)> {
+    routes
+        .pages
+        .iter()
+        .map(|page| (page.name.clone(), &page.tree))
+        .collect()
+}
+
+/// Braces are escaped inside every string literal so a naive syntax check sees
+/// only balanced ArkTS code braces.
+fn arkts_str(s: &str) -> String {
+    js_lit(&Json::String(s.to_string()))
+        .replace('{', "\\u007B")
+        .replace('}', "\\u007D")
+}
+
+fn arkts_value(value: &Json) -> String {
+    match value {
+        Json::String(s) => arkts_str(s),
+        Json::Array(items) => format!(
+            "[{}]",
+            items.iter().map(arkts_value).collect::<Vec<_>>().join(", ")
+        ),
+        Json::Object(fields) => format!(
+            "{{ {} }}",
+            fields
+                .iter()
+                .map(|(key, value)| format!("{}: {}", arkts_str(key), arkts_value(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => js_lit(value),
+    }
+}
+
+fn harmony_state_index(states: &[EState], name: &str, ir_path: &str) -> DResult<usize> {
+    let name = name.strip_prefix("state.").unwrap_or(name);
+    states
+        .iter()
+        .position(|state| state.name == name)
+        .ok_or_else(|| {
+            bad_ir(
+                ir_path,
+                format!("unknown state '{name}' in HarmonyOS emitter"),
+            )
+        })
+}
+
+fn harmony_state_ref(states: &[EState], name: &str, ir_path: &str) -> DResult<String> {
+    Ok(format!(
+        "this.s{}",
+        harmony_state_index(states, name, ir_path)?
+    ))
+}
+
+fn harmony_state_ty(ty: &str) -> &'static str {
+    match ty {
+        "int" => "number",
+        "bool" => "boolean",
+        "list" => "string[]",
+        _ => "string",
+    }
+}
+
+fn harmony_state_init(state: &EState) -> String {
+    match state.ty.as_str() {
+        "int" => state.init.as_i64().unwrap_or(0).to_string(),
+        "bool" => state.init.as_bool().unwrap_or(false).to_string(),
+        "list" => match &state.init {
+            Json::Array(_) => arkts_value(&state.init),
+            Json::String(s) => format!("[{}]", arkts_str(s)),
+            _ => "[]".to_string(),
+        },
+        _ => state
+            .init
+            .as_str()
+            .map(arkts_str)
+            .unwrap_or_else(|| "\"\"".to_string()),
+    }
+}
+
+fn harmony_bundle_name(app: &str) -> String {
+    let suffix: String = app
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    let name = if suffix.is_empty() {
+        "app"
+    } else {
+        suffix.as_str()
+    };
+    format!("com.opurom.{name}")
+}
+
+fn harmony_key(route: usize, id: u64) -> u64 {
+    route as u64 * 1_000_000 + id
+}
+
+fn harmony_method(event: &str, route: usize, id: u64) -> String {
+    format!("{event}_r{route}_n{id}")
+}
+
+fn harmony_input_field(route: usize, id: u64) -> String {
+    format!("input_r{route}_n{id}")
+}
+
+fn harmony_condition(n: &ENode, states: &[EState], ir_path: &str) -> DResult<String> {
+    let mut clauses = Vec::new();
+    if let Some(name) = &n.when {
+        clauses.push(harmony_state_ref(states, name, ir_path)?);
+    }
+    if let Some(name) = &n.unless {
+        clauses.push(format!("!{}", harmony_state_ref(states, name, ir_path)?));
+    }
+    Ok(clauses.join(" && "))
+}
+
+fn harmony_interp(
+    s: &str,
+    states: &[EState],
+    aliases: &HashMap<String, usize>,
+    ir_path: &str,
+) -> DResult<String> {
+    let parts = interp_parts(s).map_err(|(off, msg)| interp_error(s, off, msg, ir_path))?;
+    let mut exprs = Vec::new();
+    for part in parts {
+        match part {
+            Part::Lit(text) => exprs.push(arkts_str(&text)),
+            Part::Var(name, _) => match aliases.get(&name) {
+                Some(index) => exprs.push(format!("this.repeatValue({index})")),
+                None => exprs.push(format!(
+                    "String({})",
+                    harmony_state_ref(states, &name, ir_path)?
+                )),
+            },
+            Part::Index { off, .. } => {
+                return Err(interp_error(
+                    s,
+                    off,
+                    "list index survives lowering".to_string(),
+                    ir_path,
+                ))
+            }
+        }
+    }
+    Ok(if exprs.is_empty() {
+        "\"\"".to_string()
+    } else {
+        format!("this.opuText([{}])", exprs.join(", "))
+    })
+}
+
+fn harmony_text_prop(
+    n: &ENode,
+    key: &str,
+    default: &str,
+    states: &[EState],
+    aliases: &HashMap<String, usize>,
+    ir_path: &str,
+) -> DResult<String> {
+    harmony_interp(&prop_str(&n.props, key, default), states, aliases, ir_path)
+}
+
+fn harmony_modifiers(
+    n: &ENode,
+    key: u64,
+    route: usize,
+    pad: &str,
+    textual: bool,
+    out: &mut String,
+) {
+    let modifier_pad = format!("{pad}  ");
+    out.push_str(&format!(
+        "{modifier_pad}.backgroundColor(this.nodeColor({key}))\n"
+    ));
+    out.push_str(&format!(
+        "{modifier_pad}.borderRadius(Opurom_THEME_RADIUS)\n"
+    ));
+    if textual {
+        let size = prop_num(&n.props, "size", 16.0) * prop_num(&n.props, "fontScale", 1.0);
+        out.push_str(&format!(
+            "{modifier_pad}.fontSize(this.nodeFontSize({}))\n",
+            fmt_num(size)
+        ));
+        out.push_str(&format!(
+            "{modifier_pad}.fontColor(this.nodeColor({key}))\n"
+        ));
+    }
+    if let Some(padding) = n.props.get("padding").and_then(Json::as_f64) {
+        out.push_str(&format!("{modifier_pad}.padding({})\n", fmt_num(padding)));
+    }
+    if let Some(margin) = n.props.get("margin").and_then(Json::as_f64) {
+        out.push_str(&format!("{modifier_pad}.margin({})\n", fmt_num(margin)));
+    }
+    if let Some(opacity) = n.props.get("opacity").and_then(Json::as_f64) {
+        out.push_str(&format!("{modifier_pad}.opacity({opacity})\n"));
+    }
+    if n.props.get("secure").and_then(Json::as_bool) == Some(true) {
+        out.push_str(&format!("{modifier_pad}.type(InputType.Password)\n"));
+    }
+    if n.events.contains_key("tap") {
+        let method = harmony_method("tap", route, n.id);
+        out.push_str(&format!(
+            "{modifier_pad}.onClick(() => {{ this.{method}(); }})\n"
+        ));
+    }
+    if n.events.contains_key("input") {
+        let method = harmony_method("input", route, n.id);
+        out.push_str(&format!(
+            "{modifier_pad}.onChange((value: string) => {{ this.{method}(value); }})\n"
+        ));
+    }
+    if n.events.contains_key("doubleTap") {
+        let method = harmony_method("doubleTap", route, n.id);
+        out.push_str(&format!(
+            "{modifier_pad}.gesture(TapGesture({{ count: 2 }}).onAction(() => {{ this.{method}(); }}))\n"
+        ));
+    }
+    if n.events.contains_key("longPress") {
+        let method = harmony_method("longPress", route, n.id);
+        out.push_str(&format!(
+            "{modifier_pad}.gesture(LongPressGesture().onAction(() => {{ this.{method}(); }}))\n"
+        ));
+    }
+    if n.events.contains_key("drag") {
+        let method = harmony_method("drag", route, n.id);
+        out.push_str(&format!(
+            "{modifier_pad}.gesture(PanGesture().onActionStart(() => {{ this.{method}(); }}))\n"
+        ));
+    }
+    out.push_str(&format!("{modifier_pad}.width('100%');\n"));
+}
+
+fn harmony_node(
+    n: &ENode,
+    states: &[EState],
+    aliases: &HashMap<String, usize>,
+    route: usize,
+    depth: usize,
+    out: &mut String,
+    ir_path: &str,
+) -> DResult<()> {
+    let mut local_aliases = aliases.clone();
+    if let Some(repeat) = &n.repeat {
+        let item = repeat.get("item").and_then(Json::as_str).unwrap_or("");
+        let list = repeat.get("list").and_then(Json::as_str).unwrap_or("");
+        let index = harmony_state_index(states, list, ir_path)?;
+        local_aliases.insert(item.to_string(), index);
+    }
+    let condition = harmony_condition(n, states, ir_path)?;
+    let conditional = !condition.is_empty();
+    let pad = "  ".repeat(depth);
+    if conditional {
+        out.push_str(&format!("{pad}if ({condition}) {{\n"));
+    }
+    let body_depth = depth + usize::from(conditional);
+    let body_pad = "  ".repeat(body_depth);
+    let key = harmony_key(route, n.id);
+    match n.kind.as_str() {
+        "Text" => {
+            let text = harmony_text_prop(n, "value", "", states, &local_aliases, ir_path)?;
+            out.push_str(&format!("{body_pad}Text({text})\n"));
+            harmony_modifiers(n, key, route, &body_pad, true, out);
+        }
+        "Button" => {
+            let label = harmony_text_prop(n, "label", "", states, &local_aliases, ir_path)?;
+            out.push_str(&format!("{body_pad}Button() {{\n"));
+            out.push_str(&format!("{body_pad}  Text({label})\n"));
+            for child in &n.children {
+                harmony_node(
+                    child,
+                    states,
+                    &local_aliases,
+                    route,
+                    body_depth + 1,
+                    out,
+                    ir_path,
+                )?;
+            }
+            out.push_str(&format!("{body_pad}}}\n"));
+            harmony_modifiers(n, key, route, &body_pad, false, out);
+        }
+        "Input" => {
+            let placeholder =
+                harmony_text_prop(n, "placeholder", "", states, &local_aliases, ir_path)?;
+            let field = harmony_input_field(route, n.id);
+            out.push_str(&format!(
+                "{body_pad}TextInput({{ placeholder: {placeholder}, text: this.{field} }})\n"
+            ));
+            harmony_modifiers(n, key, route, &body_pad, true, out);
+        }
+        "Row" | "Grid" => {
+            out.push_str(&format!("{body_pad}Row() {{\n"));
+            for child in &n.children {
+                harmony_node(
+                    child,
+                    states,
+                    &local_aliases,
+                    route,
+                    body_depth + 1,
+                    out,
+                    ir_path,
+                )?;
+            }
+            out.push_str(&format!("{body_pad}}}\n"));
+            harmony_modifiers(n, key, route, &body_pad, false, out);
+        }
+        _ => {
+            out.push_str(&format!("{body_pad}Column() {{\n"));
+            let label = fallback_text(n);
+            if !label.is_empty() {
+                let text = harmony_interp(&label, states, &local_aliases, ir_path)?;
+                out.push_str(&format!("{body_pad}  Text({text})\n"));
+            }
+            for child in &n.children {
+                harmony_node(
+                    child,
+                    states,
+                    &local_aliases,
+                    route,
+                    body_depth + 1,
+                    out,
+                    ir_path,
+                )?;
+            }
+            out.push_str(&format!("{body_pad}}}\n"));
+            harmony_modifiers(n, key, route, &body_pad, false, out);
+        }
+    }
+    if conditional {
+        out.push_str(&format!("{pad}}}\n"));
+    }
+    Ok(())
+}
+
+fn harmony_effect_code(effects: &[Effect], states: &[EState], ir_path: &str) -> DResult<String> {
+    let mut code = String::new();
+    for effect in effects {
+        match effect {
+            Effect::Delay { ms } => code.push_str(&format!("await this.delay({ms}); ")),
+            Effect::Fetch { path, into } => {
+                let index = harmony_state_index(states, into, ir_path)?;
+                code.push_str(&format!(
+                    "await this.fetchInto({}, {index}); ",
+                    arkts_str(path)
+                ));
+            }
+        }
+    }
+    Ok(code)
+}
+
+fn harmony_action(action: &Json, states: &[EState], ir_path: &str) -> DResult<String> {
+    let op = action_str(action, "op", ir_path)?;
+    if op == "pop" {
+        return Ok("this.pop(); ".to_string());
+    }
+    let target = action_str(action, "target", ir_path)?;
+    Ok(match op {
+        "push" => format!("this.push({}); ", arkts_str(target)),
+        "validate" => format!("this.validateForm({}); ", arkts_str(target)),
+        "set" => {
+            let index = harmony_state_index(states, target, ir_path)?;
+            let rhs = match action.get("valueFrom").and_then(Json::as_str) {
+                Some(from) => {
+                    format!("this.s{}", harmony_state_index(states, from, ir_path)?)
+                }
+                None => arkts_value(action.get("value").unwrap_or(&Json::String(String::new()))),
+            };
+            format!("this.s{index} = {rhs}; ")
+        }
+        op @ ("add" | "sub") => {
+            let index = harmony_state_index(states, target, ir_path)?;
+            let rhs = match action.get("valueFrom").and_then(Json::as_str) {
+                Some(from) => {
+                    format!("this.s{}", harmony_state_index(states, from, ir_path)?)
+                }
+                None => action
+                    .get("value")
+                    .and_then(Json::as_i64)
+                    .ok_or_else(|| {
+                        bad_ir(ir_path, format!("'{op}' action needs an integer 'value'"))
+                    })?
+                    .to_string(),
+            };
+            let sign = if op == "sub" { '-' } else { '+' };
+            format!("this.s{index} = this.s{index} {sign} ({rhs}); ")
+        }
+        "toggle" => {
+            let index = harmony_state_index(states, target, ir_path)?;
+            format!("this.s{index} = !this.s{index}; ")
+        }
+        other => return Err(bad_ir(ir_path, format!("unknown event op '{other}'"))),
+    })
+}
+
+fn harmony_event_method(
+    event_name: &str,
+    n: &ENode,
+    route: usize,
+    states: &[EState],
+    computed: &[Computed],
+    ir_path: &str,
+) -> DResult<String> {
+    let event = n
+        .events
+        .get(event_name)
+        .ok_or_else(|| bad_ir(ir_path, format!("missing event '{event_name}'")))?;
+    let method = harmony_method(event_name, route, n.id);
+    let effects = harmony_effect_code(&event_effects(event, ir_path)?, states, ir_path)?;
+    let mut body = String::new();
+    if event_name == "input" {
+        let field = harmony_input_field(route, n.id);
+        body.push_str(&format!("this.{field} = value; "));
+        for action in event_actions(event) {
+            if action.get("op").and_then(Json::as_str) == Some("set") {
+                let target = action_str(action, "target", ir_path)?;
+                let index = harmony_state_index(states, target, ir_path)?;
+                match states[index].ty.as_str() {
+                    "int" => body.push_str(&format!("this.s{index} = Number(value); ")),
+                    "bool" => body.push_str(&format!("this.s{index} = value === 'true'; ")),
+                    _ => body.push_str(&format!("this.s{index} = value; ")),
+                }
+            } else {
+                body.push_str(&harmony_action(action, states, ir_path)?);
+            }
+        }
+    } else {
+        for action in event_actions(event) {
+            body.push_str(&harmony_action(action, states, ir_path)?);
+        }
+    }
+    if !computed.is_empty() {
+        body.push_str("this.applyComputed(); ");
+    }
+    let params = if event_name == "input" {
+        "(value: string)"
+    } else {
+        "()"
+    };
+    Ok(format!(
+        "  private async {method}{params}: Promise<void> {{\n    {effects}{body}\n  }}\n"
+    ))
+}
+
+fn harmony_json_text(value: &Json, ir_path: &str) -> DResult<String> {
+    let text = serde_json::to_string_pretty(value).map_err(|e| {
+        bad_ir(
+            ir_path,
+            format!("cannot serialize HarmonyOS project JSON: {e}"),
+        )
+    })?;
+    Ok(text + "\n")
+}
+
+fn harmony_project_files(app: &str, out: &Path, ir_path: &str) -> DResult<()> {
+    let bundle = harmony_bundle_name(app);
+    let package = json!({
+        "name": "opurom-harmony",
+        "version": "1.0.0",
+        "description": app,
+        "main": "hvigorfile.ts",
+        "author": "opuromc",
+        "license": "Apache-2.0",
+        "modelVersion": "5.0.0",
+        "dependencies": {},
+        "devDependencies": {
+            "@ohos/hvigor": "5.0.4",
+            "@ohos/hvigor-ohos-plugin": "5.0.4"
+        }
+    });
+    write(
+        out,
+        "oh-package.json5",
+        &harmony_json_text(&package, ir_path)?,
+        ir_path,
+    )?;
+    let build_profile = json!({
+        "app": {
+            "signingConfigs": [],
+            "products": [{
+                "name": "default",
+                "compatibleSdkVersion": "5.0.0(12)",
+                "runtimeOS": "HarmonyOS",
+                "buildOption": {
+                    "strictMode": {
+                        "caseSensitiveCheck": true,
+                        "useNormalizedOHMUrl": true
+                    }
+                }
+            }],
+            "buildModeSet": [{ "name": "debug" }, { "name": "release" }]
+        },
+        "modules": [{
+            "name": "entry",
+            "srcPath": ".",
+            "targets": [{
+                "name": "default",
+                "applyToProducts": ["default"]
+            }]
+        }],
+        "apiType": "stageMode",
+        "buildOption": {
+            "arkOptions": { "runtimeOnly": { "packages": [] } }
+        },
+        "targets": [{ "name": "default" }, { "name": "ohosTest" }]
+    });
+    write(
+        out,
+        "build-profile.json5",
+        &harmony_json_text(&build_profile, ir_path)?,
+        ir_path,
+    )?;
+    write(
+        out,
+        "hvigorfile.ts",
+        "import { appTasks, hapTasks } from '@ohos/hvigor-ohos-plugin';\n\n\
+         export default {\n  system: appTasks,\n  plugins: [],\n};\n\n\
+         export const moduleTasks = hapTasks;\n",
+        ir_path,
+    )?;
+    let app_scope = json!({
+        "app": {
+            "bundleName": bundle,
+            "vendor": "opurom",
+            "versionCode": 1000000,
+            "versionName": "1.0.0",
+            "label": "$string:app_name",
+            "minAPIVersion": 12,
+            "targetAPIVersion": 12
+        }
+    });
+    write(
+        out,
+        "AppScope/app.json5",
+        &harmony_json_text(&app_scope, ir_path)?,
+        ir_path,
+    )?;
+    let strings = json!({ "string": [{ "name": "app_name", "value": app }] });
+    write(
+        out,
+        "AppScope/resources/base/element/string.json",
+        &harmony_json_text(&strings, ir_path)?,
+        ir_path,
+    )?;
+    let module = json!({
+        "module": {
+            "name": "entry",
+            "type": "entry",
+            "description": "Generated HarmonyOS HAP module",
+            "mainElement": "EntryAbility",
+            "deviceTypes": ["phone", "tablet", "2in1", "tv", "wearable", "car"],
+            "deliveryWithInstall": true,
+            "installationFree": false,
+            "pages": "$profile:main_pages",
+            "abilities": [{
+                "name": "EntryAbility",
+                "srcEntry": "./ets/entryability/EntryAbility.ets",
+                "description": "Generated Opurom entry",
+                "label": app,
+                "exported": true,
+                "skills": [{
+                    "entities": ["entity.system.home"],
+                    "actions": ["action.system.home"]
+                }]
+            }]
+        }
+    });
+    write(
+        out,
+        "src/main/module.json5",
+        &harmony_json_text(&module, ir_path)?,
+        ir_path,
+    )?;
+    write(
+        out,
+        "src/main/ets/entryability/EntryAbility.ets",
+        "import { UIAbility } from '@kit.AbilityKit';\n\
+         import { window } from '@kit.ArkUI';\n\
+         import { BusinessError } from '@kit.BasicServicesKit';\n\n\
+         export default class EntryAbility extends UIAbility {\n\
+         \x20 onWindowStageCreate(windowStage: window.WindowStage): void {\n\
+         \x20   windowStage.loadContent('pages/Index', (err: BusinessError) => {\n\
+         \x20     if (err.code) {\n\
+         \x20       console.error('Failed to load Opurom content: ' + JSON.stringify(err));\n\
+         \x20     }\n\
+         \x20   });\n\
+         \x20 }\n\
+         }\n",
+        ir_path,
+    )?;
+    let main_pages = json!({ "src": ["pages/Index"] });
+    write(
+        out,
+        "src/main/resources/base/profile/main_pages.json",
+        &harmony_json_text(&main_pages, ir_path)?,
+        ir_path,
+    )
+}
+
+fn harmony_theme_number(theme: Option<&Json>, key: &str, default: f64) -> f64 {
+    theme
+        .and_then(|value| value.get(key))
+        .and_then(Json::as_f64)
+        .unwrap_or(default)
+}
+
+fn harmony_theme_token(tokens: Option<&JsonMap<String, Json>>, key: &str, default: &str) -> String {
+    tokens
+        .and_then(|map| map.get(key))
+        .and_then(Json::as_str)
+        .unwrap_or(default)
+        .to_string()
+}
+
+fn harmony_source(
+    app: &str,
+    states: &[EState],
+    computed: &[Computed],
+    pages: &[(String, &ENode)],
+    initial: &str,
+    multipage: bool,
+    ir: &Json,
+    ir_path: &str,
+) -> DResult<String> {
+    let theme = ir.get("theme");
+    let tokens = theme
+        .and_then(|value| value.get("tokens"))
+        .and_then(Json::as_object);
+    let ir_json = serde_json::to_string(ir)
+        .map_err(|e| bad_ir(ir_path, format!("cannot serialize IR: {e}")))?;
+    let theme_json = match theme {
+        Some(value) => serde_json::to_string(value)
+            .map_err(|e| bad_ir(ir_path, format!("cannot serialize theme: {e}")))?,
+        None => "{}".to_string(),
+    };
+    let mut metas = Vec::new();
+    let mut all_nodes = Vec::new();
+    for (route, (_, tree_ref)) in pages.iter().enumerate() {
+        let tree = *tree_ref;
+        if let Some(meta) = additive_meta(tree) {
+            metas.push(meta);
+        }
+        let mut page_nodes = Vec::new();
+        collect(tree, &mut page_nodes);
+        for node in page_nodes {
+            all_nodes.push((route, node));
+        }
+    }
+    let meta_json = if metas.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[{}]", metas.join(","))
+    };
+    let route_names = pages
+        .iter()
+        .map(|(name, _)| arkts_str(name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let token_entries = tokens
+        .map(|map| {
+            map.iter()
+                .map(|(key, value)| {
+                    let text = match value {
+                        Json::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    format!("    [{}, {}]", arkts_str(key), arkts_str(&text))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let token_map = if token_entries.is_empty() {
+        "new Map<string, string>()".to_string()
+    } else {
+        format!(
+            "new Map<string, string>([\n{}\n  ])",
+            token_entries.join(",\n")
+        )
+    };
+    let mut design_entries = Vec::new();
+    let mut validator_entries = Vec::new();
+    let mut input_nodes = Vec::new();
+    let mut methods = String::new();
+    for (route, node) in &all_nodes {
+        let key = harmony_key(*route, node.id);
+        let state = node.props.get("state").and_then(Json::as_str).unwrap_or("");
+        let variant = node
+            .props
+            .get("variant")
+            .and_then(Json::as_str)
+            .unwrap_or("");
+        let tone = node.props.get("tone").and_then(Json::as_str).unwrap_or("");
+        if !(state.is_empty() && variant.is_empty() && tone.is_empty()) {
+            design_entries.push(format!(
+                "new OpuromDesign({key}, {}, {}, {})",
+                arkts_str(state),
+                arkts_str(variant),
+                arkts_str(tone)
+            ));
+        }
+        let has_validator = node.kind == "Input"
+            && VALIDATOR_PROPS
+                .iter()
+                .chain(TEXT_BUFFER_PROPS.iter())
+                .any(|key| node.props.contains_key(*key));
+        if has_validator {
+            let required = node
+                .props
+                .get("required")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
+            let min_length = node
+                .props
+                .get("minLength")
+                .and_then(Json::as_i64)
+                .unwrap_or(-1);
+            let max_length = node
+                .props
+                .get("maxLength")
+                .and_then(Json::as_i64)
+                .unwrap_or(-1);
+            let pattern = node
+                .props
+                .get("pattern")
+                .and_then(Json::as_str)
+                .unwrap_or("");
+            let text_buffer = node
+                .props
+                .get("textBuffer")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
+            let secure = node
+                .props
+                .get("secure")
+                .and_then(Json::as_bool)
+                .unwrap_or(false);
+            let value = node.props.get("value").and_then(Json::as_str).unwrap_or("");
+            validator_entries.push(format!(
+                "new OpuromValidator({key}, {required}, {min_length}, {max_length}, {}, {text_buffer}, {secure}, {})",
+                arkts_str(pattern),
+                arkts_str(value)
+            ));
+        }
+        if node.kind == "Input" || node.events.contains_key("input") {
+            input_nodes.push((*route, *node));
+        }
+        for event_name in ["tap", "input", "doubleTap", "longPress", "drag"] {
+            if node.events.contains_key(event_name) {
+                methods.push_str(&harmony_event_method(
+                    event_name, node, *route, states, computed, ir_path,
+                )?);
+            }
+        }
+    }
+
+    let mut code = String::new();
+    code.push_str("import { http } from '@kit.NetworkKit';\n\n");
+    code.push_str(&format!("const Opurom_APP: string = {};\n", arkts_str(app)));
+    code.push_str(&format!(
+        "const Opurom_IR_JSON: string = {};\n",
+        arkts_str(&ir_json)
+    ));
+    code.push_str(&format!(
+        "const Opurom_META_JSON: string = {};\n",
+        arkts_str(&meta_json)
+    ));
+    code.push_str(&format!(
+        "const Opurom_THEME_JSON: string = {};\n",
+        arkts_str(&theme_json)
+    ));
+    code.push_str(&format!(
+        "const Opurom_ROUTES: string[] = [{route_names}];\n"
+    ));
+    code.push_str("const Opurom_NAV_SIGNAL: string = '@nav';\n");
+    code.push_str("const Opurom_VALIDATE_SIGNAL: string = '@validate';\n");
+    code.push_str("const Opurom_BASE_URL: string = '';\n");
+    code.push_str(&format!(
+        "const Opurom_THEME_MODE: string = {};\n",
+        arkts_str(
+            theme
+                .and_then(|value| value.get("mode"))
+                .and_then(Json::as_str)
+                .unwrap_or("system")
+        )
+    ));
+    code.push_str(&format!(
+        "const Opurom_THEME_ACCENT: string = {};\n",
+        arkts_str(
+            theme
+                .and_then(|value| value.get("accent"))
+                .and_then(Json::as_str)
+                .unwrap_or("#097FEB")
+        )
+    ));
+    code.push_str(&format!(
+        "const Opurom_THEME_RADIUS: number = {};\n",
+        fmt_num(harmony_theme_number(theme, "radius", 12.0))
+    ));
+    code.push_str(&format!(
+        "const Opurom_THEME_FONT_SCALE: number = {};\n",
+        fmt_num(harmony_theme_number(theme, "fontScale", 1.0))
+    ));
+    code.push_str(&format!(
+        "const Opurom_THEME_SURFACE: string = {};\n",
+        arkts_str(&harmony_theme_token(tokens, "surface", "#FFFFFF"))
+    ));
+    code.push_str(&format!(
+        "const Opurom_THEME_STAGE: string = {};\n",
+        arkts_str(&harmony_theme_token(tokens, "stage", "#F3F4F6"))
+    ));
+    code.push_str(&format!(
+        "const Opurom_THEME_ON_SURFACE: string = {};\n",
+        arkts_str(&harmony_theme_token(tokens, "onSurface", "#101828"))
+    ));
+    code.push_str(&format!(
+        "const Opurom_THEME_TOKENS: Map<string, string> = {token_map};\n\n"
+    ));
+    code.push_str(
+        r#"class OpuromDesign {
+  id: number;
+  state: string;
+  variant: string;
+  tone: string;
+
+  constructor(id: number, state: string, variant: string, tone: string) {
+    this.id = id;
+    this.state = state;
+    this.variant = variant;
+    this.tone = tone;
+  }
+}
+
+"#,
+    );
+    code.push_str("const Opurom_DESIGN: OpuromDesign[] = [\n");
+    for entry in design_entries {
+        code.push_str(&format!("  {entry},\n"));
+    }
+    code.push_str("];\n\n");
+    code.push_str(
+        r#"class OpuromValidator {
+  id: number;
+  required: boolean;
+  minLength: number;
+  maxLength: number;
+  pattern: string;
+  textBuffer: boolean;
+  secure: boolean;
+  value: string;
+
+  constructor(id: number, required: boolean, minLength: number, maxLength: number,
+    pattern: string, textBuffer: boolean, secure: boolean, value: string) {
+    this.id = id;
+    this.required = required;
+    this.minLength = minLength;
+    this.maxLength = maxLength;
+    this.pattern = pattern;
+    this.textBuffer = textBuffer;
+    this.secure = secure;
+    this.value = value;
+  }
+}
+
+"#,
+    );
+    code.push_str("const Opurom_VALIDATORS: OpuromValidator[] = [\n");
+    for entry in validator_entries {
+        code.push_str(&format!("  {entry},\n"));
+    }
+    code.push_str("];\n\n");
+    code.push_str("@Entry\n@Component\nstruct Index {\n");
+    code.push_str(&format!(
+        "  @State routeStack: string[] = [{}];\n",
+        arkts_str(initial)
+    ));
+    code.push_str(&format!(
+        "  @State currentRoute: string = {};\n",
+        arkts_str(initial)
+    ));
+    code.push_str("  @State lastSignal: string = '';\n");
+    code.push_str("  @State validationMessage: string = '';\n");
+    for (index, state) in states.iter().enumerate() {
+        code.push_str(&format!(
+            "  @State s{index}: {} = {};\n",
+            harmony_state_ty(&state.ty),
+            harmony_state_init(state)
+        ));
+    }
+    for (route, node) in &input_nodes {
+        let field = harmony_input_field(*route, node.id);
+        let init = match node.props.get("bind").and_then(Json::as_str) {
+            Some(name) => {
+                let index = harmony_state_index(states, name, ir_path)?;
+                states[index]
+                    .init
+                    .as_str()
+                    .map(arkts_str)
+                    .unwrap_or_else(|| "\"\"".to_string())
+            }
+            None => "\"\"".to_string(),
+        };
+        code.push_str(&format!("  @State {field}: string = {init};\n"));
+    }
+    code.push_str("\n");
+    code.push_str(
+        r#"  private opuText(parts: string[]): string {
+    return parts.join('');
+  }
+
+  private nodeFontSize(size: number): number {
+    return size * Opurom_THEME_FONT_SCALE;
+  }
+
+  private setStateText(index: number, value: string): void {
+    switch (index) {
+"#,
+    );
+    for (index, state) in states.iter().enumerate() {
+        if state.ty == "string" {
+            code.push_str(&format!(
+                "      case {index}: this.s{index} = value; break;\n"
+            ));
+        }
+    }
+    code.push_str(
+        r#"      default: break;
+    }
+  }
+
+  private repeatValue(index: number): string {
+    switch (index) {
+"#,
+    );
+    for (index, state) in states.iter().enumerate() {
+        if state.ty == "list" {
+            code.push_str(&format!(
+                "      case {index}: return this.s{index}.length > 0 ? this.s{index}[0] : '';\n"
+            ));
+        }
+    }
+    code.push_str(
+        r#"      default: return '';
+    }
+  }
+
+  private inputValue(id: number): string {
+    switch (id) {
+"#,
+    );
+    for (route, node) in &input_nodes {
+        let field = harmony_input_field(*route, node.id);
+        let key = harmony_key(*route, node.id);
+        code.push_str(&format!("      case {key}: return this.{field};\n"));
+    }
+    code.push_str(
+        r#"      default: return '';
+    }
+  }
+
+  private applyComputed(): void {
+"#,
+    );
+    for entry in computed {
+        let (_, expression) =
+            computed_expr(&entry.expr, states, computed, ir_path, false, |state| {
+                let index = harmony_state_index(states, &state.name, ir_path)?;
+                Ok(format!("this.s{index}"))
+            })?;
+        let index = harmony_state_index(states, &entry.name, ir_path)?;
+        code.push_str(&format!("    this.s{index} = {expression};\n"));
+    }
+    code.push_str(
+        r#"  }
+
+  private designOf(id: number): OpuromDesign {
+    for (const design of Opurom_DESIGN) {
+      if (design.id === id) {
+        return design;
+      }
+    }
+    return new OpuromDesign(id, '', '', '');
+  }
+
+  private nodeColor(id: number): string {
+    const design = this.designOf(id);
+    if (design.tone.length > 0) {
+      const token = Opurom_THEME_TOKENS.get(design.tone);
+      if (token !== undefined) {
+        return token;
+      }
+    }
+    if (design.variant === 'primary' || design.variant === 'fab') {
+      return Opurom_THEME_ACCENT;
+    }
+    if (design.state === 'disabled') {
+      return '#9CA3AF';
+    }
+    return Opurom_THEME_ON_SURFACE;
+  }
+
+  private pageBackground(): string {
+    if (Opurom_THEME_MODE === 'dark') {
+      return Opurom_THEME_STAGE;
+    }
+    return Opurom_THEME_SURFACE;
+  }
+
+  private push(route: string): void {
+    if (Opurom_ROUTES.indexOf(route) >= 0) {
+      this.routeStack = this.routeStack.concat([route]);
+      this.currentRoute = route;
+    }
+    this.lastSignal = Opurom_NAV_SIGNAL + ':' + route;
+  }
+
+  private pop(): void {
+    if (this.routeStack.length > 1) {
+      this.routeStack = this.routeStack.slice(0, -1);
+      this.currentRoute = this.routeStack[this.routeStack.length - 1];
+    }
+    this.lastSignal = Opurom_NAV_SIGNAL + ':@pop';
+  }
+
+  private matchesPattern(value: string, pattern: string): boolean {
+    try {
+      return new RegExp(pattern).test(value);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  private validateForm(name: string): void {
+    this.lastSignal = Opurom_VALIDATE_SIGNAL + ':' + name;
+    for (const validator of Opurom_VALIDATORS) {
+      const value = this.inputValue(validator.id);
+      if (validator.required && value.length === 0) {
+        this.validationMessage = 'required';
+        return;
+      }
+      if (validator.minLength >= 0 && value.length < validator.minLength) {
+        this.validationMessage = 'too short';
+        return;
+      }
+      if (validator.maxLength >= 0 && value.length > validator.maxLength) {
+        this.validationMessage = 'too long';
+        return;
+      }
+      if (validator.pattern.length > 0 && !this.matchesPattern(value, validator.pattern)) {
+        this.validationMessage = 'pattern mismatch';
+        return;
+      }
+      if (validator.secure && value.length > 0) {
+        this.validationMessage = 'secure input accepted';
+      }
+    }
+    this.validationMessage = this.validationMessage.length > 0 ? this.validationMessage : 'valid';
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise<void>((resolve: () => void) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  private async fetchInto(path: string, stateIndex: number): Promise<void> {
+    const request = http.createHttp();
+    try {
+      const response = await request.request(Opurom_BASE_URL + path, {
+        method: http.RequestMethod.GET
+      });
+      const text = typeof response.result === 'string' ? response.result : JSON.stringify(response.result);
+      this.setStateText(stateIndex, text);
+    } catch (error) {
+      this.setStateText(stateIndex, 'error: request failed');
+    } finally {
+      request.destroy();
+    }
+  }
+
+"#,
+    );
+    code.push_str(&methods);
+    code.push_str("  build() {\n    Column() {\n");
+    code.push_str(
+        r#"      Text(Opurom_APP)
+        .fontColor(Opurom_THEME_ACCENT)
+        .fontSize(this.nodeFontSize(20))
+        .width('100%');
+      Text(this.lastSignal)
+        .fontColor(this.nodeColor(0))
+        .fontSize(this.nodeFontSize(12))
+        .width('100%');
+      Text(this.validationMessage)
+        .fontColor(this.nodeColor(0))
+        .fontSize(this.nodeFontSize(12))
+        .width('100%');
+"#,
+    );
+    let aliases = HashMap::new();
+    if multipage {
+        for (route, (name, tree_ref)) in pages.iter().enumerate() {
+            let tree = *tree_ref;
+            code.push_str(&format!(
+                "      if (this.currentRoute === {}) {{\n",
+                arkts_str(name)
+            ));
+            harmony_node(tree, states, &aliases, route, 4, &mut code, ir_path)?;
+            code.push_str("      }\n");
+        }
+    } else {
+        let tree = pages[0].1;
+        harmony_node(tree, states, &aliases, 0, 3, &mut code, ir_path)?;
+    }
+    code.push_str(
+        r#"    }
+    .width('100%')
+    .height('100%')
+    .padding(Opurom_THEME_RADIUS)
+    .backgroundColor(this.pageBackground());
+  }
+}
+"#,
+    );
+    Ok(code)
+}
+
+fn emit_harmony(
+    app: &str,
+    states: &[EState],
+    computed: &[Computed],
+    pages: &[(String, &ENode)],
+    initial: &str,
+    multipage: bool,
+    ir: &Json,
+    out: &Path,
+    ir_path: &str,
+) -> DResult<()> {
+    harmony_project_files(app, out, ir_path)?;
+    write(
+        out,
+        "src/main/ets/pages/Index.ir.json",
+        &harmony_json_text(ir, ir_path)?,
+        ir_path,
+    )?;
+    let source = harmony_source(
+        app, states, computed, pages, initial, multipage, ir, ir_path,
+    )?;
+    write(out, "src/main/ets/pages/Index.ets", &source, ir_path)
 }

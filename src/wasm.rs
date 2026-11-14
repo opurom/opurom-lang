@@ -1,5 +1,5 @@
 //! The `wasm` emitter: a std-only `wasm32-unknown-unknown` cdylib with the
-//! C ABI of [the wasm ABI], plus a browser host that loads the `.wasm`.
+//! C ABI of [the WASM ABI], plus a browser host that loads the `.wasm`.
 
 use std::path::Path;
 

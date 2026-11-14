@@ -50,6 +50,12 @@ fn need<'a>(args: &'a [String], index: usize, what: &str) -> DResult<&'a str> {
         .ok_or_else(|| Diagnostic::file("opuromc", format!("missing {what}"), USAGE.to_string()))
 }
 
+fn print_targets() {
+    for (name, artifacts) in emit::TARGETS {
+        println!("{name}\t{artifacts}");
+    }
+}
+
 fn run() -> DResult<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -90,7 +96,16 @@ fn run() -> DResult<()> {
             })?;
             Ok(())
         }
-        Some("target") => {
+        Some("emit")
+            if args
+                .iter()
+                .skip(1)
+                .any(|a| matches!(a.as_str(), "--list" | "--help" | "-h" | "help")) =>
+        {
+            print_targets();
+            Ok(())
+        }
+        Some("target" | "emit") => {
             let ir_path = need(&args, 1, "IR file for 'target'")?;
             let target = flag_value(&args[2..], "--target").ok_or_else(|| {
                 Diagnostic::file(
@@ -141,9 +156,7 @@ fn run() -> DResult<()> {
             optimize::run(ir_path, Path::new(&out))
         }
         Some("targets") => {
-            for (name, artifacts) in emit::TARGETS {
-                println!("{name}\t{artifacts}");
-            }
+            print_targets();
             Ok(())
         }
         _ => Err(Diagnostic::file(
