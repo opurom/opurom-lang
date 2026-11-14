@@ -1415,6 +1415,15 @@ fn render_frame(state: &State) {
         return;
     }
     println!("frame: {}x{} wrote {}", frame.width, frame.height, out);
+    // A11y sidecar: appending a fixed suffix keeps the frame path and PPM bytes
+    // untouched. The byte length is reported instead of a parsed node count, so
+    // the line is deterministic and needs no JSON parser in the generated app.
+    let a11y_out = format!("{out}.a11y.json");
+    let a11y = opurom_render::a11y_json(&ir, &view, frame.width, frame.height);
+    match std::fs::write(&a11y_out, &a11y) {
+        Ok(()) => println!("a11y: {} bytes wrote {}", a11y.len(), a11y_out),
+        Err(e) => println!("error: cannot write a11y tree: {e}"),
+    }
 }
 
 "##

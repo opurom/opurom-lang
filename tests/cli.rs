@@ -1201,12 +1201,23 @@ fn native_emitter_renders_and_writes_a_frame() {
     };
     let (stdout, bytes) = run_with(&initial_frame, "quit\n");
     assert!(stdout.contains("frame: 800x600 wrote"), "{stdout}");
+    assert!(
+        stdout.contains("a11y: "),
+        "a11y sidecar line missing: {stdout}"
+    );
     assert!(bytes.len() > 1000, "frame too small: {} bytes", bytes.len());
     let header = String::from_utf8_lossy(&bytes[..bytes.len().min(20)]);
     assert!(
         header.starts_with("P6\n800 600\n255\n"),
         "unexpected PPM header: {header}"
     );
+    // A program with no explicit roles still produces a valid a11y tree.
+    let initial_a11y: Json = serde_json::from_str(
+        &fs::read_to_string(dir.join("initial-frame.ppm.a11y.json"))
+            .expect("read initial a11y sidecar"),
+    )
+    .expect("a11y sidecar is valid JSON");
+    assert!(initial_a11y.is_array(), "a11y tree must be an array");
 
     // A tap changes state, so the app must re-render and rewrite the frame.
     let ir_json: Json =
@@ -1222,10 +1233,102 @@ fn native_emitter_renders_and_writes_a_frame() {
         tap_stdout.contains("frame: 800x600 wrote"),
         "the tap did not re-render: {tap_stdout}"
     );
+    assert!(
+        tap_stdout.contains("a11y: "),
+        "the tap did not rewrite the a11y tree: {tap_stdout}"
+    );
+    assert!(
+        dir.join("tapped-frame.ppm.a11y.json").is_file(),
+        "tap must refresh the a11y sidecar"
+    );
     assert_ne!(
         bytes, tap_bytes,
         "the frame was not rewritten after the tap"
     );
+}
+
+#[test]
+fn native_emitter_writes_a11y_tree_with_roles() {
+    // The native target must expose explicit roles from the renderer's a11y
+    // tree in a sidecar next to the frame, and refresh it on every re-render.
+    let dir = out_dir("native-a11y");
+    let src = dir.join("roles.opu");
+    fs::write(
+        &src,
+        "app Roles {\n  state count = 0\n  Column {\n    Text(\"Title\", role: \"heading\")\n    \
+         Button(\"Add\", role: \"button\") { count += 1 }\n    Text(\"plain\")\n  }\n}\n",
+    )
+    .unwrap();
+    let ir = dir.join("roles.opuir.json");
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = dir.join("native");
+    let r = emit(&ir, "native", &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let native_rs = fs::read_to_string(out.join("src/main.rs")).unwrap();
+    assert!(
+        native_rs.contains("opurom_render::a11y_json"),
+        "generated app must call the renderer a11y API"
+    );
+    let (built, stderr) = build_native(&out);
+    assert!(built, "cargo build --release failed:\n{stderr}");
+    assert!(
+        !stderr.contains("warning:"),
+        "generated Rust must be warning-free:\n{stderr}"
+    );
+
+    let exe = out.join("target/release/opurom_native");
+    let frame = out.join("frame.ppm");
+    let sidecar = out.join("frame.ppm.a11y.json");
+    let run = |stdin: &str| {
+        let mut child = Command::new(&exe)
+            .arg(frame.to_str().unwrap())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn generated native binary");
+        {
+            let mut pipe = child.stdin.take().unwrap();
+            pipe.write_all(stdin.as_bytes()).unwrap();
+        }
+        let o = child.wait_with_output().expect("wait for native binary");
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).to_string()
+    };
+
+    let ir_json: Json =
+        serde_json::from_str(&fs::read_to_string(&ir).unwrap()).expect("IR is valid JSON");
+    let tap_id = first_positive_add_tap_id(ir_json.get("tree").expect("IR tree"))
+        .expect("fixture has a positive add tap");
+
+    let stdout = run("quit\n");
+    assert!(stdout.contains("frame: 800x600 wrote"), "{stdout}");
+    assert!(stdout.contains("a11y: "), "missing a11y line: {stdout}");
+    assert!(frame.is_file(), "frame file missing");
+    let tree: Json =
+        serde_json::from_str(&fs::read_to_string(&sidecar).expect("read a11y sidecar"))
+            .expect("a11y sidecar is valid JSON");
+    let roles = tree.as_array().expect("a11y tree is an array");
+    assert!(!roles.is_empty(), "a11y tree must contain nodes");
+    assert!(
+        roles.iter().any(|n| n["role"] == "heading"),
+        "explicit heading role missing from a11y tree: {tree}"
+    );
+    assert!(
+        roles.iter().any(|n| n["role"] == "button"),
+        "explicit button role missing from a11y tree: {tree}"
+    );
+
+    // A tap re-renders, so the sidecar is rewritten (delete it first to prove
+    // the refresh actually happened rather than reading a stale file).
+    fs::remove_file(&sidecar).unwrap();
+    let tap_stdout = run(&format!("tap {tap_id}\nquit\n"));
+    assert!(tap_stdout.contains("a11y: "), "{tap_stdout}");
+    let refreshed: Json =
+        serde_json::from_str(&fs::read_to_string(&sidecar).expect("read refreshed a11y sidecar"))
+            .expect("refreshed a11y sidecar is valid JSON");
+    assert!(refreshed.is_array(), "refreshed a11y tree must be an array");
 }
 
 #[test]
