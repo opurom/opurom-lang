@@ -120,6 +120,68 @@ fn resolution_roots(root: &Path, manifest: Option<&PathBuf>) -> DResult<Vec<Path
             }
         }
     }
+    roots.extend(package_roots(root, manifest, &doc)?);
+    Ok(roots)
+}
+
+/// Package module roots from `opurom.lock`. Every dependency pinned in the
+/// lockfile contributes its installed `registry/<name>/<version>` directory, so
+/// an import inside an external package resolves by file name exactly like a
+/// project module. The lockfile is the only version source: `opurom-pkg` owns
+/// SemVer range selection, and the compiler never resolves ranges itself. A
+/// missing or malformed lock yields no package roots; moduleRoots keep working.
+fn package_roots(root: &Path, manifest: &Path, doc: &Json) -> DResult<Vec<PathBuf>> {
+    let Some(dependencies) = doc.get("dependencies").and_then(|d| d.as_object()) else {
+        return Ok(Vec::new());
+    };
+    if dependencies.is_empty() {
+        return Ok(Vec::new());
+    }
+    let lock_path = manifest.parent().unwrap_or_else(|| Path::new(".")).join("opurom.lock");
+    let Ok(lock_text) = fs::read_to_string(&lock_path) else {
+        return Ok(Vec::new());
+    };
+    let lock: Json = match serde_json::from_str(&lock_text) {
+        Ok(lock) => lock,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let Some(packages) = lock.get("packages").and_then(|p| p.as_array()) else {
+        return Ok(Vec::new());
+    };
+    let mut roots = Vec::new();
+    for name in dependencies.keys() {
+        let Some(entry) = packages
+            .iter()
+            .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(name.as_str()))
+        else {
+            continue;
+        };
+        let relative = entry.get("path").and_then(|p| p.as_str());
+        let Some(relative) = relative else {
+            continue;
+        };
+        if Path::new(relative).is_absolute() || has_traversal(relative) {
+            return Err(Diagnostic::file(
+                &lock_text,
+                format!("lock entry '{name}' may not be absolute or contain '..'"),
+                "regenerate opurom.lock with 'opurom-pkg lock'",
+            ));
+        }
+        let candidate = root.join(relative);
+        let Ok(found) = candidate.canonicalize() else {
+            continue;
+        };
+        if !found.starts_with(root) {
+            return Err(Diagnostic::file(
+                &lock_text,
+                format!("lock entry '{name}' escapes the project root"),
+                "install packages inside the project directory",
+            ));
+        }
+        if !roots.contains(&found) {
+            roots.push(found);
+        }
+    }
     Ok(roots)
 }
 
