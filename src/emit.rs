@@ -1291,13 +1291,13 @@ fn native_source(
     s.push_str("}\n\nstruct Patch {\n    name: &'static str,\n    value: String,\n}\n\n");
     s.push_str(&native_computed(states, computed, ir_path)?);
     s.push_str(
-        "fn apply(_state: &mut State, event_node_id: u32, _input: Option<&str>) -> Vec<Patch> {\n",
+        "fn apply(_state: &mut State, event_node_id: u32, event: &str, _input: Option<&str>) -> Vec<Patch> {\n",
     );
-    s.push_str("    match (event_node_id, _input.is_some()) {\n");
+    s.push_str("    match (event_node_id, event) {\n");
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
     for n in &nodes {
-        for (event, is_input) in [("tap", false), ("input", true)] {
+        for event in ["tap", "doubleTap", "longPress", "drag", "input"] {
             if let Some(action) = n.events.get(event) {
                 let effect_code = native_effects(&event_effects(action, ir_path)?, ir_path)?;
                 let mut body = String::new();
@@ -1314,13 +1314,13 @@ fn native_source(
                 };
                 if computed.is_empty() {
                     s.push_str(&format!(
-                        "        ({}, {}) => {{\n{effect_code}{body}            {patch_expr}\n        }}\n",
-                        n.id, is_input
+                        "        ({}, {:?}) => {{\n{effect_code}{body}            {patch_expr}\n        }}\n",
+                        n.id, event
                     ));
                 } else {
                     s.push_str(&format!(
-                        "        ({}, {}) => {{\n{effect_code}{body}            let mut patches = {patch_expr};\n            patches.extend(apply_computed(_state));\n            patches\n        }}\n",
-                        n.id, is_input
+                        "        ({}, {:?}) => {{\n{effect_code}{body}            let mut patches = {patch_expr};\n            patches.extend(apply_computed(_state));\n            patches\n        }}\n",
+                        n.id, event
                     ));
                 }
             }
@@ -1476,7 +1476,7 @@ fn render_frame(state: &State) {
         "        match parts[0] {\n",
         "            \"quit\" => break,\n",
         "            \"state\" => print_state(&state),\n",
-        "            \"tap\" | \"input\" => {\n",
+        "            \"tap\" | \"doubleTap\" | \"longPress\" | \"drag\" | \"input\" => {\n",
         "                if parts.len() < 2 {\n",
         "                    println!(\"error: usage: {} <id> [text]\", parts[0]);\n",
         "                    continue;\n",
@@ -1486,11 +1486,8 @@ fn render_frame(state: &State) {
         "                    Err(_) => { println!(\"error: invalid node id {:?}\", parts[1]); continue; }\n",
         "                };\n",
         "                let text = parts[2..].join(\" \");\n",
-        "                let patches = if parts[0] == \"input\" {\n",
-        "                    apply(&mut state, id, Some(text.as_str()))\n",
-        "                } else {\n",
-        "                    apply(&mut state, id, None)\n",
-        "                };\n",
+        "                let input = if parts[0] == \"input\" { Some(text.as_str()) } else { None };\n",
+        "                let patches = apply(&mut state, id, parts[0], input);\n",
         "                print_state(&state);\n",
         "                for p in patches { println!(\"patch {}={}\", p.name, p.value); }\n",
         "                render_frame(&state);\n",

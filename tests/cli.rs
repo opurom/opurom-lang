@@ -1416,6 +1416,40 @@ fn native_emitter_builds_and_runs_with_piped_stdin() {
 }
 
 #[test]
+fn native_emitter_dispatches_gesture_commands() {
+    let dir = out_dir("native-gesture");
+    let src = dir.join("gesture.opu");
+    fs::write(
+        &src,
+        "app NG {\n  state n: int = 0;\n  Column(gap: 8) {\n    Button(\"D\", gesture: doubleTap) { n += 1 }\n    Button(\"L\", gesture: longPress) { n += 5 }\n    Button(\"G\", gesture: drag) { n += 10 }\n    Button(\"T\") { n += 100 }\n  }\n}\n",
+    )
+    .unwrap();
+    let ir = dir.join("gesture.opuir.json");
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = dir.join("native");
+    let r = emit(&ir, "native", &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let (built, stderr) = build_native(&out);
+    assert!(built, "cargo build --release failed:\n{stderr}");
+
+    // Each gesture command fires its node's handler chain: doubleTap +1,
+    // longPress +5, drag +10, tap +100, in that order, from state 0.
+    let (ran, stdout) = run_native(
+        &out.join("target/release/opurom_native"),
+        "state\ndoubleTap 1\nstate\nlongPress 2\nstate\ndrag 3\nstate\ntap 4\nstate\nquit\n",
+    );
+    assert!(ran, "native binary exited nonzero");
+    assert!(stdout.contains("state n=0"), "{stdout}");
+    assert!(stdout.contains("state n=1"), "{stdout}");
+    assert!(stdout.contains("state n=6"), "{stdout}");
+    assert!(stdout.contains("state n=16"), "{stdout}");
+    assert!(stdout.contains("state n=116"), "{stdout}");
+    assert!(stdout.contains("patch n=116"), "{stdout}");
+}
+
+#[test]
 fn empty_state_program_emits_warning_free_native() {
     let src = out_dir("empty").join("empty.opu");
     fs::write(&src, "app Empty {\n  Text(\"hi\")\n}\n").unwrap();
