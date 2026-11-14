@@ -173,6 +173,110 @@ console.log(JSON.stringify(results));
     assert_eq!(got["unknown_tap"], 0, "{text}");
 }
 
+/// Gesture bindings (`gesture: doubleTap|longPress|drag`) expose one extern per
+/// gesture, each dispatching the node's bound handler chain exactly like tap.
+#[test]
+fn wasm_emitter_exposes_gesture_entries() {
+    let dir = out_dir("wasm-gesture");
+    let src = dir.join("gesture.opu");
+    fs::write(
+        &src,
+        r#"app GW {
+  state n: int = 0
+  Button("D", gesture: doubleTap) { n += 1 }
+  Button("L", gesture: longPress) { n += 5 }
+  Button("G", gesture: drag) { n += 10 }
+}
+"#,
+    )
+    .expect("write source");
+    let ir = dir.join("gesture.opuir.json");
+    let r = bin()
+        .arg("compile")
+        .arg(&src)
+        .arg("-o")
+        .arg(&ir)
+        .output()
+        .expect("run opuromc compile");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let out = dir.join("wasm");
+    let r = bin()
+        .arg("target")
+        .arg(&ir)
+        .arg("--target")
+        .arg("wasm")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("run opuromc target");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let lib = fs::read_to_string(out.join("src/lib.rs")).unwrap();
+    for export in [
+        "pub extern \"C\" fn opu_double_tap(node_id: u32) -> u32",
+        "pub extern \"C\" fn opu_long_press(node_id: u32) -> u32",
+        "pub extern \"C\" fn opu_drag(node_id: u32) -> u32",
+    ] {
+        assert!(lib.contains(export), "missing gesture export: {export}");
+    }
+
+    let build = Command::new(cargo_path())
+        .arg("build")
+        .arg("--release")
+        .arg("--target")
+        .arg("wasm32-unknown-unknown")
+        .current_dir(&out)
+        .env("CARGO_TARGET_DIR", out.join("target"))
+        .env("PATH", cargo_env())
+        .output()
+        .expect("run cargo build --release --target wasm32-unknown-unknown");
+    assert!(
+        build.status.success(),
+        "wasm build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let wasm = out.join("target/wasm32-unknown-unknown/release/opurom_wasm.wasm");
+    assert!(wasm.is_file(), "no .wasm artifact");
+
+    let script = dir.join("gesture.mjs");
+    fs::write(
+        &script,
+        r#"import { readFile } from "node:fs/promises";
+const bytes = await readFile(process.argv[2]);
+const module = await WebAssembly.instantiate(bytes, {});
+const e = module.instance.exports;
+console.log(JSON.stringify({
+  double_tap: e.opu_double_tap(1),
+  long_press: e.opu_long_press(2),
+  drag: e.opu_drag(3),
+  state_after: e.opu_state(0),
+  wrong_gesture: e.opu_long_press(1),
+  unknown: e.opu_drag(9999),
+}));
+"#,
+    )
+    .expect("write gesture script");
+    let run = Command::new("node")
+        .arg(&script)
+        .arg(&wasm)
+        .output()
+        .expect("run node gesture conformance");
+    assert!(
+        run.status.success(),
+        "gesture conformance failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let text = String::from_utf8_lossy(&run.stdout);
+    let got: serde_json::Value = serde_json::from_str(text.trim()).expect("parse gesture JSON");
+    assert_eq!(got["double_tap"], 1, "{text}");
+    assert_eq!(got["long_press"], 1, "{text}");
+    assert_eq!(got["drag"], 1, "{text}");
+    assert_eq!(got["state_after"], 16, "{text}");
+    assert_eq!(got["wrong_gesture"], 0, "{text}");
+    assert_eq!(got["unknown"], 0, "{text}");
+}
+
 /// The wasm emitter also handles a multi-statement handler and `valueFrom`.
 #[test]
 fn wasm_emitter_supports_action_chains() {

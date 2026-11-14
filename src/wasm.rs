@@ -259,7 +259,7 @@ fn lib_source(
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
     for n in &nodes {
-        for event in ["tap", "input"] {
+        for event in ["tap", "doubleTap", "longPress", "drag", "input"] {
             let Some(action) = n.events.get(event) else {
                 continue;
             };
@@ -276,12 +276,33 @@ fn lib_source(
                     body = body,
                     patch_count = count
                 )),
-                _ => s.push_str(&format!(
+                "input" => s.push_str(&format!(
                     "fn input_{id}(value: i32) -> u32 {{\n    let mut count = 0u32;\n{body}    count += {patch_count};\n{computed_call}    count\n}}\n\n",
                     id = n.id,
                     body = body,
                     patch_count = count
                 )),
+                gesture => {
+                    // Gesture handlers take no payload; the fn name mirrors the
+                    // event in snake_case so the extern wrapper reads naturally.
+                    let snake = gesture
+                        .chars()
+                        .flat_map(|c| {
+                            if c.is_uppercase() {
+                                vec!['_', c.to_ascii_lowercase()]
+                            } else {
+                                vec![c]
+                            }
+                        })
+                        .collect::<String>();
+                    s.push_str(&format!(
+                        "fn {snake}_{id}() -> u32 {{\n    let mut count = 0u32;\n{body}    count += {patch_count};\n{computed_call}    count\n}}\n\n",
+                        snake = snake,
+                        id = n.id,
+                        body = body,
+                        patch_count = count
+                    ));
+                }
             }
         }
     }
@@ -332,7 +353,29 @@ fn lib_source(
         }
         s.push_str(&format!("        {} => input_{}(v),\n", n.id, n.id));
     }
-    s.push_str(concat!("        _ => 0,\n", "    }\n", "}\n"));
+    s.push_str(concat!("        _ => 0,\n", "    }\n", "}\n\n"));
+    // Gesture wrappers mirror opu_tap's dispatch shape: one extern per gesture
+    // the language can bind, each matching the node's bound handler chain.
+    for (event, snake, c_name) in [
+        ("doubleTap", "double_tap", "opu_double_tap"),
+        ("longPress", "long_press", "opu_long_press"),
+        ("drag", "drag", "opu_drag"),
+    ] {
+        s.push_str(&format!(
+            "#[no_mangle]\npub extern \"C\" fn {c_name}(node_id: u32) -> u32 {{\n    match node_id {{\n"
+        ));
+        for n in &nodes {
+            let Some(action) = n.events.get(event) else {
+                continue;
+            };
+            let steps = steps_of(action, int_states, ir_path)?;
+            if steps.is_empty() {
+                continue;
+            }
+            s.push_str(&format!("        {} => {snake}_{}(),\n", n.id, n.id));
+        }
+        s.push_str("        _ => 0,\n    }\n}\n\n");
+    }
     Ok(s)
 }
 
@@ -563,6 +606,30 @@ fn host_source(
         "  render();\n",
         "  return patches;\n",
         "}\n\n",
+        "function applyDoubleTap(id) {\n",
+        "  if (!wasm) { return 0; }\n",
+        "  const patches = wasm.opu_double_tap(id);\n",
+        "  applyMirror(id);\n",
+        "  syncStates();\n",
+        "  render();\n",
+        "  return patches;\n",
+        "}\n\n",
+        "function applyLongPress(id) {\n",
+        "  if (!wasm) { return 0; }\n",
+        "  const patches = wasm.opu_long_press(id);\n",
+        "  applyMirror(id);\n",
+        "  syncStates();\n",
+        "  render();\n",
+        "  return patches;\n",
+        "}\n\n",
+        "function applyDrag(id) {\n",
+        "  if (!wasm) { return 0; }\n",
+        "  const patches = wasm.opu_drag(id);\n",
+        "  applyMirror(id);\n",
+        "  syncStates();\n",
+        "  render();\n",
+        "  return patches;\n",
+        "}\n\n",
         "canvas.addEventListener(\"click\", function (event) {\n",
         "  const rect = canvas.getBoundingClientRect();\n",
         "  const x = event.clientX - rect.left;\n",
@@ -612,6 +679,19 @@ fn host_source(
             "  const patches = wasm.opu_tap(id);\n",
             "  await runEffects(id);\n  const patches = wasm.opu_tap(id);\n",
         );
+        // Gesture handlers run the same host-effect pipeline as tap.
+        for (name, c_name) in [
+            ("applyDoubleTap", "opu_double_tap"),
+            ("applyLongPress", "opu_long_press"),
+            ("applyDrag", "opu_drag"),
+        ] {
+            s = s.replace(
+                &format!("function {name}(id) {{\n"),
+                &format!("async function {name}(id) {{\n"),
+            );
+            let wasm_call = format!("  const patches = wasm.{c_name}(id);\n");
+            s = s.replace(&wasm_call, &format!("  await runEffects(id);\n{wasm_call}"));
+        }
     }
     Ok(s)
 }
@@ -623,7 +703,7 @@ fn mirror_actions(tree: &ENode, states: &[WasmState]) -> String {
     let mut out = String::from("{\n");
     for n in &nodes {
         let mut entries = Vec::new();
-        for event in ["tap", "input"] {
+        for event in ["tap", "doubleTap", "longPress", "drag", "input"] {
             let Some(action) = n.events.get(event) else {
                 continue;
             };
