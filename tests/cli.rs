@@ -663,6 +663,132 @@ fn canvas_and_mini_emitters_draw_real_icon_glyphs() {
 }
 
 #[test]
+fn canvas_and_mini_emitters_expose_explicit_a11y_roles() {
+    // An explicit `role` prop must reach the canvas web a11y mirror and every
+    // mini-program element; a node without a role must not gain any attribute.
+    let dir = out_dir("emit-a11y");
+    let ir = dir.join("a11y.opuir.json");
+    let src = dir.join("a11y.opu");
+    fs::write(
+        &src,
+        "app A11y {\n  Column {\n    Text(\"Title\", role: \"heading\")\n    \
+         Button(\"Save\", role: \"button\") { }\n    Text(\"plain\")\n  }\n}\n",
+    )
+    .unwrap();
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    // Canvas web: a hidden, screen-reader-readable mirror in index.html.
+    let web = out_dir("emit-a11y-web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let html = fs::read_to_string(web.join("index.html")).unwrap();
+    assert!(
+        html.contains("id=\"a11y\""),
+        "web: missing a11y mirror container"
+    );
+    assert!(
+        html.contains("class=\"sr-only\""),
+        "web: mirror must be visually hidden"
+    );
+    assert!(html.contains(".sr-only{"), "web: missing sr-only CSS rule");
+    assert!(
+        html.contains("role=\"heading\""),
+        "web: missing heading role"
+    );
+    assert!(html.contains("role=\"button\""), "web: missing button role");
+    assert!(
+        html.contains("aria-label=\"Title\""),
+        "web: missing heading label"
+    );
+    assert!(
+        html.contains("aria-label=\"Save\""),
+        "web: missing button label"
+    );
+    assert_eq!(
+        html.matches("role=\"").count(),
+        2,
+        "web: only roled nodes are mirrored"
+    );
+
+    // Each mini target: aria-role + aria-label on the roled elements only.
+    let cases: &[(&str, &str)] = &[
+        ("wechat", "pages/index/index.wxml"),
+        ("alipay", "pages/index/index.axml"),
+        ("qq", "pages/index/index.qml"),
+        ("douyin", "pages/index/index.ttml"),
+        ("baidu", "pages/index/index.swan"),
+        ("kuaishou", "pages/index/index.ksml"),
+    ];
+    for &(target, markup) in cases {
+        let out = out_dir(&format!("emit-a11y-{target}"));
+        let r = emit(&ir, target, &out);
+        assert!(
+            r.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let text = fs::read_to_string(out.join(markup)).unwrap();
+        assert!(
+            text.contains("aria-role=\"heading\""),
+            "{target}: missing heading aria-role"
+        );
+        assert!(
+            text.contains("aria-role=\"button\""),
+            "{target}: missing button aria-role"
+        );
+        assert!(
+            text.contains("aria-label=\"Title\""),
+            "{target}: missing heading aria-label"
+        );
+        assert!(
+            text.contains("aria-label=\"Save\""),
+            "{target}: missing button aria-label"
+        );
+        assert_eq!(
+            text.matches("aria-role=").count(),
+            2,
+            "{target}: an unroled node must not gain aria-role"
+        );
+    }
+
+    // Regression: a program without roles still builds and emits valid JS.
+    let counter = workspace()
+        .join("..")
+        .join("opurom-examples")
+        .join("counter.opu");
+    let counter_ir = dir.join("counter.opuir.json");
+    let r = compile(&counter, &counter_ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let plain_web = out_dir("emit-a11y-counter-web");
+    let r = emit(&counter_ir, "web", &plain_web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let plain_html = fs::read_to_string(plain_web.join("index.html")).unwrap();
+    assert!(
+        plain_html.contains("<div id=\"a11y\" class=\"sr-only\"></div>"),
+        "web: a page without roles emits an empty mirror"
+    );
+    let check = Command::new("node")
+        .arg("--check")
+        .arg(plain_web.join("app.js"))
+        .output()
+        .expect("run node --check");
+    assert!(
+        check.status.success(),
+        "counter web app.js invalid: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let plain_wechat = out_dir("emit-a11y-counter-wechat");
+    let r = emit(&counter_ir, "wechat", &plain_wechat);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let wxml = fs::read_to_string(plain_wechat.join("pages/index/index.wxml")).unwrap();
+    assert!(
+        !wxml.contains("aria-role"),
+        "wechat: a page without roles must not gain aria-role"
+    );
+}
+
+#[test]
 fn canvas_and_mini_emitters_apply_effects_and_animation() {
     // The canvas `web` target and the mini targets must map the per-node
     // visual-effect props and the `animate` entry curve, matching the native

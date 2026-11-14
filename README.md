@@ -387,6 +387,14 @@ the interactive UI and async IR plus `when`, `unless`, `computed` and `list` sta
 with Canvas 2D `Path2D`, and the six mini targets emit an inline SVG data URI on an `<image>`
 element, so the glyph matches the native renderer instead of showing its name as text.
 
+A node with an explicit `role` prop carries that role to assistive technology on every target.
+The six mini targets emit `aria-role="{role}"` plus `aria-label` from the node's `label`, `value`,
+`title` or `name` prop on the same element. The canvas `web` target emits a hidden
+`<div id="a11y" class="sr-only">` mirror in `index.html`, with one
+`<div role="{role}" aria-label="{label}"></div>` per roled node and a `.sr-only` CSS rule. Nodes
+without an explicit `role` add no attributes. A page with no explicit roles emits an empty mirror
+container.
+
 `web-dom` is an additional build target that is not part of the nine-emitter matrix, so
 `opuromc targets` stays at nine. It delegates to the sibling `opurom-web` DOM emitter, which
 bakes the IR into a standalone `index.html` with a viewport meta tag and flex layout; the page

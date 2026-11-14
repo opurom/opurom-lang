@@ -2082,8 +2082,22 @@ fn emit_web(
         ""
     };
     let canvas_cls = if web_anim { " class=\"opu-anim\"" } else { "" };
+    // Canvas 2D has no DOM semantics, so every node carrying an explicit role
+    // is mirrored into a visually hidden, screen-reader-readable element. A
+    // page without explicit roles emits an empty mirror container.
+    let mut a11y_mirror = String::new();
+    for n in &nodes {
+        if let Some(role) = n.props.get("role").and_then(Json::as_str) {
+            a11y_mirror.push_str(&format!(
+                "<div role=\"{}\" aria-label=\"{}\"></div>",
+                html_attr(role),
+                html_attr(&fallback_text(n))
+            ));
+        }
+    }
+    let sr_css = ".sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}";
     let html = format!(
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>{title}</title>\n<style>body {{ font-family: sans-serif; margin: 0; padding: 16px; }} canvas {{ background: #fff; border: 1px solid #ddd; }} #inputs {{ margin-top: 12px; }}{anim_css}</style>\n</head>\n<body>\n<canvas id=\"app\" width=\"800\" height=\"600\"{canvas_cls}></canvas>\n<div id=\"inputs\">\n{input_html}</div>\n<script src=\"app.js\"></script>\n</body>\n</html>\n"
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>{title}</title>\n<style>body {{ font-family: sans-serif; margin: 0; padding: 16px; }} canvas {{ background: #fff; border: 1px solid #ddd; }} #inputs {{ margin-top: 12px; }}{sr_css}{anim_css}</style>\n</head>\n<body>\n<canvas id=\"app\" width=\"800\" height=\"600\"{canvas_cls}></canvas>\n<div id=\"inputs\">\n{input_html}</div>\n<div id=\"a11y\" class=\"sr-only\">{a11y_mirror}</div>\n<script src=\"app.js\"></script>\n</body>\n</html>\n"
     );
     write(out, "index.html", &html, ir_path)
 }
@@ -2218,11 +2232,26 @@ fn markup_node(
     } else {
         format!(" {}=\"{}{}{}\"", p.cond_attr, p.open, condition, p.close)
     };
+    // Mini runtimes read `aria-role`; an accessible name comes from the first
+    // label/value/title/name prop. Only an explicit role produces attributes,
+    // so a node without one stays byte-identical to the previous output.
+    let a11y_attr = match n.props.get("role").and_then(Json::as_str) {
+        Some(role) => {
+            let label = fallback_text(n);
+            let label_attr = if label.is_empty() {
+                String::new()
+            } else {
+                format!(" aria-label=\"{}\"", html_attr(&label))
+            };
+            format!(" aria-role=\"{}\"{label_attr}", html_attr(role))
+        }
+        None => String::new(),
+    };
     match n.kind.as_str() {
         "Text" => {
             let value = markup_interp(&prop_str(&n.props, "value", ""), p, ir_path)?;
             out.push_str(&format!(
-                "{pad}<text class=\"n{id}{anim}\"{style_attr}{cond_attr}>{value}</text>\n"
+                "{pad}<text class=\"n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr}>{value}</text>\n"
             ));
         }
         "Button" => {
@@ -2233,7 +2262,7 @@ fn markup_node(
                 String::new()
             };
             out.push_str(&format!(
-                "{pad}<button class=\"n{id}{anim}\"{style_attr}{cond_attr}{tap}>{label}</button>\n"
+                "{pad}<button class=\"n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr}{tap}>{label}</button>\n"
             ));
         }
         "Input" => {
@@ -2249,18 +2278,18 @@ fn markup_node(
                 String::new()
             };
             out.push_str(&format!(
-                "{pad}<input class=\"n{id}{anim}\"{style_attr}{cond_attr} placeholder=\"{placeholder}\"{value}{input} />\n"
+                "{pad}<input class=\"n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr} placeholder=\"{placeholder}\"{value}{input} />\n"
             ));
         }
         "Image" => {
             let src = html_attr(&prop_str(&n.props, "src", ""));
             out.push_str(&format!(
-                "{pad}<image class=\"n{id}{anim}\"{style_attr}{cond_attr} src=\"{src}\" />\n"
+                "{pad}<image class=\"n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr} src=\"{src}\" />\n"
             ));
         }
         "Spacer" => {
             out.push_str(&format!(
-                "{pad}<view class=\"spacer n{id}{anim}\"{style_attr}{cond_attr}></view>\n"
+                "{pad}<view class=\"spacer n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr}></view>\n"
             ));
         }
         "Badge" | "Avatar" | "Progress" | "Switch" | "Slider" | "Checkbox" | "Radio" | "Tabs" => {
@@ -2271,7 +2300,7 @@ fn markup_node(
                 String::new()
             };
             out.push_str(&format!(
-                "{pad}<view class=\"n{id}{anim}\"{style_attr}{cond_attr}{tap}><text>{label}</text></view>\n"
+                "{pad}<view class=\"n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr}{tap}><text>{label}</text></view>\n"
             ));
         }
         "Icon" => {
@@ -2304,14 +2333,14 @@ fn markup_node(
                         format!(" style=\"{}\"", html_attr(&style))
                     };
                     out.push_str(&format!(
-                        "{pad}<image class=\"n{id}{anim}\"{style_attr}{cond_attr}{tap} src=\"data:image/svg+xml;base64,{b64}\" />\n"
+                        "{pad}<image class=\"n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr}{tap} src=\"data:image/svg+xml;base64,{b64}\" />\n"
                     ));
                 }
                 // An unknown name keeps the previous text fallback.
                 None => {
                     let label = markup_text(&fallback_text(n));
                     out.push_str(&format!(
-                        "{pad}<view class=\"n{id}{anim}\"{style_attr}{cond_attr}{tap}><text>{label}</text></view>\n"
+                        "{pad}<view class=\"n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr}{tap}><text>{label}</text></view>\n"
                     ));
                 }
             }
@@ -2324,7 +2353,7 @@ fn markup_node(
                 format!("<text>{label}</text>")
             };
             out.push_str(&format!(
-                "{pad}<view class=\"n{id}{anim}\"{style_attr}{cond_attr}>{inner}</view>\n"
+                "{pad}<view class=\"n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr}>{inner}</view>\n"
             ));
         }
         kind => {
@@ -2332,7 +2361,7 @@ fn markup_node(
             // showing its label, so gallery exhibits stay visible in pages.
             let cls = if kind == "Row" { "row" } else { "col" };
             out.push_str(&format!(
-                "{pad}<view class=\"{cls} n{id}{anim}\"{style_attr}{cond_attr}>\n"
+                "{pad}<view class=\"{cls} n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr}>\n"
             ));
             if n.children.is_empty() {
                 let label = markup_text(&fallback_text(n));
