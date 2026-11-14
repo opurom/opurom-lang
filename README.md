@@ -305,7 +305,7 @@ becomes:
 
 There is **no runtime component registry and no IR interpreter**: the IR contains no component
 declarations, no component nodes and no new top-level field, so all nine emitters, the optimizer
-and the wasm ABI consume it unchanged. `opuromc components` still lists only the 216 built-in
+and the wasm ABI consume it unchanged. `opuromc components` still lists only the 240 built-in
 catalog names.
 
 Friendly diagnostics cover recursive and mutually cyclic components (including unused ones),
@@ -353,7 +353,7 @@ opuromc check <src.opu>                                   # diagnostics only
 opuromc compile <src.opu> -o <out.opuir.json>             # lex -> parse -> typecheck -> IR
 opuromc target <ir.json> --target <name> -o <dir>         # lower IR into target source
 opuromc targets                                           # list all 9 targets
-opuromc components                                        # list the 216 catalog names
+opuromc components                                        # list the 240 catalog names
 opuromc optimize <ir.json> -o <out.json>                  # dead-computed and dead-state elimination
 opuromc --version                                         # 0.2.0
 ```
@@ -429,7 +429,7 @@ keeps only compiled initial values; that is the documented consumer-side fallbac
 
 [components.json](https://github.com/opurom/opurom-spec/blob/main/components.json) is vendored **byte-for-byte** as
 [src/catalog.json](src/catalog.json) and embedded with `include_str!`, so the crate builds
-standalone. Its 216 tuples are `[name, primitive, category, defaultProps]`, mapping onto
+standalone. Its 240 tuples are `[name, primitive, category, defaultProps]`, mapping onto
 100 distinct primitive kinds (32 core kinds + 68 extended kinds). A source `Kind` that is a
 catalog name lowers to the named primitive: the IR
 node keeps `kind` = primitive and gains `"component": "<name>"`. Consumers that ignore
@@ -438,7 +438,7 @@ node keeps `kind` = primitive and gains `"component": "<name>"`. Consumers that 
 `defaultProps` are injected after explicitly written props are validated, so explicit values
 win and preset keys need not be props that the primitive declares. The catalog is validated at
 compile time. `opuromc components` prints `name | primitive | category` rows and a final
-`216 components` line. Unknown kinds remain a diagnostic. The accessibility keys `label`,
+`240 components` line. Unknown kinds remain a diagnostic. The accessibility keys `label`,
 `role`, `fontScale` and `highContrast` are accepted on any node and preserved in IR props.
 A node with `highContrast: true` gets a 2px contrast outline around its filled box and a
 contrast text colour (white on a dark fill, black on a light one) in every target, mirroring
@@ -448,14 +448,14 @@ the renderer scatters.
 
 ### Component catalog expansion (COMPONENT_LIBRARY_HARDENING section 1)
 
-The vendored [components.json](https://github.com/opurom/opurom-spec/blob/main/components.json) now has **216
+The vendored [components.json](https://github.com/opurom/opurom-spec/blob/main/components.json) now has **240
 named components mapped onto 100 DISTINCT primitive kinds**: the 32 core kinds
 plus 68 new ones. Each new primitive has its own deterministic software drawing,
 a documented prop schema and a default a11y role in `opurom-render`; the catalog
 itself is still plain data (name, primitive, category, defaultProps). 100 new
 names were added: 68 canonical names (one per new kind) and 32 secondary names
 that expand to a new primitive at compile time. `opuromc components` prints the
-new `216 components` count, and the compiler's `KINDS` validator accepts all 100
+new `240 components` count, and the compiler's `KINDS` validator accepts all 100
 primitives through one documented, reasonable prop schema (all props optional,
 `value` positional, no children, no tap handler).
 
@@ -466,6 +466,21 @@ kind changed its lowering.
 
 Each kind has one deterministic software drawing (in `opurom-render`). Catalog names
 remain compile-time aliases for primitives; they are not runtime components.
+
+The catalog also carries an additive **Flutter-aligned named set** of 24 Material 3
+and Cupertino names: `Scaffold`, `AppBar`, `FloatingActionButton`, `NavigationBar`,
+`NavigationRail`, `NavigationDrawer`, `InputChip`, `SnackBar`, `BottomSheet`,
+`ModalBottomSheet`, `SegmentedButton`, `DividerVertical`, `ListTile`, `ExpansionTile`,
+`TooltipCard`, and the nine `Cupertino*` names (`CupertinoButton`, `CupertinoSwitch`,
+`CupertinoSlider`, `CupertinoTextField`, `CupertinoNavigationBar`, `CupertinoAlertDialog`,
+`CupertinoTabBar`, `CupertinoPicker`, `CupertinoSegmentedControl`). Each maps onto one
+of the existing 100 drawn primitives, so no new drawn primitive, renderer change or IR
+action op is introduced. Every entry carries real `defaultProps` (radius, padding,
+shadow and the brand accent `#097FEB` where it fits the component); they are validated
+at compile time along with the rest of the catalog, and an unknown prop on one of them
+is rejected with the existing friendly `unknown prop ... on ...` diagnostic instead of
+being silently dropped. The defaults were chosen from Flutter's Material 3 and Cupertino
+component vocabulary and only reuse existing drawn primitives.
 
 ### Optimizer
 
@@ -490,7 +505,7 @@ Optimization is opt-in: default `compile` output stays byte-identical.
 cd opurom-lang
 cargo fmt --all
 cargo fmt --all -- --check
-cargo test --offline                 # 73 tests: 5 unit + 62 CLI + 6 wasm
+cargo test --offline                 # 97 tests: 5 unit + 86 CLI + 6 wasm
 RUSTFLAGS="-D warnings" cargo test --offline   # zero compiler warnings
 ```
 
@@ -507,11 +522,11 @@ plain IR, and the wasm ABI on a component-expanded tree.
 
 ## Verified status
 
-- `cargo test --offline`: 73/73 tests pass (5 unit + 62 CLI + 6 wasm); `RUSTFLAGS="-D warnings"`
+- `cargo test --offline`: 97/97 tests pass (5 unit + 86 CLI + 6 wasm); `RUSTFLAGS="-D warnings"`
   is clean and `cargo fmt --all -- --check` passes.
 - UI-only programs (`counter.opu`, `profile.opu`, `todo.opu`) compile to **byte-identical** IR;
   no `imports`, `async`, `effects`, `computed`, `unless` or component keys are added to plain IR.
-  The 216/100 vendored catalog is byte-identical to the spec catalog.
+  The 240/100 vendored catalog is byte-identical to the spec catalog.
 - Negative fixtures cover the v0.1 classes, the interactive UI classes, the async/import
   classes, the `else`/computed/list classes, fifteen component classes, thirteen type classes and
   the integer overflow/range classes. No panics, no stack traces.
@@ -526,7 +541,7 @@ plain IR, and the wasm ABI on a component-expanded tree.
   state is recomputed after a tap, and async effects remain host-side callbacks without wasm
   imports.
 - Every generated JS file passes `node --check` (web + 6 mini + wasm host); `opuromc targets`
-  lists all 9 targets and `opuromc components` prints `216 components`.
+  lists all 9 targets and `opuromc components` prints `240 components`.
 - Generated native output builds warning-free with `cargo build --release --offline` and runs with
   piped stdin. The native sequencer's local fallback and plain-HTTP `OPR_BASE_URL` path are
   generated from the same IR, and every state change re-renders the frame. The generated crate
@@ -534,7 +549,7 @@ plain IR, and the wasm ABI on a component-expanded tree.
 
 ### Scope and limits
 
-- **216 named components map onto 100 distinct primitive kinds.** The 68 extended kinds each
+- **240 named components map onto 100 distinct primitive kinds.** The 68 extended kinds each
   have a distinct deterministic software drawing in `opurom-render`; the other 32 are the core
   primitives. Catalog names are compile-time aliases, not renderer components. Custom
   components are compile-time macros, not renderer components: no runtime registry and no

@@ -1,6 +1,6 @@
 {
   "version": "0.3",
-  "count": 216,
+  "count": 240,
   "primitives": 100,
   "components": [
     [
@@ -1767,6 +1767,343 @@
       {
         "value": 40,
         "segments": 3
+      }
+    ],
+    [
+      "Scaffold",
+      "Column",
+      "material",
+      {
+        "label": "Scaffold",
+        "gap": 8,
+        "padding": 16,
+        "radius": 12,
+        "shadow": 3,
+        "color": "#FFFFFF"
+      }
+    ],
+    [
+      "AppBar",
+      "Row",
+      "material",
+      {
+        "label": "AppBar",
+        "gap": 8,
+        "padding": 16,
+        "radius": 0,
+        "shadow": 3,
+        "color": "#FFFFFF"
+      }
+    ],
+    [
+      "FloatingActionButton",
+      "Button",
+      "material",
+      {
+        "label": "Add",
+        "padding": 16,
+        "radius": 28,
+        "shadow": 3,
+        "color": "#097FEB",
+        "border": "#097FEB"
+      }
+    ],
+    [
+      "NavigationBar",
+      "Tabs",
+      "material",
+      {
+        "label": "NavigationBar",
+        "labels": "Surfing,Support,Hospital",
+        "bind": "selection",
+        "padding": 4,
+        "radius": 16,
+        "shadow": 3,
+        "color": "#FFFFFF"
+      }
+    ],
+    [
+      "NavigationRail",
+      "NavRail",
+      "material",
+      {
+        "label": "NavigationRail",
+        "value": 0,
+        "segments": 3,
+        "labels": "Surfing,Support,Hospital",
+        "padding": 16,
+        "radius": 16,
+        "shadow": 3,
+        "color": "#FFFFFF"
+      }
+    ],
+    [
+      "NavigationDrawer",
+      "Sidebar",
+      "material",
+      {
+        "label": "NavigationDrawer",
+        "value": 0,
+        "segments": 3,
+        "labels": "Surfing,Support,Hospital",
+        "padding": 16,
+        "radius": 16,
+        "shadow": 3,
+        "color": "#FFFFFF"
+      }
+    ],
+    [
+      "InputChip",
+      "Badge",
+      "material",
+      {
+        "label": "Surfing",
+        "padding": 8,
+        "radius": 8,
+        "shadow": 0,
+        "color": "#FFFFFF",
+        "border": "#097FEB"
+      }
+    ],
+    [
+      "SnackBar",
+      "Card",
+      "material",
+      {
+        "label": "SnackBar",
+        "padding": 16,
+        "radius": 8,
+        "shadow": 3,
+        "color": "#FFFFFF",
+        "border": "#097FEB"
+      }
+    ],
+    [
+      "BottomSheet",
+      "Dialog",
+      "material",
+      {
+        "title": "Options",
+        "label": "BottomSheet",
+        "padding": 16,
+        "radius": 16,
+        "shadow": 3,
+        "color": "#FFFFFF"
+      }
+    ],
+    [
+      "ModalBottomSheet",
+      "Dialog",
+      "material",
+      {
+        "title": "Options",
+        "label": "ModalBottomSheet",
+        "padding": 16,
+        "radius": 16,
+        "shadow": 3,
+        "color": "#FFFFFF",
+        "border": "#097FEB"
+      }
+    ],
+    [
+      "SegmentedButton",
+      "Tabs",
+      "material",
+      {
+        "label": "SegmentedButton",
+        "labels": "Surfing,Support,Hospital",
+        "bind": "selection",
+        "padding": 8,
+        "radius": 16,
+        "shadow": 0,
+        "color": "#FFFFFF",
+        "border": "#097FEB"
+      }
+    ],
+    [
+      "DividerVertical",
+      "Divider",
+      "material",
+      {
+        "label": "DividerVertical",
+        "width": 1,
+        "height": 16,
+        "padding": 0,
+        "radius": 0,
+        "shadow": 0,
+        "color": "#E5E7EB"
+      }
+    ],
+    [
+      "ListTile",
+      "Row",
+      "material",
+      {
+        "label": "ListTile",
+        "gap": 8,
+        "padding": 16,
+        "radius": 8,
+        "shadow": 0,
+        "color": "#FFFFFF"
+      }
+    ],
+    [
+      "ExpansionTile",
+      "Card",
+      "material",
+      {
+        "label": "ExpansionTile",
+        "padding": 16,
+        "radius": 8,
+        "shadow": 0,
+        "color": "#FFFFFF",
+        "border": "#097FEB"
+      }
+    ],
+    [
+      "TooltipCard",
+      "Tooltip",
+      "material",
+      {
+        "text": "Details",
+        "label": "TooltipCard",
+        "placement": "top",
+        "width": 64,
+        "padding": 8,
+        "radius": 8,
+        "shadow": 3,
+        "color": "#FFFFFF"
+      }
+    ],
+    [
+      "CupertinoButton",
+      "Button",
+      "cupertino",
+      {
+        "label": "Action",
+        "padding": 16,
+        "radius": 8,
+        "shadow": 0,
+        "color": "#097FEB",
+        "border": "#097FEB"
+      }
+    ],
+    [
+      "CupertinoSwitch",
+      "Switch",
+      "cupertino",
+      {
+        "bind": "enabled",
+        "label": "CupertinoSwitch",
+        "padding": 8,
+        "radius": 16,
+        "shadow": 0,
+        "color": "#097FEB"
+      }
+    ],
+    [
+      "CupertinoSlider",
+      "Slider",
+      "cupertino",
+      {
+        "bind": "volume",
+        "min": 0,
+        "max": 100,
+        "label": "CupertinoSlider",
+        "padding": 8,
+        "radius": 16,
+        "shadow": 0,
+        "color": "#097FEB"
+      }
+    ],
+    [
+      "CupertinoTextField",
+      "Input",
+      "cupertino",
+      {
+        "placeholder": "Search",
+        "label": "CupertinoTextField",
+        "padding": 8,
+        "radius": 8,
+        "shadow": 0,
+        "color": "#FFFFFF",
+        "border": "#097FEB"
+      }
+    ],
+    [
+      "CupertinoNavigationBar",
+      "Row",
+      "cupertino",
+      {
+        "label": "CupertinoNavigationBar",
+        "gap": 8,
+        "padding": 16,
+        "radius": 0,
+        "shadow": 0,
+        "color": "#FFFFFF",
+        "border": "#E5E7EB"
+      }
+    ],
+    [
+      "CupertinoAlertDialog",
+      "Dialog",
+      "cupertino",
+      {
+        "title": "Alert",
+        "label": "CupertinoAlertDialog",
+        "padding": 16,
+        "radius": 12,
+        "shadow": 3,
+        "color": "#FFFFFF",
+        "border": "#097FEB"
+      }
+    ],
+    [
+      "CupertinoTabBar",
+      "Tabs",
+      "cupertino",
+      {
+        "label": "CupertinoTabBar",
+        "labels": "Surfing,Support,Hospital",
+        "bind": "selection",
+        "padding": 8,
+        "radius": 0,
+        "shadow": 0,
+        "color": "#FFFFFF",
+        "border": "#E5E7EB"
+      }
+    ],
+    [
+      "CupertinoPicker",
+      "SelectBox",
+      "cupertino",
+      {
+        "label": "CupertinoPicker",
+        "value": 0,
+        "segments": 3,
+        "values": "Surfing,Support,Hospital",
+        "labels": "Surfing,Support,Hospital",
+        "padding": 8,
+        "radius": 8,
+        "shadow": 0,
+        "color": "#FFFFFF",
+        "border": "#097FEB"
+      }
+    ],
+    [
+      "CupertinoSegmentedControl",
+      "SegmentedInput",
+      "cupertino",
+      {
+        "label": "CupertinoSegmentedControl",
+        "value": 0,
+        "segments": 3,
+        "labels": "Surfing,Support,Hospital",
+        "padding": 8,
+        "radius": 8,
+        "shadow": 0,
+        "color": "#FFFFFF",
+        "border": "#097FEB"
       }
     ]
   ]

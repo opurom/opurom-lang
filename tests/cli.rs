@@ -8,6 +8,35 @@ use serde_json::{json, Value as Json};
 
 static CASE: AtomicUsize = AtomicUsize::new(0);
 
+/// Flutter-aligned Material 3 / Cupertino names added to the component
+/// catalog; each maps onto an existing drawn primitive, never a new one.
+const FLUTTER_COMPONENTS: &[&str] = &[
+    "Scaffold",
+    "AppBar",
+    "FloatingActionButton",
+    "NavigationBar",
+    "NavigationRail",
+    "NavigationDrawer",
+    "InputChip",
+    "SnackBar",
+    "BottomSheet",
+    "ModalBottomSheet",
+    "SegmentedButton",
+    "DividerVertical",
+    "ListTile",
+    "ExpansionTile",
+    "TooltipCard",
+    "CupertinoButton",
+    "CupertinoSwitch",
+    "CupertinoSlider",
+    "CupertinoTextField",
+    "CupertinoNavigationBar",
+    "CupertinoAlertDialog",
+    "CupertinoTabBar",
+    "CupertinoPicker",
+    "CupertinoSegmentedControl",
+];
+
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_opuromc"))
 }
@@ -1659,15 +1688,15 @@ fn icon_names_are_validated_at_compile_time() {
 }
 
 #[test]
-fn components_lists_216_rows() {
+fn components_lists_240_rows() {
     let r = bin().arg("components").output().expect("run components");
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let text = String::from_utf8_lossy(&r.stdout);
     let lines: Vec<&str> = text.lines().collect();
     let last = *lines.last().expect("count line");
-    assert_eq!(last, "216 components", "final count line: {last}");
+    assert_eq!(last, "240 components", "final count line: {last}");
     let count: usize = last.split_whitespace().next().unwrap().parse().unwrap();
-    assert_eq!(count, 216, "catalog count: {count}");
+    assert_eq!(count, 240, "catalog count: {count}");
     assert_eq!(lines.len(), count + 1, "one row per component plus count");
     for row in &lines[..count] {
         let parts: Vec<&str> = row.split(" | ").collect();
@@ -1719,6 +1748,14 @@ fn components_lists_216_rows() {
     ] {
         assert!(lines.contains(&row), "missing data catalog row: {row}");
     }
+    for name in FLUTTER_COMPONENTS {
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with(&format!("{name} | "))),
+            "missing Flutter-aligned catalog row {name}"
+        );
+    }
 }
 
 #[test]
@@ -1739,7 +1776,7 @@ fn vendored_catalog_matches_spec_when_present() {
         vendored, expected,
         "vendored catalog drifted from opurom-spec"
     );
-    assert_eq!(vendored["count"], 216);
+    assert_eq!(vendored["count"], 240);
     assert_eq!(vendored["primitives"], 100);
 }
 
@@ -3248,7 +3285,7 @@ fn expanded_ir_keeps_emitters_catalog_and_optimizer() {
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     assert_eq!(
         String::from_utf8_lossy(&r.stdout).lines().last().unwrap(),
-        "216 components",
+        "240 components",
         "the built-in catalog is unchanged"
     );
 }
@@ -3379,6 +3416,68 @@ fn all_nine_emitters_keep_working() {
         );
         assert!(out.is_dir(), "{target}: no output dir");
     }
+}
+
+#[test]
+fn flutter_catalog_components_compile_and_emit_every_target() {
+    let dir = out_dir("flutter-catalog");
+    let src_path = dir.join("flutter.opu");
+    let mut src = String::from(
+        "app FlutterCatalog {\n  state enabled = false\n  state volume = 0\n  \
+         state selection = \"Surfing\"\n  Column {\n",
+    );
+    for name in FLUTTER_COMPONENTS {
+        src.push_str(&format!("    {name}()\n"));
+    }
+    src.push_str("  }\n}\n");
+    fs::write(&src_path, src).unwrap();
+
+    let ir_path = dir.join("flutter.opuir.json");
+    let r = compile(&src_path, &ir_path);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let ir: Json = serde_json::from_slice(&fs::read(&ir_path).unwrap()).unwrap();
+    let nodes = nodes_of(&ir);
+    for name in FLUTTER_COMPONENTS {
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.get("component").and_then(Json::as_str) == Some(name)),
+            "missing compiled component {name}"
+        );
+    }
+    for target in [
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
+    ] {
+        let out = dir.join(format!("out-{target}"));
+        let e = emit(&ir_path, target, &out);
+        assert!(
+            e.status.success(),
+            "{target} emit failed: {}",
+            String::from_utf8_lossy(&e.stderr)
+        );
+        assert!(out.is_dir(), "{target}: no output dir");
+    }
+}
+
+#[test]
+fn unknown_prop_on_new_component_is_a_friendly_diagnostic() {
+    let dir = out_dir("flutter-badprop");
+    let src_path = dir.join("bad.opu");
+    fs::write(
+        &src_path,
+        "app BadProp {\n  Column {\n    Scaffold(bogus: 1)\n  }\n}\n",
+    )
+    .unwrap();
+    let r = bin().arg("check").arg(&src_path).output().expect("run check");
+    assert_eq!(r.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(err.contains("unknown prop 'bogus' on Scaffold"), "{err}");
+    assert_diag(&err, &src_path);
+
+    let out = dir.join("out.opuir.json");
+    assert_eq!(compile(&src_path, &out).status.code(), Some(1));
+    assert!(!out.exists(), "no IR may be written on error");
 }
 
 // ------------------------------------------------- static types and inference ---
