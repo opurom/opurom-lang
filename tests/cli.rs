@@ -3822,6 +3822,41 @@ fn theme_without_font_scale_stays_unchanged() {
 }
 
 #[test]
+fn theme_transition_lowers_to_the_top_level_ir_key() {
+    let dir = out_dir("theme-transition");
+    let src = dir.join("transition.opu");
+    fs::write(
+        &src,
+        "app Transition {\n  theme { transition: fade }\n  Column { Text(\"hi\") }\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    assert_eq!(ir["transition"], json!("fade"));
+
+    // A source without a transition declares no key at all, so the IR schema
+    // and the pinned goldens are unchanged.
+    let plain = dir.join("plain.opu");
+    fs::write(&plain, "app Plain { Column { Text(\"hi\") } }\n").unwrap();
+    let ir = compile_ok(&plain);
+    assert_eq!(ir.get("transition"), None);
+}
+
+#[test]
+fn theme_transition_rejects_unknown_kinds() {
+    let dir = out_dir("theme-transition-bad");
+    let src = dir.join("bad.opu");
+    fs::write(
+        &src,
+        "app Bad { theme { transition: zoom } Column { Text(\"hi\") } }\n",
+    )
+    .unwrap();
+    let r = compile(&src, &dir.join("bad.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(stderr.contains("unknown transition 'zoom'"), "{stderr}");
+}
+
+#[test]
 fn particles_prop_lowers_to_the_bounded_ir() {
     let ir = compile_ok(&fixture("particles.opu"));
     let node = nodes_of(&ir)
