@@ -2800,7 +2800,16 @@ fn markup_node(
         kind => {
             // Documented fallback: an unknown kind renders as a Container
             // showing its label, so gallery exhibits stay visible in pages.
-            let cls = if kind == "Row" { "row" } else { "col" };
+            // Grid is a wrapping row, not a column: mini-program WXSS has no
+            // CSS grid, so `compactColumns`/`columns` maps to percentage-width
+            // cells emitted in `emit_mini`'s stylesheet.
+            let cls = if kind == "Row" {
+                "row"
+            } else if kind == "Grid" {
+                "grid"
+            } else {
+                "col"
+            };
             out.push_str(&format!(
                 "{pad}<view class=\"{cls} n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr}>\n"
             ));
@@ -2990,12 +2999,33 @@ fn emit_mini(
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
     let mut style = String::from(
-        ".col { display: flex; flex-direction: column; }\n.row { display: flex; flex-direction: row; }\n@keyframes opurom-entry { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }\n.anim-entry { transform-origin: center; animation: opurom-entry 480ms ease-out both; }\n.anim-spring { animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }\n.anim-ease { animation-timing-function: ease-out; }\n.anim-inertia { animation-timing-function: ease-in-out; }\n.anim-collision { animation-timing-function: cubic-bezier(0.5, 1.6, 0.4, 1); }\n",
+        ".col { display: flex; flex-direction: column; }\n.row { display: flex; flex-direction: row; }\n.grid { display: flex; flex-direction: row; flex-wrap: wrap; }\n@keyframes opurom-entry { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }\n.anim-entry { transform-origin: center; animation: opurom-entry 480ms ease-out both; }\n.anim-spring { animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }\n.anim-ease { animation-timing-function: ease-out; }\n.anim-inertia { animation-timing-function: ease-in-out; }\n.anim-collision { animation-timing-function: cubic-bezier(0.5, 1.6, 0.4, 1); }\n",
     );
     for n in &nodes {
         let s = style_of(&n.props, n.kind == "Container", is_text_kind(&n.kind));
         if !s.is_empty() {
             style.push_str(&format!(".n{} {{ {}; }}\n", n.id, s));
+        }
+        if n.kind == "Grid" {
+            // Mini-program pages are phone-width, so a declared compact count
+            // wins; otherwise the authored column count applies. Cells without
+            // an explicit width share the row equally. WXSS has no CSS grid, so
+            // percentage widths on a wrapping flex row are the native form.
+            let cols = n.props.get("compactColumns")
+                .or_else(|| n.props.get("columns"))
+                .and_then(Json::as_i64)
+                .unwrap_or(2)
+                .clamp(1, 16);
+            let pct = 100.0 / cols as f64;
+            for child in &n.children {
+                if child.props.contains_key("width") {
+                    continue;
+                }
+                style.push_str(&format!(
+                    ".n{} {{ width: {pct:.4}%; box-sizing: border-box; }}\n",
+                    child.id
+                ));
+            }
         }
     }
     write(

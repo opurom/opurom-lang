@@ -5487,3 +5487,47 @@ fn grid_compact_columns_lower_as_a_numeric_prop() {
     );
     assert!(String::from_utf8_lossy(&r.stderr).contains("compactColumns"));
 }
+
+#[test]
+fn mini_program_grids_lower_column_counts_to_percentage_cells() {
+    // WXSS/ACSS have no CSS Grid, so every mini-program target must emit a
+    // wrapping flex row with equal-width cells. A phone-width page prefers a
+    // declared compactColumns over the desktop columns count, and a cell with
+    // an explicit width keeps it instead of being overwritten.
+    for (target, style_ext) in [
+        ("wechat", "wxss"), ("alipay", "acss"), ("qq", "qss"),
+        ("douyin", "ttss"), ("baidu", "css"), ("kuaishou", "css"),
+    ] {
+        let dir = out_dir(&format!("mini-grid-{target}"));
+        let src = dir.join("grid.opu");
+        fs::write(
+            &src,
+            r##"app GridApp {
+  theme { mode: light, accent: "#097FEB", radius: 8 }
+  Column {
+    Grid(columns: 4, compactColumns: 2) {
+      Text("a")
+      Text("b")
+      Container(width: 40) { Text("c") }
+      Text("d")
+    }
+  }
+}
+"##,
+        )
+        .unwrap();
+        let ir = dir.join("grid.opuir.json");
+        let compiled = compile(&src, &ir);
+        assert!(compiled.status.success(), "{target}: {}", String::from_utf8_lossy(&compiled.stderr));
+        let out = dir.join("page");
+        let r = emit(&ir, target, &out);
+        assert!(r.status.success(), "{target}: {}", String::from_utf8_lossy(&r.stderr));
+        let css = fs::read_to_string(out.join(format!("pages/index/index.{style_ext}"))).unwrap();
+        assert!(css.contains(".grid {"), "{target} needs the wrapping grid rule");
+        assert!(css.contains("width: 50.0000%; box-sizing: border-box;"),
+            "{target} must honor compactColumns: 2");
+        assert_eq!(css.matches("width: 50.0000%").count(), 3,
+            "{target}: only the three cells without an explicit width get 50%");
+        assert!(css.contains("width:40px;"), "{target} keeps the authored cell width");
+    }
+}
