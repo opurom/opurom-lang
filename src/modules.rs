@@ -138,29 +138,40 @@ fn package_roots(root: &Path, manifest: &Path, doc: &Json) -> DResult<Vec<PathBu
         return Ok(Vec::new());
     }
     let lock_path = manifest.parent().unwrap_or_else(|| Path::new(".")).join("opurom.lock");
-    let Ok(lock_text) = fs::read_to_string(&lock_path) else {
-        return Ok(Vec::new());
-    };
-    let lock: Json = match serde_json::from_str(&lock_text) {
-        Ok(lock) => lock,
-        Err(_) => return Ok(Vec::new()),
-    };
-    let Some(packages) = lock.get("packages").and_then(|p| p.as_array()) else {
-        return Ok(Vec::new());
-    };
+    // A missing or malformed lockfile is not fatal: exact version pins in the
+    // manifest still resolve, so a project without `opurom-pkg` can import
+    // packages; only range dependencies then stay unresolved.
+    let lock_text = fs::read_to_string(&lock_path).unwrap_or_default();
+    let lock: Json = serde_json::from_str(&lock_text).unwrap_or(Json::Null);
+    let packages = lock
+        .get("packages")
+        .and_then(|p| p.as_array())
+        .cloned()
+        .unwrap_or_default();
     let mut roots = Vec::new();
-    for name in dependencies.keys() {
-        let Some(entry) = packages
+    for (name, contract) in dependencies {
+        let pinned = contract.as_str().unwrap_or_default();
+        let mut found_dir: Option<String> = None;
+        if let Some(entry) = packages
             .iter()
             .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(name.as_str()))
-        else {
+        {
+            found_dir = entry
+                .get("path")
+                .and_then(|p| p.as_str())
+                .map(|p| p.to_string());
+        } else if pinned.split('.').count() == 3
+            && pinned.chars().all(|c| c.is_ascii_digit() || c == '.')
+        {
+            // No lockfile entry: an exact x.y.z pin resolves directly, so a
+            // project without `opurom-pkg` can still import packages. Ranges
+            // never resolve here; `opurom-pkg` owns SemVer selection.
+            found_dir = Some(format!("registry/{name}/{pinned}"));
+        }
+        let Some(relative) = found_dir else {
             continue;
         };
-        let relative = entry.get("path").and_then(|p| p.as_str());
-        let Some(relative) = relative else {
-            continue;
-        };
-        if Path::new(relative).is_absolute() || has_traversal(relative) {
+        if Path::new(&relative).is_absolute() || has_traversal(&relative) {
             return Err(Diagnostic::file(
                 &lock_text,
                 format!("lock entry '{name}' may not be absolute or contain '..'"),
