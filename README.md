@@ -121,7 +121,11 @@ app NavDemo {
 `page Name;` registers a named route; the IR gains an optional top-level `"pages"` array of the
 declared names in declaration order. `push: PageName` inside a handler lowers to the action
 `{"op": "push", "target": "Settings"}`, which the runtime executes as a navigation. A `push` to
-an undeclared page is a friendly diagnostic that lists the declared pages.
+an undeclared page is a friendly diagnostic that lists the declared pages. Every target emits the
+reserved navigation signal `@nav` with the page name and leaves state unchanged: the kernel and
+the native target produce a patch named `@nav`, the canvas web and six mini targets record it in
+their state container, and the wasm host mirror exposes it. The renderer owns the navigation
+stack, so a page's UI is supplied by the runtime consumer.
 
 ### Async/await effects
 
