@@ -2333,9 +2333,10 @@ fn style_of(props: &JsonMap<String, Json>, background: bool, justified: bool) ->
 }
 
 /// The entry-animation CSS class for a node's `animate` prop, mirroring the
-/// native renderer and the web-dom emitter: spring/ease/inertia animate in from
-/// the centre, `none`/absent is static. The curve is mapped to a CSS timing
-/// function (spring is a documented cubic-bezier approximation).
+/// native renderer and the web-dom emitter: spring/ease/inertia/collision
+/// animate in from the centre, `none`/absent is static. The curve is mapped to
+/// a CSS timing function (spring and collision are documented cubic-bezier
+/// approximations).
 fn anim_class(props: &JsonMap<String, Json>) -> String {
     let Some(Json::String(curve)) = props.get("animate") else {
         return String::new();
@@ -2344,6 +2345,7 @@ fn anim_class(props: &JsonMap<String, Json>) -> String {
         "spring" => " anim-entry anim-spring".to_string(),
         "ease" => " anim-entry anim-ease".to_string(),
         "inertia" => " anim-entry anim-inertia".to_string(),
+        "collision" => " anim-entry anim-collision".to_string(),
         _ => String::new(),
     }
 }
@@ -2708,7 +2710,7 @@ fn emit_mini(
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
     let mut style = String::from(
-        ".col { display: flex; flex-direction: column; }\n.row { display: flex; flex-direction: row; }\n@keyframes opurom-entry { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }\n.anim-entry { transform-origin: center; animation: opurom-entry 480ms ease-out both; }\n.anim-spring { animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }\n.anim-ease { animation-timing-function: ease-out; }\n.anim-inertia { animation-timing-function: ease-in-out; }\n",
+        ".col { display: flex; flex-direction: column; }\n.row { display: flex; flex-direction: row; }\n@keyframes opurom-entry { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }\n.anim-entry { transform-origin: center; animation: opurom-entry 480ms ease-out both; }\n.anim-spring { animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }\n.anim-ease { animation-timing-function: ease-out; }\n.anim-inertia { animation-timing-function: ease-in-out; }\n.anim-collision { animation-timing-function: cubic-bezier(0.5, 1.6, 0.4, 1); }\n",
     );
     for n in &nodes {
         let s = style_of(&n.props, n.kind == "Container", is_text_kind(&n.kind));

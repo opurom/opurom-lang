@@ -987,6 +987,50 @@ fn canvas_and_mini_emitters_apply_effects_and_animation() {
 }
 
 #[test]
+fn collision_curve_compiles_and_emits_across_targets() {
+    let dir = out_dir("emit-collision");
+    let ir = dir.join("collision.opuir.json");
+    let src = dir.join("collision.opu");
+    fs::write(
+        &src,
+        "app Collision {\n  Column(gap: 8) {\n    Container(bg: \"#112233\", animate: collision) { Text(\"bump\") }\n  }\n}\n",
+    )
+    .unwrap();
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let lowered = fs::read_to_string(&ir).unwrap();
+    assert!(
+        lowered.contains("\"collision\""),
+        "IR carries the collision curve"
+    );
+
+    let wx = out_dir("emit-collision-wechat");
+    let r = emit(&ir, "wechat", &wx);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let wxml = fs::read_to_string(wx.join("pages/index/index.wxml")).unwrap();
+    assert!(
+        wxml.contains("anim-collision"),
+        "mini must carry the collision animation class"
+    );
+    let wxss = fs::read_to_string(wx.join("pages/index/index.wxss")).unwrap();
+    assert!(
+        wxss.contains("anim-collision"),
+        "mini must define the collision timing function"
+    );
+
+    // An unknown animate value is still a friendly diagnostic.
+    let bad = dir.join("bad.opu");
+    fs::write(
+        &bad,
+        "app B { Column() { Container(animate: bouncy) { } } }\n",
+    )
+    .unwrap();
+    let r = compile(&bad, &dir.join("bad.opuir.json"));
+    assert!(!r.status.success());
+    assert!(String::from_utf8_lossy(&r.stderr).contains("unknown animate value"));
+}
+
+#[test]
 fn effects_and_animation_stay_absent_without_the_props() {
     // A source with no visual-effect or entry-animation props must not gain
     // effect drawing, keyframes or an animation class; `animate: none` is
