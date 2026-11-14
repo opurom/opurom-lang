@@ -1,6 +1,6 @@
 {
   "version": "0.3",
-  "count": 240,
+  "count": 260,
   "primitives": 100,
   "components": [
     [
@@ -2104,6 +2104,359 @@
         "shadow": 0,
         "color": "#FFFFFF",
         "border": "#097FEB"
+      }
+    ],
+    [
+      "Confirm",
+      "Dialog",
+      "overlay",
+      {
+        "title": "Confirm action",
+        "label": "Confirm",
+        "variant": "primary",
+        "tone": "info",
+        "padding": 24,
+        "radius": 16,
+        "shadow": 4,
+        "color": "#F4F6F9",
+        "border": "#0A71FC",
+        "animate": "ease",
+        "duration": 240
+      }
+    ],
+    [
+      "Drawer",
+      "Sidebar",
+      "overlay",
+      {
+        "label": "Drawer",
+        "value": 0,
+        "segments": 3,
+        "labels": "Home,Projects,Settings",
+        "align": "right",
+        "variant": "secondary",
+        "tone": "neutral",
+        "width": 320,
+        "padding": 16,
+        "radius": 16,
+        "shadow": 4,
+        "color": "#F4F6F9",
+        "border": "#0A71FC",
+        "animate": "ease",
+        "duration": 240
+      }
+    ],
+    [
+      "Toast",
+      "Card",
+      "feedback",
+      {
+        "label": "Success saved",
+        "variant": "primary",
+        "tone": "success",
+        "padding": 12,
+        "radius": 12,
+        "shadow": 3,
+        "color": "#F4F6F9",
+        "border": "#1FB14C",
+        "animate": "ease",
+        "duration": 3000
+      }
+    ],
+    [
+      "SuccessToast",
+      "Card",
+      "feedback",
+      {
+        "label": "Success saved",
+        "variant": "secondary",
+        "tone": "success",
+        "padding": 12,
+        "radius": 12,
+        "shadow": 3,
+        "color": "#F4F6F9",
+        "border": "#1FB14C",
+        "animate": "ease",
+        "duration": 3000
+      }
+    ],
+    [
+      "WarningToast",
+      "Card",
+      "feedback",
+      {
+        "label": "Warning pending",
+        "variant": "text",
+        "tone": "warning",
+        "padding": 12,
+        "radius": 12,
+        "shadow": 3,
+        "color": "#F4F6F9",
+        "border": "#FD960E",
+        "animate": "ease",
+        "duration": 4000
+      }
+    ],
+    [
+      "ErrorToast",
+      "Card",
+      "feedback",
+      {
+        "label": "Error failed",
+        "variant": "danger",
+        "tone": "error",
+        "padding": 12,
+        "radius": 12,
+        "shadow": 3,
+        "color": "#F4F6F9",
+        "border": "#F62B35",
+        "animate": "ease",
+        "duration": 5000
+      }
+    ],
+    [
+      "Tooltip",
+      "Tooltip",
+      "overlay",
+      {
+        "text": "Click to copy",
+        "placement": "top",
+        "variant": "text",
+        "tone": "neutral",
+        "width": 128,
+        "padding": 8,
+        "radius": 8,
+        "shadow": 3,
+        "color": "#132C5A",
+        "border": "#0DB2FF",
+        "animate": "ease",
+        "duration": 160
+      }
+    ],
+    [
+      "HoverTooltip",
+      "Tooltip",
+      "overlay",
+      {
+        "text": "More details",
+        "placement": "top",
+        "variant": "ghost",
+        "tone": "info",
+        "width": 96,
+        "padding": 8,
+        "radius": 8,
+        "shadow": 3,
+        "color": "#132C5A",
+        "border": "#0A71FC",
+        "animate": "ease",
+        "duration": 160
+      }
+    ],
+    [
+      "Notification",
+      "Card",
+      "feedback",
+      {
+        "title": "Notification",
+        "label": "You have a new message",
+        "variant": "secondary",
+        "tone": "info",
+        "padding": 16,
+        "radius": 16,
+        "shadow": 4,
+        "color": "#F4F6F9",
+        "border": "#0A71FC",
+        "animate": "ease",
+        "duration": 4000
+      }
+    ],
+    [
+      "Badge",
+      "Badge",
+      "display",
+      {
+        "label": "8",
+        "variant": "ghost",
+        "tone": "neutral",
+        "padding": 4,
+        "radius": 999,
+        "shadow": 0,
+        "color": "#F4F6F9",
+        "border": "#132C5A",
+        "animate": "none",
+        "duration": 0
+      }
+    ],
+    [
+      "StatusBadge",
+      "Badge",
+      "display",
+      {
+        "label": "Active",
+        "variant": "secondary",
+        "tone": "success",
+        "padding": 4,
+        "radius": 999,
+        "shadow": 0,
+        "color": "#1FB14C",
+        "border": "#1FB14C",
+        "animate": "ease",
+        "duration": 240
+      }
+    ],
+    [
+      "ProgressBar",
+      "Progress",
+      "display",
+      {
+        "value": 50,
+        "variant": "primary",
+        "tone": "info",
+        "height": 8,
+        "radius": 8,
+        "shadow": 0,
+        "color": "#0A71FC",
+        "border": "#F4F6F9",
+        "animate": "ease",
+        "duration": 400
+      }
+    ],
+    [
+      "Progress",
+      "Progress",
+      "display",
+      {
+        "value": 25,
+        "variant": "secondary",
+        "tone": "info",
+        "height": 8,
+        "radius": 8,
+        "shadow": 0,
+        "color": "#0DB2FF",
+        "border": "#F4F6F9",
+        "animate": "ease",
+        "duration": 400
+      }
+    ],
+    [
+      "RadialProgress",
+      "ProgressRing",
+      "display",
+      {
+        "value": 75,
+        "segments": 4,
+        "variant": "fab",
+        "tone": "info",
+        "size": 48,
+        "radius": 999,
+        "shadow": 0,
+        "color": "#0A71FC",
+        "border": "#F4F6F9",
+        "animate": "ease",
+        "duration": 500
+      }
+    ],
+    [
+      "Spinner",
+      "Spinner",
+      "display",
+      {
+        "variant": "ghost",
+        "tone": "info",
+        "size": 24,
+        "radius": 999,
+        "shadow": 0,
+        "color": "#0A71FC",
+        "border": "#F4F6F9",
+        "animate": "ease",
+        "duration": 800
+      }
+    ],
+    [
+      "LoadingSpinner",
+      "Spinner",
+      "display",
+      {
+        "label": "Loading",
+        "variant": "ghost",
+        "tone": "info",
+        "size": 32,
+        "radius": 999,
+        "shadow": 0,
+        "color": "#0DB2FF",
+        "border": "#F4F6F9",
+        "animate": "ease",
+        "duration": 800
+      }
+    ],
+    [
+      "Skeleton",
+      "Container",
+      "display",
+      {
+        "label": "Loading",
+        "variant": "secondary",
+        "tone": "neutral",
+        "width": 160,
+        "height": 16,
+        "radius": 8,
+        "shadow": 0,
+        "color": "#F4F6F9",
+        "border": "#F4F6F9",
+        "opacity": 0.6,
+        "animate": "ease",
+        "duration": 1200
+      }
+    ],
+    [
+      "SkeletonCard",
+      "Card",
+      "display",
+      {
+        "label": "Loading",
+        "variant": "ghost",
+        "tone": "neutral",
+        "padding": 16,
+        "radius": 12,
+        "shadow": 0,
+        "color": "#F4F6F9",
+        "border": "#F4F6F9",
+        "animate": "ease",
+        "duration": 1200
+      }
+    ],
+    [
+      "Avatar",
+      "Avatar",
+      "display",
+      {
+        "label": "JD",
+        "variant": "fab",
+        "tone": "info",
+        "size": 40,
+        "radius": 999,
+        "shadow": 2,
+        "color": "#0A71FC",
+        "border": "#0DB2FF",
+        "animate": "ease",
+        "duration": 240
+      }
+    ],
+    [
+      "StatusAvatar",
+      "Avatar",
+      "display",
+      {
+        "label": "AB",
+        "variant": "secondary",
+        "tone": "success",
+        "size": 40,
+        "radius": 999,
+        "shadow": 2,
+        "color": "#1FB14C",
+        "border": "#1FB14C",
+        "animate": "ease",
+        "duration": 240
       }
     ]
   ]
