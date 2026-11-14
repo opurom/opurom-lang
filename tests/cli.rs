@@ -484,6 +484,106 @@ fn features_additive_lower_to_the_documented_ir() {
 }
 
 #[test]
+fn gesture_and_navigation_lower_to_the_documented_ir() {
+    let dir = out_dir("gesture-nav");
+
+    // A gesture prop names the event that carries the handler.
+    let gesture_src = dir.join("gestures.opu");
+    fs::write(
+        &gesture_src,
+        r#"app GestureDemo {
+  state count = 0
+  Column(gap: 8) {
+    Button("Double", gesture: doubleTap) { count += 1 }
+    Button("Long", gesture: longPress) { count += 2 }
+    Button("Drag", gesture: drag) { count += 3 }
+    Button("Plain") { count += 4 }
+    Button("NoHandler", gesture: tap)
+  }
+}
+"#,
+    )
+    .unwrap();
+    let ir = compile_ok(&gesture_src);
+    let nodes = nodes_of(&ir);
+    assert_eq!(nodes.len(), 6);
+    assert_eq!(
+        nodes[1]["events"]["doubleTap"],
+        json!({"op": "add", "target": "count", "value": 1})
+    );
+    assert_eq!(
+        nodes[2]["events"]["longPress"],
+        json!({"op": "add", "target": "count", "value": 2})
+    );
+    assert_eq!(
+        nodes[3]["events"]["drag"],
+        json!({"op": "add", "target": "count", "value": 3})
+    );
+    assert_eq!(
+        nodes[4]["events"]["tap"],
+        json!({"op": "add", "target": "count", "value": 4})
+    );
+    // A gesture with no handler still binds a legal no-op action.
+    assert_eq!(nodes[5]["events"]["tap"], json!({"actions": []}));
+    // `gesture` is a binding, not a visual prop.
+    assert!(nodes[1]["props"].get("gesture").is_none());
+    assert!(nodes[0]["events"].as_object().unwrap().is_empty());
+
+    // `page` declarations and a `push:` handler lower to the nav action.
+    let nav_src = dir.join("navigation.opu");
+    fs::write(
+        &nav_src,
+        r#"app NavDemo {
+  page Home
+  page Settings
+  Button("Go") { push: Settings }
+}
+"#,
+    )
+    .unwrap();
+    let ir = compile_ok(&nav_src);
+    assert_eq!(ir["pages"], json!(["Home", "Settings"]));
+    assert_eq!(
+        nodes_of(&ir)[0]["events"]["tap"],
+        json!({"op": "push", "target": "Settings"})
+    );
+
+    // An unknown gesture value is a friendly diagnostic.
+    let bad_gesture = dir.join("bad_gesture.opu");
+    fs::write(
+        &bad_gesture,
+        "app Bad {\n  Text(\"x\", gesture: bounce)\n}\n",
+    )
+    .unwrap();
+    let r = bin()
+        .arg("check")
+        .arg(&bad_gesture)
+        .output()
+        .expect("run check");
+    assert_eq!(r.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(err.contains("unknown gesture value 'bounce'"), "{err}");
+    assert_diag(&err, &bad_gesture);
+
+    // An unknown page name is a friendly diagnostic.
+    let bad_page = dir.join("bad_page.opu");
+    fs::write(
+        &bad_page,
+        "app Bad {\n  page Home\n  Button(\"Go\") { push: Missing }\n}\n",
+    )
+    .unwrap();
+    let r = bin()
+        .arg("check")
+        .arg(&bad_page)
+        .output()
+        .expect("run check");
+    assert_eq!(r.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(err.contains("unknown page 'Missing'"), "{err}");
+    assert_diag(&err, &bad_page);
+}
+
+#[test]
 fn targets_lists_all_nine_emitters() {
     let r = bin().arg("targets").output().expect("run targets");
     assert!(r.status.success());

@@ -62,6 +62,9 @@ pub enum StmtKind {
     Sub(Value, Pos),
     Set(Value, Pos),
     Toggle,
+    /// `push: PageName` navigates to a declared page. The page name is the
+    /// statement target.
+    Push,
 }
 
 #[derive(Clone, Debug)]
@@ -180,6 +183,15 @@ pub struct ThemeDecl {
     pub pos: Pos,
 }
 
+/// A named route registered by `page Name;` inside the app body. Pages are the
+/// targets a `push` action navigates to; the UI for each page is supplied by
+/// the runtime consumer.
+#[derive(Clone, Debug)]
+pub struct PageDecl {
+    pub name: String,
+    pub pos: Pos,
+}
+
 #[derive(Clone, Debug)]
 pub struct FieldDecl {
     pub name: String,
@@ -221,6 +233,7 @@ pub struct Program {
     pub theme: Option<ThemeDecl>,
     pub models: Vec<ModelDecl>,
     pub apis: Vec<ApiDecl>,
+    pub pages: Vec<PageDecl>,
 }
 
 fn is_kind(t: &Token) -> bool {
@@ -652,6 +665,22 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self) -> DResult<Stmt> {
+        // `push: PageName` is a navigation action; the page name is the target.
+        let colon_next = matches!(
+            self.toks.get(self.i + 1).map(|t| &t.tok),
+            Some(Tok::Sym(s)) if s == ":"
+        );
+        if self.word("push") && colon_next {
+            self.bump();
+            self.bump();
+            let (target, ppos) = self.expect_ident("a page name")?;
+            self.eat_sym(";");
+            return Ok(Stmt {
+                target,
+                pos: ppos,
+                kind: StmtKind::Push,
+            });
+        }
         let start = self.pos();
         let (target, _) = self.expect_ident("a state name")?;
         let kind = if self.eat_sym("+=") {
@@ -1353,6 +1382,14 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// `page Name;` registers a named route that a `push` action can target.
+    fn page_decl(&mut self) -> DResult<PageDecl> {
+        self.bump();
+        let (name, pos) = self.expect_ident("a page name")?;
+        self.eat_sym(";");
+        Ok(PageDecl { name, pos })
+    }
+
     fn api_decl(&mut self) -> DResult<ApiDecl> {
         let start = self.pos();
         self.bump();
@@ -1499,6 +1536,7 @@ fn parse_with_options(
     let mut theme = None;
     let mut models = Vec::new();
     let mut apis = Vec::new();
+    let mut pages = Vec::new();
     loop {
         p.eat_sym(";");
         if p.eat_sym("}") {
@@ -1563,6 +1601,31 @@ fn parse_with_options(
         }
         if p.word("model") {
             models.push(p.model_decl()?);
+            continue;
+        }
+        if p.word("page") {
+            if !p.allow_nodes {
+                return Err(p.err(
+                    "imported module may declare only state, model, api, theme and imports",
+                    "move page declarations into the importing app",
+                ));
+            }
+            let decl = p.page_decl()?;
+            if pages.iter().any(|pg: &PageDecl| pg.name == decl.name) {
+                let names = pages
+                    .iter()
+                    .map(|pg| pg.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(Diagnostic::new(
+                    p.path,
+                    decl.pos.line,
+                    decl.pos.col,
+                    format!("duplicate page '{}'", decl.name),
+                    format!("declare every page once; declared pages are: {names}"),
+                ));
+            }
+            pages.push(decl);
             continue;
         }
         if p.word("api") {
@@ -1637,6 +1700,7 @@ fn parse_with_options(
         theme,
         models,
         apis,
+        pages,
     })
 }
 
