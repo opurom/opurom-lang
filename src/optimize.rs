@@ -9,8 +9,17 @@ use crate::emit::bad_ir;
 use crate::lower::{interp_parts, Part};
 
 const IR_FIELDS: &[&str] = &[
-    "ir", "app", "state", "tree", "theme", "models", "api", "imports", "computed",
-    "initialRoute", "routes",
+    "ir",
+    "app",
+    "state",
+    "tree",
+    "theme",
+    "models",
+    "api",
+    "imports",
+    "computed",
+    "initialRoute",
+    "routes",
 ];
 const ROUTE_FIELDS: &[&str] = &["tree", "title"];
 const STATE_FIELDS: &[&str] = &["name", "type", "init"];
@@ -113,16 +122,16 @@ fn validate(ir: &Json, path: &str) -> DResult<()> {
     match (o.get("tree"), routes) {
         (Some(tree), None) => validate_node(tree, path)?,
         (None, Some(routes)) => {
-            let map = routes.as_object().ok_or_else(|| {
-                bad_ir(path, "IR 'routes' must be an object of route entries")
-            })?;
+            let map = routes
+                .as_object()
+                .ok_or_else(|| bad_ir(path, "IR 'routes' must be an object of route entries"))?;
             if map.is_empty() {
                 return Err(bad_ir(path, "IR 'routes' must declare at least one route"));
             }
             for (name, entry) in map {
-                let fields = entry.as_object().ok_or_else(|| {
-                    bad_ir(path, format!("IR route '{name}' must be an object"))
-                })?;
+                let fields = entry
+                    .as_object()
+                    .ok_or_else(|| bad_ir(path, format!("IR route '{name}' must be an object")))?;
                 for key in fields.keys() {
                     if !ROUTE_FIELDS.contains(&key.as_str()) {
                         return Err(bad_ir(
@@ -144,9 +153,9 @@ fn validate(ir: &Json, path: &str) -> DResult<()> {
                     }
                 }
             }
-            let initial = o.get("initialRoute").ok_or_else(|| {
-                bad_ir(path, "multi-page IR must declare 'initialRoute'")
-            })?;
+            let initial = o
+                .get("initialRoute")
+                .ok_or_else(|| bad_ir(path, "multi-page IR must declare 'initialRoute'"))?;
             match initial.as_str() {
                 Some(name) if map.contains_key(name) => {}
                 Some(name) => {
@@ -156,7 +165,10 @@ fn validate(ir: &Json, path: &str) -> DResult<()> {
                     ))
                 }
                 None => {
-                    return Err(bad_ir(path, "IR 'initialRoute' must be a route name string"))
+                    return Err(bad_ir(
+                        path,
+                        "IR 'initialRoute' must be a route name string",
+                    ))
                 }
             }
         }
