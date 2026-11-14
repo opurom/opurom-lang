@@ -2205,7 +2205,10 @@ fn emit_web(
     let html = format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>{title}</title>\n<style>body {{ font-family: sans-serif; margin: 0; padding: 16px; }} canvas {{ background: #fff; border: 1px solid #ddd; }} #inputs {{ margin-top: 12px; }}{sr_css}{anim_css}</style>\n</head>\n<body>\n<canvas id=\"app\" width=\"800\" height=\"600\"{canvas_cls}></canvas>\n<div id=\"inputs\">\n{input_html}</div>\n<div id=\"a11y\" class=\"sr-only\">{a11y_mirror}</div>\n<script src=\"app.js\"></script>\n</body>\n</html>\n"
     );
-    let html = html.replace("font-family: sans-serif", &format!("font-family: {font_stack}"));
+    let html = html.replace(
+        "font-family: sans-serif",
+        &format!("font-family: {font_stack}"),
+    );
     write(out, "index.html", &html, ir_path)
 }
 
