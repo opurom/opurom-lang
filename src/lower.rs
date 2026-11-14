@@ -559,9 +559,9 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             tap: false,
         },
         "Grid" => KindInfo {
-            props: &["columns"],
+            props: &["columns", "compactColumns"],
             required: &["columns"],
-            numeric: &["columns"],
+            numeric: &["columns", "compactColumns"],
             positional: None,
             children: true,
             tap: false,

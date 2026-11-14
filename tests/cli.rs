@@ -5275,3 +5275,31 @@ fn image_fit_and_radius_lower_to_the_canonical_props() {
         "no fit without the prop"
     );
 }
+
+#[test]
+fn grid_compact_columns_lower_as_a_numeric_prop() {
+    let dir = out_dir("grid-compact");
+    let src = dir.join("grid.opu");
+    fs::write(
+        &src,
+        "app GridApp { Column { Grid(columns: 4, compactColumns: 2) { Text(\"a\") } } }\n",
+    )
+    .unwrap();
+    let doc = compile_ok(&src);
+    let grid = nodes_of(&doc)
+        .into_iter()
+        .find(|n| n["kind"] == "Grid")
+        .expect("a Grid node is emitted");
+    assert_eq!(grid["props"]["columns"], 4);
+    assert_eq!(grid["props"]["compactColumns"], 2);
+
+    let bad = dir.join("bad.opu");
+    fs::write(
+        &bad,
+        "app Bad { Column { Grid(columns: 4, compactColumns: \"two\") { Text(\"a\") } } }\n",
+    )
+    .unwrap();
+    let r = compile(&bad, &dir.join("bad.opuir.json"));
+    assert!(!r.status.success(), "a non-numeric compactColumns must be rejected");
+    assert!(String::from_utf8_lossy(&r.stderr).contains("compactColumns"));
+}
