@@ -175,6 +175,7 @@ pub struct ThemeDecl {
     pub accent: Option<String>,
     pub radius: Option<i64>,
     pub font_scale: Option<f64>,
+    pub transition: Option<String>,
     pub pos: Pos,
 }
 
@@ -1122,6 +1123,7 @@ impl<'a> Parser<'a> {
             accent: None,
             radius: None,
             font_scale: None,
+            transition: None,
             pos: start,
         };
         loop {
@@ -1212,13 +1214,38 @@ impl<'a> Parser<'a> {
                     };
                     decl.font_scale = Some(fs);
                 }
+                "transition" => {
+                    let (v, vp) = self.value()?;
+                    let kind = match v {
+                        Value::Ident(s) => s,
+                        _ => {
+                            return Err(Diagnostic::new(
+                                self.path,
+                                vp.line,
+                                vp.col,
+                                "'transition' expects slide, fade or scale",
+                                "write 'transition: slide'",
+                            ))
+                        }
+                    };
+                    if !matches!(kind.as_str(), "slide" | "fade" | "scale") {
+                        return Err(Diagnostic::new(
+                            self.path,
+                            vp.line,
+                            vp.col,
+                            format!("unknown transition '{kind}'"),
+                            "use 'slide', 'fade' or 'scale'",
+                        ));
+                    }
+                    decl.transition = Some(kind);
+                }
                 other => {
                     return Err(Diagnostic::new(
                         self.path,
                         kp.line,
                         kp.col,
                         format!("unknown theme key '{other}'"),
-                        "theme accepts: mode, accent, radius, fontScale",
+                        "theme accepts: mode, accent, radius, fontScale, transition",
                     ));
                 }
             }

@@ -2333,12 +2333,16 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         }
         None => json!({"mode": "system", "accent": "#097FEB", "radius": 12}),
     };
+    let transition = program.theme.as_ref().and_then(|t| t.transition.clone());
     let mut out = JsonMap::new();
     out.insert("ir".to_string(), json!("0.1"));
     out.insert("app".to_string(), json!(program.app));
     out.insert("state".to_string(), Json::Array(state_json));
     out.insert("tree".to_string(), tree.clone());
     out.insert("theme".to_string(), theme);
+    if let Some(tr) = transition {
+        out.insert("transition".to_string(), json!(tr));
+    }
     if !models.is_empty() {
         out.insert("models".to_string(), Json::Array(models));
     }
