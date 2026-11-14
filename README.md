@@ -426,6 +426,12 @@ the interactive UI and async IR plus `when`, `unless`, `computed` and `list` sta
 `Icon` nodes render the canonical 24x24 stroke path on every target: the `web` target strokes it
 with Canvas 2D `Path2D`, and the six mini targets emit an inline SVG data URI on an `<image>`
 element, so the glyph matches the native renderer instead of showing its name as text.
+Nodes bound to `gesture: doubleTap|longPress|drag` carry the platform's touch-start/move/end
+directives and a `data-gid` tag; one generated recognizer in `index.js` reads the event's own
+`timeStamp` (no wall clock) to classify a moved touch as `drag`, a stationary hold of at least
+500 ms as `longPress`, and two short taps within 300 ms as `doubleTap`, then calls the node's
+bound action chain. Native `tap` keeps its own directive, so pages without gestures are
+byte-identical to the previous output.
 
 A node with an explicit `role` prop carries that role to assistive technology on every target.
 The six mini targets emit `aria-role="{role}"` plus `aria-label` from the node's `label`, `value`,

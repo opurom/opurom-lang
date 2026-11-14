@@ -121,6 +121,9 @@ struct Platform {
     cond_attr: &'static str,
     tap_attr: &'static str,
     input_attr: &'static str,
+    touch_start_attr: &'static str,
+    touch_move_attr: &'static str,
+    touch_end_attr: &'static str,
     state_set: &'static str,
     request_api: &'static str,
     title_key: &'static str,
@@ -136,6 +139,9 @@ const PLATFORMS: &[Platform] = &[
         style_ext: "wxss",
         tap_attr: "bindtap",
         input_attr: "bindinput",
+        touch_start_attr: "bindtouchstart",
+        touch_move_attr: "bindtouchmove",
+        touch_end_attr: "bindtouchend",
         state_set: "setData",
         request_api: "wx.request",
         title_key: "navigationBarTitleText",
@@ -149,6 +155,9 @@ const PLATFORMS: &[Platform] = &[
         style_ext: "acss",
         tap_attr: "onTap",
         input_attr: "onInput",
+        touch_start_attr: "onTouchStart",
+        touch_move_attr: "onTouchMove",
+        touch_end_attr: "onTouchEnd",
         state_set: "setData",
         request_api: "my.request",
         title_key: "defaultTitle",
@@ -162,6 +171,9 @@ const PLATFORMS: &[Platform] = &[
         style_ext: "qss",
         tap_attr: "bindtap",
         input_attr: "bindinput",
+        touch_start_attr: "bindtouchstart",
+        touch_move_attr: "bindtouchmove",
+        touch_end_attr: "bindtouchend",
         state_set: "setData",
         request_api: "qq.request",
         title_key: "navigationBarTitleText",
@@ -175,6 +187,9 @@ const PLATFORMS: &[Platform] = &[
         style_ext: "ttss",
         tap_attr: "bindtap",
         input_attr: "bindinput",
+        touch_start_attr: "bindtouchstart",
+        touch_move_attr: "bindtouchmove",
+        touch_end_attr: "bindtouchend",
         state_set: "setData",
         request_api: "tt.request",
         title_key: "navigationBarTitleText",
@@ -188,6 +203,9 @@ const PLATFORMS: &[Platform] = &[
         style_ext: "css",
         tap_attr: "bindtap",
         input_attr: "bindinput",
+        touch_start_attr: "bindtouchstart",
+        touch_move_attr: "bindtouchmove",
+        touch_end_attr: "bindtouchend",
         state_set: "setData",
         request_api: "swan.request",
         title_key: "navigationBarTitleText",
@@ -201,6 +219,9 @@ const PLATFORMS: &[Platform] = &[
         style_ext: "css",
         tap_attr: "bindtap",
         input_attr: "bindinput",
+        touch_start_attr: "bindtouchstart",
+        touch_move_attr: "bindtouchmove",
+        touch_end_attr: "bindtouchend",
         state_set: "setData",
         request_api: "ks.request",
         title_key: "navigationBarTitleText",
@@ -2405,7 +2426,7 @@ fn markup_node(
     // Mini runtimes read `aria-role`; an accessible name comes from the first
     // label/value/title/name prop. Only an explicit role produces attributes,
     // so a node without one stays byte-identical to the previous output.
-    let a11y_attr = match n.props.get("role").and_then(Json::as_str) {
+    let mut a11y_attr = match n.props.get("role").and_then(Json::as_str) {
         Some(role) => {
             let label = fallback_text(n);
             let label_attr = if label.is_empty() {
@@ -2417,6 +2438,17 @@ fn markup_node(
         }
         None => String::new(),
     };
+    // A node bound to doubleTap/longPress/drag carries the platform's touch
+    // trio plus its node id; the generated recognizer dispatches by the id.
+    if n.events
+        .keys()
+        .any(|k| matches!(k.as_str(), "doubleTap" | "longPress" | "drag"))
+    {
+        a11y_attr.push_str(&format!(
+            " {}=\"onGestureStart\" {}=\"onGestureMove\" {}=\"onGestureEnd\" data-gid=\"{id}\"",
+            p.touch_start_attr, p.touch_move_attr, p.touch_end_attr
+        ));
+    }
     match n.kind.as_str() {
         "Text" => {
             let value = markup_interp(&prop_str(&n.props, "value", ""), p, ir_path)?;
@@ -2783,6 +2815,59 @@ fn emit_mini(
                 n.id, p.state_set, target_name, computed_call
             ));
         }
+        for (event, method) in [
+            ("doubleTap", "onDoubleTap"),
+            ("longPress", "onLongPress"),
+            ("drag", "onDrag"),
+        ] {
+            if let Some(action) = n.events.get(event) {
+                let effect_code = mini_effects(&event_effects(action, ir_path)?, p, ir_path)?;
+                let code = mini_action_chain(action, p, ir_path)?;
+                methods.push_str(&format!(
+                    "  {method}{}: async function () {{ {effect_code}{code}{computed_call} }},\n",
+                    n.id
+                ));
+            }
+        }
+    }
+    // The recognizer is emitted only when at least one node binds a gesture.
+    // It uses the event's own timeStamp (no wall clock) and one touch point,
+    // so a tap that never moved becomes doubleTap/longPress, while a moved
+    // touch becomes drag. Native tap keeps its own bindtap handler.
+    let has_gestures = nodes.iter().any(|n| {
+        n.events
+            .keys()
+            .any(|k| matches!(k.as_str(), "doubleTap" | "longPress" | "drag"))
+    });
+    if has_gestures {
+        methods.push_str(
+            "  onGestureStart: function (e) {\n\
+             \x20   const g = this._gesture || (this._gesture = {});\n\
+             \x20   const id = e.currentTarget.dataset.gid;\n\
+             \x20   const t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || {};\n\
+             \x20   const prev = g[id];\n\
+             \x20   g[id] = { x: t.clientX || 0, y: t.clientY || 0, t: e.timeStamp || 0, moved: false,\n\
+             \x20              lastTap: prev ? prev.lastTap : undefined };\n\
+             \x20 },\n\
+             \x20 onGestureMove: function (e) {\n\
+             \x20   const g = this._gesture || {}; const s = g[e.currentTarget.dataset.gid];\n\
+             \x20   if (!s) return;\n\
+             \x20   const t = (e.touches && e.touches[0]) || {};\n\
+             \x20   if (Math.abs((t.clientX || 0) - s.x) > 10 || Math.abs((t.clientY || 0) - s.y) > 10) s.moved = true;\n\
+             \x20 },\n\
+             \x20 onGestureEnd: function (e) {\n\
+             \x20   const g = this._gesture || {}; const id = e.currentTarget.dataset.gid;\n\
+             \x20   const s = g[id]; if (!s) return;\n\
+             \x20   const now = e.timeStamp || 0; const dt = now - s.t;\n\
+             \x20   let name = null;\n\
+             \x20   if (s.moved) name = 'onDrag' + id;\n\
+             \x20   else if (dt >= 500) name = 'onLongPress' + id;\n\
+             \x20   else if (s.lastTap !== undefined && now - s.lastTap <= 300) { name = 'onDoubleTap' + id; s.lastTap = undefined; }\n\
+             \x20   else s.lastTap = now;\n\
+             \x20   const handler = name && this[name];\n\
+             \x20   if (handler) handler.call(this);\n\
+             \x20 },\n",
+        );
     }
     let index_js = format!(
         "// Generated by opuromc for {}; straight-line code, no IR interpreter.\nPage({{\n  data: {},\n{}}});\n",

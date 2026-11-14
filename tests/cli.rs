@@ -1067,6 +1067,67 @@ fn extended_primitives_render_structured_mini_markup() {
 }
 
 #[test]
+fn mini_targets_bind_gestures_with_a_deterministic_recognizer() {
+    let dir = out_dir("emit-gesture-mini");
+    let ir = dir.join("gesture.opuir.json");
+    let src = dir.join("gesture.opu");
+    fs::write(
+        &src,
+        "app MG {\n  state n: int = 0;\n  Column(gap: 8) {\n    Button(\"D\", gesture: doubleTap) { n += 1 }\n    Button(\"L\", gesture: longPress) { n += 5 }\n    Button(\"G\", gesture: drag) { n += 10 }\n  }\n}\n",
+    )
+    .unwrap();
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    for (target, ext, start_attr) in [
+        ("wechat", "wxml", "bindtouchstart"),
+        ("alipay", "axml", "onTouchStart"),
+        ("qq", "qml", "bindtouchstart"),
+        ("douyin", "ttml", "bindtouchstart"),
+        ("baidu", "swan", "bindtouchstart"),
+        ("kuaishou", "ksml", "bindtouchstart"),
+    ] {
+        let out = out_dir(&format!("emit-gesture-mini-{target}"));
+        let r = emit(&ir, target, &out);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        let markup = fs::read_to_string(out.join(format!("pages/index/index.{ext}"))).unwrap();
+        assert!(
+            markup.contains(&format!("{start_attr}=\"onGestureStart\"")),
+            "{target} binds touch start"
+        );
+        assert!(markup.contains("data-gid=\"1\""), "{target} tags node id");
+
+        let js = fs::read_to_string(out.join("pages/index/index.js")).unwrap();
+        for method in [
+            "onDoubleTap1:",
+            "onLongPress2:",
+            "onDrag3:",
+            "onGestureStart:",
+            "onGestureMove:",
+            "onGestureEnd:",
+        ] {
+            assert!(js.contains(method), "{target} generates {method}");
+        }
+        // The recognizer uses the event's own timeStamp, never a wall clock.
+        assert!(
+            !js.contains("Date.now"),
+            "{target} recognizer is clock-free"
+        );
+        assert!(js.contains("e.timeStamp"), "{target} uses event timeStamp");
+        let check = Command::new("node")
+            .arg("--check")
+            .arg(out.join("pages/index/index.js"))
+            .output()
+            .expect("run node --check");
+        assert!(
+            check.status.success(),
+            "{target} JS invalid: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+    }
+}
+
+#[test]
 fn effects_and_animation_stay_absent_without_the_props() {
     // A source with no visual-effect or entry-animation props must not gain
     // effect drawing, keyframes or an animation class; `animate: none` is
