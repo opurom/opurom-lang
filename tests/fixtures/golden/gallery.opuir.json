@@ -638,9 +638,12 @@
                         "id": 58,
                         "kind": "Image",
                         "props": {
+                          "border": "#D9E2EF",
+                          "color": "#FFFFFF",
                           "height": 64,
                           "label": "media/Image",
-                          "src": "opurom-logo.png",
+                          "radius": 10,
+                          "src": "opurom-examples/assets/opurom-logo.png",
                           "width": 64
                         }
                       },
