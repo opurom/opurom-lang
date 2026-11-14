@@ -2454,6 +2454,12 @@ fn contrast_colour(hex: &str) -> String {
 /// Whether a kind draws a foreground text run, so `highContrast` recolours its
 /// glyphs. Mirrors the renderer's text-colour rule for Text and the primitive
 /// kinds whose mini markup renders a `<text>` label.
+/// Mirrors the web-dom emitter's elevated-glass set; these surfaces use the
+/// desktop blur while every other glass node uses the compact blur.
+fn is_elevated_glass_kind(kind: &str) -> bool {
+    matches!(kind, "Dialog" | "Menu" | "Drawer" | "Dock" | "Modal")
+}
+
 fn is_text_kind(kind: &str) -> bool {
     matches!(
         kind,
@@ -2475,6 +2481,7 @@ fn style_of(
     background: bool,
     justified: bool,
     dark: bool,
+    elevated: bool,
 ) -> String {
     let mut parts = Vec::new();
     for k in ["gap", "padding", "width", "height", "radius", "size"] {
@@ -2518,8 +2525,8 @@ fn style_of(
     } else if let Some(c) = bg {
         parts.push(format!("background-color:{c}"));
     } else if glass {
-        // Normative Liquid Glass lamina (the default UI token values 2.9): dark swaps
-        // only the tint, the blur chain stays identical across modes.
+        // the default UI rules framework rules is the mandatory override:
+        // dark swaps only the fill tint, every other channel is mode-independent.
         let frost = if dark {
             "rgba(30, 35, 46, 0.38)"
         } else {
@@ -2533,21 +2540,23 @@ fn style_of(
             "box-shadow:0 {shadow}px {shadow}px rgba(0, 0, 0, 0.15)"
         ));
     } else if glass {
-        let edge = if dark {
-            "rgba(255, 255, 255, 0.22)"
-        } else {
-            "rgba(255, 255, 255, 0.6)"
-        };
-        parts.push(format!(
-            "box-shadow:0 6px 22px rgba(17, 24, 39, 0.12), 0 1px 3px rgba(17, 24, 39, 0.08), inset 0 1px 0 {edge}, inset 0 -12px 28px rgba(17, 24, 39, 0.07)"
-        ));
+        // Inline the v2 tier2 channel: WXSS/ACSS cannot resolve the DOM
+        // emitter's custom properties, so the composed value is emitted here.
+        parts.push(
+            "box-shadow:0 2px 8px rgba(17, 24, 39, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.75), inset 0 -1px 0 rgba(0, 0, 0, 0.06)"
+                .to_string(),
+        );
     }
     if glass {
-        parts.push(
-            "backdrop-filter:blur(2px) saturate(1.5) contrast(1.12) brightness(1.04)".to_string(),
-        );
+        // Elevated surfaces use the desktop blur, all others the compact blur.
+        let blur = if elevated {
+            "blur(20px) saturate(160%)"
+        } else {
+            "blur(12px) saturate(140%)"
+        };
+        parts.push(format!("backdrop-filter:{blur}"));
         let glass_border = if dark {
-            "rgba(255, 255, 255, 0.14)"
+            "rgba(255, 255, 255, 0.12)"
         } else {
             "rgba(255, 255, 255, 0.5)"
         };
@@ -2636,7 +2645,7 @@ fn markup_node(
 ) -> DResult<()> {
     let pad = "  ".repeat(depth);
     let id = n.id;
-    let style = style_of(&n.props, n.kind == "Container", is_text_kind(&n.kind), dark);
+    let style = style_of(&n.props, n.kind == "Container", is_text_kind(&n.kind), dark, is_elevated_glass_kind(&n.kind));
     let anim = anim_class(&n.props);
     let style_attr = if style.is_empty() {
         String::new()
@@ -2759,7 +2768,7 @@ fn markup_node(
                         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"{path}\"/></svg>"
                     );
                     let b64 = base64_encode(&svg);
-                    let mut style = style_of(&n.props, false, is_text_kind(&n.kind), dark);
+                    let mut style = style_of(&n.props, false, is_text_kind(&n.kind), dark, is_elevated_glass_kind(&n.kind));
                     if !style.contains("width:") {
                         style = if style.is_empty() {
                             "width:16px;height:16px".to_string()
@@ -3056,7 +3065,7 @@ fn emit_mini(
         "page {{ background-color: {stage}; }}\n.col {{ display: flex; flex-direction: column; }}\n.row {{ display: flex; flex-direction: row; }}\n.grid {{ display: flex; flex-direction: row; flex-wrap: wrap; }}\n@keyframes opurom-entry {{ from {{ transform: scale(0); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}\n.anim-entry {{ transform-origin: center; animation: opurom-entry 480ms ease-out both; }}\n.anim-spring {{ animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }}\n.anim-ease {{ animation-timing-function: ease-out; }}\n.anim-inertia {{ animation-timing-function: ease-in-out; }}\n.anim-collision {{ animation-timing-function: cubic-bezier(0.5, 1.6, 0.4, 1); }}\n",
     ));
     for n in &nodes {
-        let s = style_of(&n.props, n.kind == "Container", is_text_kind(&n.kind), dark);
+        let s = style_of(&n.props, n.kind == "Container", is_text_kind(&n.kind), dark, is_elevated_glass_kind(&n.kind));
         if !s.is_empty() {
             style.push_str(&format!(".n{} {{ {}; }}\n", n.id, s));
         }

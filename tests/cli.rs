@@ -5621,9 +5621,10 @@ fn mini_program_stage_falls_back_and_rejects_injected_colours() {
 
 #[test]
 fn mini_program_glass_uses_the_normative_lamina_in_both_modes() {
-    // the default UI token values 2.9 is normative: the blur chain, translucent lamina
-    // and specular/interior edges must match web-dom on every mini-program
-    // target, with only the lamina tint and edge colour changing for dark mode.
+    // the default UI rules framework rules overrides the base glass tokens.
+    // Mini-program stylesheets cannot resolve the DOM emitter's custom
+    // properties, so the composed v2 channels are inlined at compile time and
+    // must match web-dom on every target. Dark swaps only fill and border.
     for (target, style_ext) in [
         ("wechat", "wxss"),
         ("alipay", "acss"),
@@ -5636,7 +5637,7 @@ fn mini_program_glass_uses_the_normative_lamina_in_both_modes() {
         let src = dir.join("glass.opu");
         fs::write(
             &src,
-            "app Glass { theme { mode: light, accent: \"#0F766E\", radius: 8 } Column { Card(glass: true) { Text(\"hi\") } } }\n",
+            "app Glass { theme { mode: light, accent: \"#0F766E\", radius: 8 } Column { Card(glass: true) { Text(\"hi\") } Modal(title: \"sheet\", glass: true) { Text(\"sheet\") } } }\n",
         )
         .unwrap();
         let ir = dir.join("glass.opuir.json");
@@ -5645,27 +5646,31 @@ fn mini_program_glass_uses_the_normative_lamina_in_both_modes() {
         assert!(emit(&ir, target, &out).status.success(), "{target} emit");
         let css = fs::read_to_string(out.join(format!("pages/index/index.{style_ext}"))).unwrap();
         assert!(
-            css.contains("backdrop-filter:blur(2px) saturate(1.5) contrast(1.12) brightness(1.04)"),
-            "{target} must use the normative blur chain"
+            css.contains("backdrop-filter:blur(12px) saturate(140%)"),
+            "{target} must use the compact blur"
+        );
+        assert!(
+            css.contains("backdrop-filter:blur(20px) saturate(160%)"),
+            "{target} elevated glass must use the desktop blur"
         );
         assert!(
             css.contains("background:rgba(255, 255, 255, 0.42)"),
             "{target} light lamina"
         );
         assert!(
-            css.contains("inset 0 1px 0 rgba(255, 255, 255, 0.6)"),
-            "{target} specular top edge"
+            css.contains("0 2px 8px rgba(17, 24, 39, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.75), inset 0 -1px 0 rgba(0, 0, 0, 0.06)"),
+            "{target} v2 tier2 shadow, highlight and thickness"
         );
         assert!(
-            css.contains("inset 0 -12px 28px rgba(17, 24, 39, 0.07)"),
-            "{target} lower interior edge"
+            css.contains("border:1px solid rgba(255, 255, 255, 0.5)"),
+            "{target} light glass border"
         );
         assert!(
-            !css.contains("blur(6px)"),
-            "{target} must not use the legacy frost"
+            !css.contains("blur(6px)") && !css.contains("blur(2px) saturate(1.5)"),
+            "{target} must not use a legacy frost"
         );
 
-        // A dark theme swaps the lamina, border and specular edge, not the blur.
+        // A dark theme swaps the lamina and border, leaving blur and edges.
         let dark = dir.join("dark.opuir.json");
         let mut doc: serde_json::Value = serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap();
         doc["theme"]["mode"] = serde_json::json!("dark");
@@ -5681,16 +5686,16 @@ fn mini_program_glass_uses_the_normative_lamina_in_both_modes() {
             "{target} dark lamina"
         );
         assert!(
-            css2.contains("inset 0 1px 0 rgba(255, 255, 255, 0.22)"),
-            "{target} dark specular edge"
-        );
-        assert!(
-            css2.contains("border:1px solid rgba(255, 255, 255, 0.14)"),
+            css2.contains("border:1px solid rgba(255, 255, 255, 0.12)"),
             "{target} dark glass border"
         );
         assert!(
-            css2.contains("backdrop-filter:blur(2px) saturate(1.5)"),
-            "{target} dark keeps the same blur chain"
+            css2.contains("inset 0 1px 0 rgba(255, 255, 255, 0.75)"),
+            "{target} dark keeps the highlight channel"
+        );
+        assert!(
+            css2.contains("backdrop-filter:blur(12px) saturate(140%)"),
+            "{target} dark keeps the same blur"
         );
     }
 }

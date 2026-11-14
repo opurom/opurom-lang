@@ -559,7 +559,7 @@ node keeps `kind` = primitive and gains `"component": "<name>"`. Consumers that 
 `defaultProps` are injected after explicitly written props are validated, so explicit values
 win and preset keys need not be props that the primitive declares. The catalog is validated at
 compile time. `opuromc components` prints `name | primitive | category` rows and a final
-`240 components` line. Unknown kinds remain a diagnostic. The accessibility keys `label`,
+`260 components` line. Unknown kinds remain a diagnostic. The accessibility keys `label`,
 `role`, `fontScale` and `highContrast` are accepted on any node and preserved in IR props.
 A node with `highContrast: true` gets a 2px contrast outline around its filled box and a
 contrast text colour (white on a dark fill, black on a light one) in every target, mirroring
@@ -569,14 +569,12 @@ the renderer scatters.
 
 ### Component catalog expansion (the component catalog rules framework rules)
 
-The vendored [components.json](components.json) now has **240
+The vendored [components.json](components.json) now has **260
 named components mapped onto 100 DISTINCT primitive kinds**: the 32 core kinds
 plus 68 new ones. Each new primitive has its own deterministic software drawing,
 a documented prop schema and a default a11y role in `opurom-render`; the catalog
-itself is still plain data (name, primitive, category, defaultProps). 100 new
-names were added: 68 canonical names (one per new kind) and 32 secondary names
-that expand to a new primitive at compile time. `opuromc components` prints the
-new `240 components` count, and the compiler's `KINDS` validator accepts all 100
+itself is still plain data (name, primitive, category, defaultProps). `opuromc components`
+prints the `260 components` count, and the compiler's `KINDS` validator accepts all 100
 primitives through one documented, reasonable prop schema (all props optional,
 `value` positional, no children, no tap handler).
 
@@ -665,7 +663,7 @@ plain IR, and the wasm ABI on a component-expanded tree.
   state is recomputed after a tap, and async effects remain host-side callbacks without wasm
   imports.
 - Every generated JS file passes `node --check` (web + 6 mini + wasm host); `opuromc targets`
-  lists all 9 targets and `opuromc components` prints `240 components`.
+  lists all 9 targets and `opuromc components` prints `260 components`.
 - Generated native output builds warning-free with `cargo build --release --offline` and runs with
   piped stdin. The native sequencer's local fallback and plain-HTTP `OPR_BASE_URL` path are
   generated from the same IR, and every state change re-renders the frame. The generated crate
@@ -673,7 +671,7 @@ plain IR, and the wasm ABI on a component-expanded tree.
 
 ### Scope and limits
 
-- **240 named components map onto 100 distinct primitive kinds.** The 68 extended kinds each
+- **260 named components map onto 100 distinct primitive kinds.** The 68 extended kinds each
   have a distinct deterministic software drawing in `opurom-render`; the other 32 are the core
   primitives. Catalog names are compile-time aliases, not renderer components. Custom
   components are compile-time macros, not renderer components: no runtime registry and no
