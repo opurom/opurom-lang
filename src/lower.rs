@@ -2329,6 +2329,9 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             if let Some(fs) = t.font_scale {
                 theme["fontScale"] = json!(fs);
             }
+            if let Some(ref ff) = t.font_family {
+                theme["fontFamily"] = json!(ff);
+            }
             theme
         }
         None => json!({"mode": "system", "accent": "#097FEB", "radius": 12}),

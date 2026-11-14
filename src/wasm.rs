@@ -763,12 +763,15 @@ pub fn emit_wasm(
     out: &Path,
     ir_path: &str,
     has_effects: bool,
+    font_stack: &str,
 ) -> DResult<()> {
     let int_states = read_int_states(states);
     let src = lib_source(app, states, &int_states, computed, tree, ir_path)?;
     crate::emit::write(out, "Cargo.toml", &manifest(), ir_path)?;
     crate::emit::write(out, "src/lib.rs", &src, ir_path)?;
-    crate::emit::write(out, "index.html", &index_html(app), ir_path)?;
+    // Resolve the platform-adaptive stack for the host page and canvas text.
+    let page = index_html(app).replace("font-family: sans-serif", &format!("font-family: {font_stack}"));
+    crate::emit::write(out, "index.html", &page, ir_path)?;
     crate::emit::write(
         out,
         "host.js",
@@ -780,7 +783,8 @@ pub fn emit_wasm(
             tree,
             ir_path,
             has_effects,
-        )?,
+        )?
+        .replace("sans-serif", font_stack),
         ir_path,
     )?;
     crate::emit::write(
