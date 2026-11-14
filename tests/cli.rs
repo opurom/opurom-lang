@@ -5699,3 +5699,60 @@ fn mini_program_glass_uses_the_normative_lamina_in_both_modes() {
         );
     }
 }
+
+#[test]
+fn every_emitter_rejects_an_undeclared_event_name() {
+    // the IR format declares a closed event-name set. The check lives in the
+    // shared read_node so all nine emitters reject a typo instead of silently
+    // dropping the binding, matching the web-dom validator.
+    let dir = out_dir("unknown-event");
+    let ir = dir.join("bad.opuir.json");
+    let doc = serde_json::json!({
+        "ir": "0.1.0", "app": "Bad", "state": [], "theme": { "mode": "light", "accent": "#097FEB", "radius": 8 },
+        "tree": {
+            "id": 0, "kind": "Column", "props": {}, "events": {},
+            "children": [{
+                "id": 1, "kind": "Button", "props": { "label": "x" },
+                "events": { "bogusEvent": { "op": "set", "target": "n", "value": 1 } },
+                "children": []
+            }]
+        }
+    });
+    fs::write(&ir, serde_json::to_vec(&doc).unwrap()).unwrap();
+    for target in [
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
+    ] {
+        let out = dir.join(target);
+        let r = emit(&ir, target, &out);
+        assert!(!r.status.success(), "{target} must reject the unknown event name");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(err.contains("unknown event name 'bogusEvent'"), "{target}: {err}");
+        assert!(!out.exists(), "{target} must not create an output directory on failure");
+    }
+}
+
+#[test]
+fn emitters_accept_every_declared_event_name() {
+    let dir = out_dir("declared-events");
+    let ir = dir.join("events.opuir.json");
+    let events = serde_json::json!({
+        "tap": { "op": "set", "target": "n", "value": 1 },
+        "input": { "op": "set", "target": "n" },
+        "doubleTap": { "op": "set", "target": "n", "value": 2 },
+        "longPress": { "op": "set", "target": "n", "value": 3 },
+        "drag": { "op": "set", "target": "n", "value": 4 }
+    });
+    let doc = serde_json::json!({
+        "ir": "0.1.0", "app": "Events",
+        "state": [{ "name": "n", "type": "int", "init": 0 }],
+        "theme": { "mode": "light", "accent": "#097FEB", "radius": 8 },
+        "tree": { "id": 0, "kind": "Button", "props": { "label": "x" }, "events": events, "children": [] }
+    });
+    fs::write(&ir, serde_json::to_vec(&doc).unwrap()).unwrap();
+    for target in [
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
+    ] {
+        let r = emit(&ir, target, &dir.join(target));
+        assert!(r.status.success(), "{target}: {}", String::from_utf8_lossy(&r.stderr));
+    }
+}

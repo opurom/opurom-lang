@@ -266,6 +266,18 @@ fn read_node(v: &Json, ir_path: &str) -> DResult<ENode> {
         .and_then(Json::as_object)
         .cloned()
         .unwrap_or_default();
+    // the IR format declares a closed event-name set. Reject an undeclared name
+    // here, at the shared entry for all nine emitters, instead of silently
+    // dropping the binding: the web-dom validator applies the same rule.
+    if let Some(unknown) = events
+        .keys()
+        .find(|k| !matches!(k.as_str(), "tap" | "input" | "doubleTap" | "longPress" | "drag"))
+    {
+        return Err(bad_ir(
+            ir_path,
+            format!("IR node has unknown event name '{unknown}' (expected tap|input|doubleTap|longPress|drag)"),
+        ));
+    }
     let child_values = o
         .get("children")
         .and_then(Json::as_array)
