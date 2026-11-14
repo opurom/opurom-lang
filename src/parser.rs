@@ -65,6 +65,9 @@ pub enum StmtKind {
     /// `push: PageName` navigates to a declared page. The page name is the
     /// statement target.
     Push,
+    /// `form.validate()` asks the consumer to validate every Input subtree.
+    /// The built-in receiver is stored as the statement target.
+    Validate,
 }
 
 #[derive(Clone, Debug)]
@@ -102,7 +105,8 @@ pub enum ForIter {
     List { name: String, pos: Pos },
 }
 
-/// A node in the UI tree. `If` and `For` are compile-time forms that are unrolled before lowering.
+/// A node in the UI tree. `If` and parenthesized `For` are compile-time forms
+/// that are unrolled before lowering; `Repeat` lowers to one repeatable subtree.
 #[derive(Clone, Debug)]
 pub enum NodeKind {
     Widget(String),
@@ -114,6 +118,11 @@ pub enum NodeKind {
     For {
         var: String,
         iter: ForIter,
+    },
+    Repeat {
+        var: String,
+        list: String,
+        list_pos: Pos,
     },
 }
 
@@ -696,26 +705,44 @@ impl<'a> Parser<'a> {
             let (v, p) = self.value()?;
             StmtKind::Set(v, p)
         } else if self.eat_sym(".") {
-            let (method, mp) = self.expect_ident("'toggle'")?;
-            if method != "toggle" {
-                return Err(Diagnostic::new(
-                    self.path,
-                    mp.line,
-                    mp.col,
-                    format!("unknown method '{method}', expected 'toggle'"),
-                    "only 'name.toggle()' on a bool state is supported",
-                ));
+            let (method, mp) = self.expect_ident("'toggle' or 'validate'")?;
+            match method.as_str() {
+                "toggle" => {
+                    self.expect_sym("(", "toggle() needs an opening '('")?;
+                    self.expect_sym(")", "toggle() needs a closing ')'")?;
+                    StmtKind::Toggle
+                }
+                "validate" => {
+                    if target != "form" {
+                        return Err(Diagnostic::new(
+                            self.path,
+                            start.line,
+                            start.col,
+                            format!("unknown form receiver '{target}'"),
+                            "write 'form.validate()'; 'form' is the built-in validation target",
+                        ));
+                    }
+                    self.expect_sym("(", "validate() needs an opening '('")?;
+                    self.expect_sym(")", "validate() needs a closing ')'")?;
+                    StmtKind::Validate
+                }
+                _ => {
+                    return Err(Diagnostic::new(
+                        self.path,
+                        mp.line,
+                        mp.col,
+                        format!("unknown method '{method}', expected 'toggle' or 'validate'"),
+                        "write 'name.toggle()' on a bool state or 'form.validate()'",
+                    ));
+                }
             }
-            self.expect_sym("(", "toggle() needs an opening '('")?;
-            self.expect_sym(")", "toggle() needs a closing ')'")?;
-            StmtKind::Toggle
         } else {
             return Err(self.err(
                 format!(
                     "expected '+=', '-=', '=' or '.toggle()' after '{target}', found {}",
                     self.peek().describe()
                 ),
-                "statements are 'x += 1', 'x -= 1', 'x = expr', 'x.toggle()'",
+                "statements are 'x += 1', 'x -= 1', 'x = expr', 'x.toggle()' or 'form.validate()'",
             ));
         };
         self.eat_sym(";");
@@ -991,7 +1018,40 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// `if (cond) { ... } [else { ... }]` and `for (i in N | list) { ... }` share one shape.
+    fn repeat_list(&mut self) -> DResult<(String, Pos)> {
+        let state_dot = matches!(
+            self.toks.get(self.i + 1).map(|t| &t.tok),
+            Some(Tok::Sym(s)) if s == "."
+        );
+        if self.word("state") && state_dot {
+            self.bump();
+            self.bump();
+            return self.expect_ident("a list state name");
+        }
+        let t = self.peek().clone();
+        match t.tok {
+            Tok::Ident(name) => {
+                self.bump();
+                Ok((
+                    name,
+                    Pos {
+                        line: t.line,
+                        col: t.col,
+                    },
+                ))
+            }
+            _ => Err(Diagnostic::new(
+                self.path,
+                t.line,
+                t.col,
+                format!("'for' requires a list state, found {}", t.describe()),
+                "write 'for item in state.items { ... }' or use 'for (i in 3) { ... }' for compile-time repetition",
+            )),
+        }
+    }
+
+    /// `if (cond) { ... } [else { ... }]` and parenthesized `for` share one
+    /// compile-time shape; the unparenthesized `for` is a repeatable subtree.
     fn conditional(&mut self) -> DResult<Node> {
         let start = self.pos();
         if self.word("if") {
@@ -1043,6 +1103,37 @@ impl<'a> Parser<'a> {
             });
         }
         self.bump();
+        if !self.sym("(") {
+            let (var, _) = self.expect_ident("a loop variable name")?;
+            if !self.word("in") {
+                return Err(self.err(
+                    format!(
+                        "expected 'in' after '{var}', found {}",
+                        self.peek().describe()
+                    ),
+                    "write 'for item in state.items { ... }' or 'for (i in 3) { ... }' for compile-time repetition",
+                ));
+            }
+            self.bump();
+            let (list, list_pos) = self.repeat_list()?;
+            if !self.sym("{") {
+                return Err(self.err(
+                    "expected '{' after the 'for' iterable",
+                    "write 'for item in state.items { ... }'",
+                ));
+            }
+            let block = self.block(false)?;
+            return Ok(Node {
+                kind: NodeKind::Repeat {
+                    var,
+                    list,
+                    list_pos,
+                },
+                pos: start,
+                args: Vec::new(),
+                block: Some(block),
+            });
+        }
         self.expect_sym("(", "'for' needs an opening '('")?;
         let (var, _) = self.expect_ident("a loop variable name")?;
         if !self.word("in") {

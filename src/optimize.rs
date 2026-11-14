@@ -22,6 +22,7 @@ const NODE_FIELDS: &[&str] = &[
     "when",
     "unless",
     "component",
+    "repeat",
 ];
 
 fn validate(ir: &Json, path: &str) -> DResult<()> {
@@ -131,6 +132,22 @@ fn validate_node(v: &Json, path: &str) -> DResult<()> {
             return Err(bad_ir(path, "IR node 'events' must be an object"));
         }
     }
+    if let Some(repeat) = o.get("repeat") {
+        let fields = repeat
+            .as_object()
+            .ok_or_else(|| bad_ir(path, "IR node 'repeat' must be an object"))?;
+        if fields
+            .keys()
+            .any(|k| !matches!(k.as_str(), "item" | "list"))
+            || fields.get("item").and_then(Json::as_str).is_none()
+            || fields.get("list").and_then(Json::as_str).is_none()
+        {
+            return Err(bad_ir(
+                path,
+                "IR node 'repeat' needs string 'item' and 'list' fields",
+            ));
+        }
+    }
     if let Some(children) = o.get("children") {
         let arr = children
             .as_array()
@@ -170,10 +187,13 @@ fn collect_refs(v: &Json, states: &[String], refs: &mut HashSet<String>) {
             }
         }
         Json::Object(o) => {
+            if o.get("op").and_then(Json::as_str) == Some("validate") {
+                return;
+            }
             for (key, value) in o {
                 if matches!(
                     key.as_str(),
-                    "bind" | "when" | "unless" | "target" | "valueFrom" | "into"
+                    "bind" | "when" | "unless" | "target" | "valueFrom" | "into" | "list"
                 ) {
                     if let Some(name) = value.as_str() {
                         refs.insert(name.to_string());

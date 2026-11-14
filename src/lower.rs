@@ -11,6 +11,7 @@ use crate::parser::{
     self, Arg, ComponentDecl, Effect, ForIter, Lit, Node, NodeKind, Pos, Program, Stmt, StmtKind,
     Value as AstValue,
 };
+use crate::pattern;
 use crate::typecheck;
 
 pub const KINDS: &[&str] = &[
@@ -209,6 +210,9 @@ const GENERIC_PROPS: &[&str] = &[
     "highContrast",
     "particles",
 ];
+
+/// Additive `Input` validator props; these are not accepted on other kinds.
+const INPUT_VALIDATION_PROPS: &[&str] = &["required", "minLength", "maxLength", "pattern"];
 
 /// Atomic source shortcuts and the canonical prop they lower to.
 const SHORTCUTS: &[(&str, &str)] = &[
@@ -428,7 +432,14 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             tap: true,
         },
         "Input" => KindInfo {
-            props: &["placeholder", "bind"],
+            props: &[
+                "placeholder",
+                "bind",
+                "required",
+                "minLength",
+                "maxLength",
+                "pattern",
+            ],
             required: &[],
             numeric: &[],
             positional: None,
@@ -851,6 +862,65 @@ fn check_color(ctx: &Ctx, pos: Pos, key: &str, value: &str) -> DResult<()> {
     ))
 }
 
+fn validation_prop_value(ctx: &Ctx, key: &str, arg: &Arg) -> DResult<Json> {
+    let help = match key {
+        "required" => "write required: true or required: false",
+        "minLength" => "write a non-negative integer such as minLength: 0",
+        "maxLength" => "write a non-negative integer such as maxLength: 32",
+        _ => "use literals, '.', [A-Za-z0-9_] classes, ranges, ^/$ anchors and one ?, * or + per atom; groups, alternation, backslashes and {m,n} are not supported",
+    };
+    match key {
+        "required" => match &arg.value {
+            AstValue::Lit(Lit::Bool(b)) => Ok(json!(*b)),
+            other => Err(ctx.err(
+                arg.pos,
+                format!(
+                    "prop 'required' expects true or false, found {}",
+                    value_desc(other)
+                ),
+                help,
+            )),
+        },
+        "minLength" | "maxLength" => match &arg.value {
+            AstValue::Lit(Lit::Int(n)) if *n >= 0 => Ok(json!(*n)),
+            AstValue::Lit(Lit::Int(n)) => Err(ctx.err(
+                arg.pos,
+                format!("{key} must not be negative, found {n}"),
+                help,
+            )),
+            other => Err(ctx.err(
+                arg.pos,
+                format!(
+                    "prop '{key}' expects a non-negative integer, found {}",
+                    value_desc(other)
+                ),
+                help,
+            )),
+        },
+        "pattern" => match &arg.value {
+            AstValue::Lit(Lit::Str(s)) => {
+                pattern::validate(s).map_err(|reason| {
+                    ctx.err(
+                        arg.pos,
+                        format!("invalid regex-lite pattern '{s}': {reason}"),
+                        help,
+                    )
+                })?;
+                Ok(json!(s))
+            }
+            other => Err(ctx.err(
+                arg.pos,
+                format!(
+                    "prop 'pattern' expects a string, found {}",
+                    value_desc(other)
+                ),
+                help,
+            )),
+        },
+        _ => unreachable!("validator props are checked before lowering"),
+    }
+}
+
 fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> DResult<Json> {
     if key == "name" && kind == "Icon" {
         // The name must be a built-in icon. A literal is checked now; a name
@@ -865,6 +935,9 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
                 ));
             }
         }
+    }
+    if INPUT_VALIDATION_PROPS.contains(&key) {
+        return validation_prop_value(ctx, key, arg);
     }
     if key == "bind" {
         return match &arg.value {
@@ -1234,6 +1307,7 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
             }
             Ok(json!({"op": "push", "target": stmt.target}))
         }
+        StmtKind::Validate => Ok(json!({"op": "validate", "target": stmt.target})),
         StmtKind::Toggle => Ok(json!({"op": "toggle", "target": stmt.target})),
     }
 }
@@ -1294,6 +1368,7 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
     let mut props = JsonMap::new();
     let mut seen = HashSet::new();
     let mut value_pos: Option<Pos> = None;
+    let mut max_length_pos: Option<Pos> = None;
     for (idx, arg) in node.args.iter().enumerate() {
         let raw_key = match &arg.name {
             Some(k) => k.clone(),
@@ -1327,6 +1402,9 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
             .find(|(short, _)| *short == raw_key)
             .map(|(_, canonical)| canonical.to_string())
             .unwrap_or_else(|| raw_key.clone());
+        if key == "maxLength" {
+            max_length_pos = Some(arg.pos);
+        }
         if !info.props.contains(&key.as_str()) && !GENERIC_PROPS.contains(&key.as_str()) {
             return Err(ctx.err(
                 arg.pos,
@@ -1359,6 +1437,20 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
         for (key, value) in &c.props {
             if !props.contains_key(key) {
                 props.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    if kind == "Input" {
+        if let (Some(min), Some(max)) = (
+            props.get("minLength").and_then(Json::as_i64),
+            props.get("maxLength").and_then(Json::as_i64),
+        ) {
+            if max < min {
+                return Err(ctx.err(
+                    max_length_pos.unwrap_or(node.pos),
+                    format!("maxLength {max} is less than minLength {min}"),
+                    "write maxLength >= minLength or remove one bound",
+                ));
             }
         }
     }
@@ -1530,7 +1622,8 @@ fn count_expanded(nodes: &[Node], ctx: &Ctx) -> DResult<usize> {
     let mut total = 0usize;
     for n in nodes {
         let count = match &n.kind {
-            NodeKind::Widget(_) => 1,
+            // A repeatable subtree is one IR node; its children are a template.
+            NodeKind::Widget(_) | NodeKind::Repeat { .. } => 1,
             NodeKind::If { else_block, .. } => {
                 let block = n.block.as_ref().ok_or_else(|| {
                     ctx.err(n.pos, "'if' needs a block", "write 'if (dark) { ... }'")
@@ -1749,6 +1842,77 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], cond: Cond) -> DResult<Vec<Jso
                     out.extend(lowered?);
                 }
             }
+            NodeKind::Repeat {
+                var,
+                list,
+                list_pos,
+            } => {
+                let block = node.block.as_ref().ok_or_else(|| {
+                    ctx.err(
+                        node.pos,
+                        "'for' needs a block",
+                        "write 'for item in state.items { ... }'",
+                    )
+                })?;
+                if let Some(stmt) = block.stmts.first() {
+                    return Err(ctx.err(
+                        stmt.pos,
+                        "a repeatable 'for' block cannot contain statements".to_string(),
+                        "put state changes inside a Button { ... } tap handler".to_string(),
+                    ));
+                }
+                if let Some(effect) = block.effects.first() {
+                    return Err(ctx.err(
+                        effect.pos(),
+                        "a repeatable 'for' block cannot contain effects".to_string(),
+                        "put effects inside an async tap-handler block".to_string(),
+                    ));
+                }
+                let ty = ctx.types.get(list).copied().ok_or_else(|| {
+                    ctx.err(
+                        *list_pos,
+                        format!("unknown list state '{list}' in 'for'"),
+                        format!(
+                            "declare it with 'state {list} = [\"a\", \"b\"]' or use one of: {}",
+                            ctx.state_list()
+                        ),
+                    )
+                })?;
+                if ty != Ty::List {
+                    return Err(ctx.err(
+                        *list_pos,
+                        format!(
+                            "'for' requires a list state, found {} state '{list}'",
+                            ty.name()
+                        ),
+                        "declare the state with a string list or use 'for (i in 3) { ... }'"
+                            .to_string(),
+                    ));
+                }
+                if !ctx.lists.contains_key(list) {
+                    return Err(ctx.err(
+                        *list_pos,
+                        format!("list state '{list}' has no initializer"),
+                        format!("declare it with 'state {list} = [\"a\", \"b\"]'"),
+                    ));
+                }
+                let id = ctx.take_id();
+                let children = lower_node_list(ctx, &block.nodes, Cond::default())?;
+                let mut node_json = JsonMap::new();
+                node_json.insert("id".to_string(), json!(id));
+                node_json.insert("kind".to_string(), json!("Column"));
+                node_json.insert("props".to_string(), Json::Object(JsonMap::new()));
+                node_json.insert("children".to_string(), Json::Array(children));
+                node_json.insert("events".to_string(), Json::Object(JsonMap::new()));
+                if let Some(w) = cond.when {
+                    node_json.insert("when".to_string(), json!(w));
+                }
+                if let Some(u) = cond.unless {
+                    node_json.insert("unless".to_string(), json!(u));
+                }
+                node_json.insert("repeat".to_string(), json!({"item": var, "list": list}));
+                out.push(Json::Object(node_json));
+            }
             NodeKind::Widget(_) => out.push(lower_node(ctx, node, cond)?),
         }
     }
@@ -1877,6 +2041,7 @@ fn substitute_stmt(path: &str, stmt: &Stmt, bindings: &HashMap<String, Lit>) -> 
         StmtKind::Set(v, p) => StmtKind::Set(substitute_value(v, bindings), *p),
         StmtKind::Toggle => StmtKind::Toggle,
         StmtKind::Push => StmtKind::Push,
+        StmtKind::Validate => StmtKind::Validate,
     };
     Ok(Stmt {
         target: stmt.target.clone(),
@@ -2093,6 +2258,19 @@ fn expand_nodes(
                     pos.line,
                     pos.col,
                     format!("component parameter '{name}' cannot be used as a 'for' iterable"),
+                    "loop over a declared list state; parameters are int, bool or string",
+                ));
+            }
+        }
+        if let NodeKind::Repeat { list, list_pos, .. } = &node.kind {
+            if bindings.contains_key(list) {
+                return Err(Diagnostic::new(
+                    path,
+                    list_pos.line,
+                    list_pos.col,
+                    format!(
+                        "component parameter '{list}' cannot be used as a repeatable 'for' iterable"
+                    ),
                     "loop over a declared list state; parameters are int, bool or string",
                 ));
             }
