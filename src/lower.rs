@@ -2412,6 +2412,22 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             if let Some(ref ff) = t.font_family {
                 theme["fontFamily"] = json!(ff);
             }
+            // Design tokens land in the IR theme so every target resolves the
+            // same stage and ink colors; nothing is written when none are set.
+            let mut tokens_json = JsonMap::new();
+            for (key, value) in [
+                ("surface", &t.surface),
+                ("onSurface", &t.on_surface),
+                ("stage", &t.stage),
+            ] {
+                if let Some(color) = value {
+                    check_color(&ctx, t.pos, key, color)?;
+                    tokens_json.insert(key.to_string(), json!(color));
+                }
+            }
+            if !tokens_json.is_empty() {
+                theme["tokens"] = json!(tokens_json);
+            }
             theme
         }
         None => json!({"mode": "system", "accent": "#097FEB", "radius": 12}),

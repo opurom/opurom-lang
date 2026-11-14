@@ -179,6 +179,9 @@ pub struct ThemeDecl {
     pub radius: Option<i64>,
     pub font_scale: Option<f64>,
     pub font_family: Option<String>,
+    pub surface: Option<String>,
+    pub on_surface: Option<String>,
+    pub stage: Option<String>,
     pub transition: Option<String>,
     pub pos: Pos,
 }
@@ -1154,6 +1157,9 @@ impl<'a> Parser<'a> {
             radius: None,
             font_scale: None,
             font_family: None,
+            surface: None,
+            on_surface: None,
+            stage: None,
             transition: None,
             pos: start,
         };
@@ -1261,6 +1267,28 @@ impl<'a> Parser<'a> {
                     };
                     decl.font_family = Some(family);
                 }
+                key @ ("surface" | "onSurface" | "stage") => {
+                    let (v, vp) = self.value()?;
+                    let color = match v {
+                        Value::Lit(Lit::Str(s)) => s,
+                        _ => {
+                            return Err(Diagnostic::new(
+                                self.path,
+                                vp.line,
+                                vp.col,
+                                format!("'{key}' expects a '#RRGGBB' color string"),
+                                format!("write '{key}: \"#F5F6F8\"'"),
+                            ))
+                        }
+                    };
+                    if key == "surface" {
+                        decl.surface = Some(color);
+                    } else if key == "onSurface" {
+                        decl.on_surface = Some(color);
+                    } else {
+                        decl.stage = Some(color);
+                    }
+                }
                 "transition" => {
                     let (v, vp) = self.value()?;
                     let kind = match v {
@@ -1292,7 +1320,7 @@ impl<'a> Parser<'a> {
                         kp.line,
                         kp.col,
                         format!("unknown theme key '{other}'"),
-                        "theme accepts: mode, accent, radius, fontScale, fontFamily, transition",
+                        "theme accepts: mode, accent, radius, fontScale, fontFamily, surface, onSurface, stage, transition",
                     ));
                 }
             }
