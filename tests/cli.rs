@@ -858,6 +858,49 @@ fn canvas_and_mini_emitters_apply_effects_and_animation() {
 }
 
 #[test]
+fn effects_and_animation_stay_absent_without_the_props() {
+    // A source with no visual-effect or entry-animation props must not gain
+    // effect drawing, keyframes or an animation class; `animate: none` is
+    // static too. This guards the no-effect emission path from regressions.
+    let dir = out_dir("emit-no-effects");
+    let ir = dir.join("plain.opuir.json");
+    let src = dir.join("plain.opu");
+    fs::write(
+        &src,
+        "app Plain {\n  Column(gap: 8) {\n    Container(animate: none)\n    Text(\"hello\")\n  }\n}\n",
+    )
+    .unwrap();
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let web = out_dir("emit-no-effects-web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let app_js = fs::read_to_string(web.join("app.js")).unwrap();
+    assert!(!app_js.contains("createLinearGradient"));
+    assert!(!app_js.contains("shadowColor"));
+    let web_html = fs::read_to_string(web.join("index.html")).unwrap();
+    assert!(
+        !web_html.contains("opurom-entry"),
+        "no curve must stay static"
+    );
+    assert!(!web_html.contains("opu-anim"), "no curve must stay static");
+
+    let wx = out_dir("emit-no-effects-wechat");
+    let r = emit(&ir, "wechat", &wx);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let wxss = fs::read_to_string(wx.join("pages/index/index.wxss")).unwrap();
+    assert!(!wxss.contains("linear-gradient"));
+    assert!(!wxss.contains("box-shadow"));
+    assert!(!wxss.contains("backdrop-filter"));
+    let wxml = fs::read_to_string(wx.join("pages/index/index.wxml")).unwrap();
+    assert!(
+        !wxml.contains("anim-entry"),
+        "animate:none must not animate"
+    );
+}
+
+#[test]
 fn canvas_and_mini_emitters_apply_high_contrast() {
     // `highContrast` must reach the canvas web target and the mini targets the
     // way the native renderer applies it: a 2px contrast outline on a filled
