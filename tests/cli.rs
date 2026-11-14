@@ -5495,8 +5495,12 @@ fn mini_program_grids_lower_column_counts_to_percentage_cells() {
     // declared compactColumns over the desktop columns count, and a cell with
     // an explicit width keeps it instead of being overwritten.
     for (target, style_ext) in [
-        ("wechat", "wxss"), ("alipay", "acss"), ("qq", "qss"),
-        ("douyin", "ttss"), ("baidu", "css"), ("kuaishou", "css"),
+        ("wechat", "wxss"),
+        ("alipay", "acss"),
+        ("qq", "qss"),
+        ("douyin", "ttss"),
+        ("baidu", "css"),
+        ("kuaishou", "css"),
     ] {
         let dir = out_dir(&format!("mini-grid-{target}"));
         let src = dir.join("grid.opu");
@@ -5518,17 +5522,36 @@ fn mini_program_grids_lower_column_counts_to_percentage_cells() {
         .unwrap();
         let ir = dir.join("grid.opuir.json");
         let compiled = compile(&src, &ir);
-        assert!(compiled.status.success(), "{target}: {}", String::from_utf8_lossy(&compiled.stderr));
+        assert!(
+            compiled.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
         let out = dir.join("page");
         let r = emit(&ir, target, &out);
-        assert!(r.status.success(), "{target}: {}", String::from_utf8_lossy(&r.stderr));
+        assert!(
+            r.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
         let css = fs::read_to_string(out.join(format!("pages/index/index.{style_ext}"))).unwrap();
-        assert!(css.contains(".grid {"), "{target} needs the wrapping grid rule");
-        assert!(css.contains("width: 50.0000%; box-sizing: border-box;"),
-            "{target} must honor compactColumns: 2");
-        assert_eq!(css.matches("width: 50.0000%").count(), 3,
-            "{target}: only the three cells without an explicit width get 50%");
-        assert!(css.contains("width:40px;"), "{target} keeps the authored cell width");
+        assert!(
+            css.contains(".grid {"),
+            "{target} needs the wrapping grid rule"
+        );
+        assert!(
+            css.contains("width: 50.0000%; box-sizing: border-box;"),
+            "{target} must honor compactColumns: 2"
+        );
+        assert_eq!(
+            css.matches("width: 50.0000%").count(),
+            3,
+            "{target}: only the three cells without an explicit width get 50%"
+        );
+        assert!(
+            css.contains("width:40px;"),
+            "{target} keeps the authored cell width"
+        );
     }
 }
 
@@ -5537,8 +5560,12 @@ fn mini_program_pages_paint_the_theme_stage_backdrop() {
     // A glass lamina refracts the flat page backdrop, so every mini-program
     // target must emit `page { background-color: ... }` from theme.tokens.stage.
     for (target, style_ext) in [
-        ("wechat", "wxss"), ("alipay", "acss"), ("qq", "qss"),
-        ("douyin", "ttss"), ("baidu", "css"), ("kuaishou", "css"),
+        ("wechat", "wxss"),
+        ("alipay", "acss"),
+        ("qq", "qss"),
+        ("douyin", "ttss"),
+        ("baidu", "css"),
+        ("kuaishou", "css"),
     ] {
         let dir = out_dir(&format!("mini-stage-{target}"));
         let src = dir.join("stage.opu");
@@ -5552,8 +5579,10 @@ fn mini_program_pages_paint_the_theme_stage_backdrop() {
         let out = dir.join("page");
         assert!(emit(&ir, target, &out).status.success(), "{target} emit");
         let css = fs::read_to_string(out.join(format!("pages/index/index.{style_ext}"))).unwrap();
-        assert!(css.starts_with("page { background-color: #EDF0F7; }"),
-            "{target} must lead with the stage backdrop");
+        assert!(
+            css.starts_with("page { background-color: #EDF0F7; }"),
+            "{target} must lead with the stage backdrop"
+        );
     }
 }
 
@@ -5567,19 +5596,25 @@ fn mini_program_stage_falls_back_and_rejects_injected_colours() {
     let out = dir.join("out");
     assert!(emit(&ir, "wechat", &out).status.success());
     let css = fs::read_to_string(out.join("pages/index/index.wxss")).unwrap();
-    assert!(css.starts_with("page { background-color: #ffffff; }"),
-        "an IR without tokens falls back to white");
+    assert!(
+        css.starts_with("page { background-color: #ffffff; }"),
+        "an IR without tokens falls back to white"
+    );
 
     // A hostile stage must never reach the stylesheet as CSS.
     let evil = dir.join("evil.opuir.json");
-    let mut doc: serde_json::Value =
-        serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap();
+    let mut doc: serde_json::Value = serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap();
     doc["theme"]["tokens"] = serde_json::json!({ "stage": "#FFF; } body { display:none" });
     fs::write(&evil, serde_json::to_vec(&doc).unwrap()).unwrap();
     let out2 = dir.join("out2");
     assert!(emit(&evil, "wechat", &out2).status.success());
     let css2 = fs::read_to_string(out2.join("pages/index/index.wxss")).unwrap();
-    assert!(css2.starts_with("page { background-color: #ffffff; }"),
-        "a non-hex stage is rejected");
-    assert!(!css2.contains("display:none"), "no injected CSS reaches the page");
+    assert!(
+        css2.starts_with("page { background-color: #ffffff; }"),
+        "a non-hex stage is rejected"
+    );
+    assert!(
+        !css2.contains("display:none"),
+        "no injected CSS reaches the page"
+    );
 }
