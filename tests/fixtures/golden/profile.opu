@@ -3,7 +3,7 @@ app Profile {
   state name = "world"
   state dark = false
 
-  theme { mode: light, accent: "#097FEB", radius: 14 }
+  theme { mode: light, accent: "#097FEB", radius: 14 , stage: "#EDF0F7" }
 
   ScrollView(p: 16) {
     Column(gap: 14) {

@@ -19,7 +19,7 @@ app TodoApp {
 
   state remaining = 0
 
-  theme { mode: light, accent: "#097FEB", radius: 14 }
+  theme { mode: light, accent: "#097FEB", radius: 14 , stage: "#EDF0F7" }
 
   Column(p: 14, gap: 10) {
     Container(p: 16, rounded: 16, shadow: 4, gradient: "#097FEB,#043B70", animate: ease) {
