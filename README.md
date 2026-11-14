@@ -411,7 +411,7 @@ The compiler emits node ids pre-order from 0, keeps numeric props as JSON number
 | --- | --- | --- |
 | `native` | `Cargo.toml`, `src/main.rs` | a `State` struct, `apply(event_node_id)` with a generated `match` over tap/input actions, stdin loop `tap <id>` / `input <id> <text>` / `state` / `quit` printing state and patches, plus a PPM render of the embedded IR through `opurom-render` at startup and again after every state change, at the 800x600 default viewport (`OPUROM_FRAME_WIDTH`/`OPUROM_FRAME_HEIGHT` override it) |
 | `web` | `index.html`, `app.js`, `ir.json` | generated `state` object, event handlers, Canvas 2D draw calls with computed layout, `{}` interpolation resolved to `String(state.x)` (no mustache, no IR traversal) |
-| `wechat` | `app.json`, `app.js`, `pages/index/index.wxml`, `pages/index/index.wxss`, `pages/index/index.js` | `wx:for`, `bindtap`/`bindinput`, `setData` |
+| `wechat` | `app.json`, `app.js`, `pages/index/index.wxml`, `pages/index/index.wxss`, `pages/index/index.js` | `wx:for`, `bindtap`/`bindinput`, `setData`; the 68 extended primitives render as structured `<view class="opu-x opu-x-{kind}" data-kind=... data-{prop}=...>` markup with every prop preserved as a data attribute, so page CSS can style each primitive |
 | `alipay` | `app.json`, `app.js`, `pages/index/index.axml`, `pages/index/index.acss`, `pages/index/index.js` | `a:for`, `onTap`/`onInput`, `setData` |
 | `qq` | `app.json`, `app.js`, `pages/index/index.qml`, `pages/index/index.qss`, `pages/index/index.js` | `qq:for`, `bindtap`/`bindinput`, `setData` |
 | `douyin` | `app.json`, `app.js`, `pages/index/index.ttml`, `pages/index/index.ttss`, `pages/index/index.js` | `tt:for`, `bindtap`/`bindinput`, `setData` |

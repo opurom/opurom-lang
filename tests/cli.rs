@@ -1031,6 +1031,42 @@ fn collision_curve_compiles_and_emits_across_targets() {
 }
 
 #[test]
+fn extended_primitives_render_structured_mini_markup() {
+    let dir = out_dir("emit-extended-mini");
+    let ir = dir.join("extended.opuir.json");
+    let src = dir.join("extended.opu");
+    fs::write(
+        &src,
+        "app Ext {\n  Column(gap: 8) {\n    PieChart(value: 55, segments: 4, label: \"chart\")\n    Gauge(value: 42, min: 0, max: 100)\n  }\n}\n",
+    )
+    .unwrap();
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let wx = out_dir("emit-extended-mini-wechat");
+    let r = emit(&ir, "wechat", &wx);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let wxml = fs::read_to_string(wx.join("pages/index/index.wxml")).unwrap();
+    // Each extended primitive keeps its kind as a class slug and a data-kind,
+    // and every numeric prop survives as a data attribute.
+    assert!(
+        wxml.contains("opu-x-piechart"),
+        "PieChart must carry its kind class"
+    );
+    assert!(
+        wxml.contains("opu-x-gauge"),
+        "Gauge must carry its kind class"
+    );
+    assert!(wxml.contains("data-kind=\"PieChart\""));
+    assert!(wxml.contains("data-value=\"55\""));
+    assert!(wxml.contains("data-segments=\"4\""));
+    assert!(wxml.contains("data-kind=\"Gauge\""));
+    assert!(wxml.contains("data-value=\"42\""));
+    assert!(wxml.contains("data-min=\"0\""));
+    assert!(wxml.contains("data-max=\"100\""));
+}
+
+#[test]
 fn effects_and_animation_stay_absent_without_the_props() {
     // A source with no visual-effect or entry-animation props must not gain
     // effect drawing, keyframes or an animation class; `animate: none` is
