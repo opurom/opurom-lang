@@ -5267,5 +5267,8 @@ fn image_fit_and_radius_lower_to_the_canonical_props() {
         .into_iter()
         .find(|n| n["kind"] == "Image")
         .unwrap();
-    assert!(image2["props"].get("fit").is_none(), "no fit without the prop");
+    assert!(
+        image2["props"].get("fit").is_none(),
+        "no fit without the prop"
+    );
 }
