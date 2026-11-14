@@ -1,0 +1,192 @@
+// Gallery: one instance of every distinct primitive kind in the component catalog.
+// Derived from opurom-examples/golden/components.json: 240 named components lower onto 100
+// distinct primitive kinds, grouped here by catalog family. Each exhibit carries
+// an a11y label of the form "family/Kind" so roles and bounds can be asserted.
+app Gallery {
+  state dark = false
+  state level = 40
+  state choice = "a"
+
+  theme { mode: light, accent: "#097FEB", radius: 8 }
+
+  Scroll(height: 7600, p: 12) {
+    Column(gap: 10) {
+      Container(p: 24, rounded: 18, shadow: 4, gradient: "#097FEB,#043B70", animate: ease) {
+        Text("Opurom primitive gallery", size: 22, color: "#FFFFFF", role: "heading")
+        Text("240 named components, 100 distinct primitive kinds", size: 12, color: "#D6E8FF")
+      }
+      // family: layout (17 kinds)
+      Container(p: 16, rounded: 14, shadow: 3, bg: "#FFFFFF", border: "#E4E9F2") {
+        Column(gap: 8) {
+          Text("layout / 17 kinds", size: 15, role: "heading")
+          Grid(columns: 4) {
+            Column(gap: 4, label: "layout/Column")
+            Row(gap: 4, label: "layout/Row")
+            Container(p: 8, label: "layout/Container")
+            Spacer(height: 8, label: "layout/Spacer")
+            List(label: "layout/List")
+            Grid(columns: 4, label: "layout/Grid")
+            Scroll(height: 120, label: "layout/Scroll")
+            CornerFrame(value: 69, segments: 4, label: "layout/CornerFrame")
+            CrosshairMark(value: 76, segments: 5, label: "layout/CrosshairMark")
+            LadderDivider(value: 83, segments: 6, label: "layout/LadderDivider")
+            ChevronDivider(value: 90, segments: 7, label: "layout/ChevronDivider")
+            GridOverlay(value: 97, segments: 8, label: "layout/GridOverlay")
+            CheckerBackdrop(value: 24, segments: 3, label: "layout/CheckerBackdrop")
+            DotPattern(value: 31, segments: 4, label: "layout/DotPattern")
+            RingBadge(value: 38, segments: 5, label: "layout/RingBadge")
+            StairDivider(value: 45, segments: 6, label: "layout/StairDivider")
+            BracketPanel(value: 52, segments: 7, label: "layout/BracketPanel")
+          }
+        }
+      }
+      // family: typography (2 kinds)
+      Container(p: 16, rounded: 14, shadow: 3, bg: "#FFFFFF", border: "#E4E9F2") {
+        Column(gap: 8) {
+          Text("typography / 2 kinds", size: 15, role: "heading")
+          Grid(columns: 4) {
+            Text(value: "Text", size: 14, label: "typography/Text")
+            RichText(value: "RichText", size: 14, label: "typography/RichText")
+          }
+        }
+      }
+      // family: form (18 kinds)
+      Container(p: 16, rounded: 14, shadow: 3, bg: "#FFFFFF", border: "#E4E9F2") {
+        Column(gap: 8) {
+          Text("form / 18 kinds", size: 15, role: "heading")
+          Grid(columns: 4) {
+            Button(label: "form/Button")
+            Input(placeholder: "Input", label: "form/Input")
+            Switch(bind: dark, label: "form/Switch")
+            Slider(bind: level, min: 0, max: 100, label: "form/Slider")
+            Checkbox(bind: dark, label: "form/Checkbox")
+            Radio(bind: choice, value: "a", label: "form/Radio")
+            Rating(value: 35, segments: 4, label: "form/Rating")
+            Dial(value: 42, segments: 5, label: "form/Dial")
+            Knob(value: 49, segments: 6, label: "form/Knob")
+            ColorWell(value: 56, segments: 7, label: "form/ColorWell")
+            DateField(value: 63, segments: 8, label: "form/DateField")
+            TimeField(value: 70, segments: 3, label: "form/TimeField")
+            SelectBox(value: 77, segments: 4, label: "form/SelectBox")
+            ComboBox(value: 84, segments: 5, label: "form/ComboBox")
+            SearchBar(value: 91, segments: 6, label: "form/SearchBar")
+            PinInput(value: 98, segments: 7, label: "form/PinInput")
+            SegmentedInput(value: 25, segments: 8, label: "form/SegmentedInput")
+            UploadZone(value: 32, segments: 3, label: "form/UploadZone")
+          }
+        }
+      }
+      // family: media (13 kinds)
+      Container(p: 16, rounded: 14, shadow: 3, bg: "#FFFFFF", border: "#E4E9F2") {
+        Column(gap: 8) {
+          Text("media / 13 kinds", size: 15, role: "heading")
+          Grid(columns: 4) {
+            Image(src: "opurom-examples/assets/opurom-logo.png", width: 64, height: 64, rounded: 10, bg: "#FFFFFF", border: "#D9E2EF", label: "media/Image")
+            Icon(name: "star", label: "media/Icon")
+            Avatar(label: "media/Avatar")
+            Player(src: "clip.mp4", width: 120, height: 80, label: "media/Player")
+            Map(center: "0,0", zoom: 3, height: 100, label: "media/Map")
+            WaveformPlayer(value: 74, segments: 3, label: "media/WaveformPlayer")
+            Spectrogram(value: 81, segments: 4, label: "media/Spectrogram")
+            Filmstrip(value: 88, segments: 5, label: "media/Filmstrip")
+            ThumbnailGrid(value: 95, segments: 6, label: "media/ThumbnailGrid")
+            QrGlyph(value: 22, segments: 7, label: "media/QrGlyph")
+            BarcodeGlyph(value: 29, segments: 8, label: "media/BarcodeGlyph")
+            ColorPalette(value: 36, segments: 3, label: "media/ColorPalette")
+            ZoomLens(value: 43, segments: 4, label: "media/ZoomLens")
+          }
+        }
+      }
+      // family: display (3 kinds)
+      Container(p: 16, rounded: 14, shadow: 3, bg: "#FFFFFF", border: "#E4E9F2") {
+        Column(gap: 8) {
+          Text("display / 3 kinds", size: 15, role: "heading")
+          Grid(columns: 4) {
+            Card(label: "display/Card")
+            Divider(label: "display/Divider")
+            Badge(label: "display/Badge")
+          }
+        }
+      }
+      // family: feedback (12 kinds)
+      Container(p: 16, rounded: 14, shadow: 3, bg: "#FFFFFF", border: "#E4E9F2") {
+        Column(gap: 8) {
+          Text("feedback / 12 kinds", size: 15, role: "heading")
+          Grid(columns: 4) {
+            Progress(value: 60, label: "feedback/Progress")
+            Spinner(label: "feedback/Spinner")
+            LevelMeter(value: 85, segments: 4, label: "feedback/LevelMeter")
+            SignalBars(value: 92, segments: 5, label: "feedback/SignalBars")
+            BatteryMeter(value: 99, segments: 6, label: "feedback/BatteryMeter")
+            Thermometer(value: 26, segments: 7, label: "feedback/Thermometer")
+            Speedometer(value: 33, segments: 8, label: "feedback/Speedometer")
+            Compass(value: 40, segments: 3, label: "feedback/Compass")
+            ProgressRing(value: 47, segments: 4, label: "feedback/ProgressRing")
+            ActivityRing(value: 54, segments: 5, label: "feedback/ActivityRing")
+            KpiTile(value: 61, segments: 6, label: "feedback/KpiTile")
+            StatCard(value: 68, segments: 7, label: "feedback/StatCard")
+          }
+        }
+      }
+      // family: overlay (2 kinds)
+      Container(p: 16, rounded: 14, shadow: 3, bg: "#FFFFFF", border: "#E4E9F2") {
+        Column(gap: 8) {
+          Text("overlay / 2 kinds", size: 15, role: "heading")
+          Grid(columns: 4) {
+            Dialog(title: "Dialog", label: "overlay/Dialog")
+            Tooltip(text: "Tooltip", label: "overlay/Tooltip")
+          }
+        }
+      }
+      // family: navigation (12 kinds)
+      Container(p: 16, rounded: 14, shadow: 3, bg: "#FFFFFF", border: "#E4E9F2") {
+        Column(gap: 8) {
+          Text("navigation / 12 kinds", size: 15, role: "heading")
+          Grid(columns: 4) {
+            Tabs(labels: "A,B,C", bind: choice, label: "navigation/Tabs")
+            Menu(items: "A,B", label: "navigation/Menu")
+            Breadcrumbs(value: 23, segments: 6, label: "navigation/Breadcrumbs")
+            Pagination(value: 30, segments: 7, label: "navigation/Pagination")
+            Stepper(value: 37, segments: 8, label: "navigation/Stepper")
+            Sidebar(value: 44, segments: 3, label: "navigation/Sidebar")
+            TabStrip(value: 51, segments: 4, label: "navigation/TabStrip")
+            NavRail(value: 58, segments: 5, label: "navigation/NavRail")
+            AnchorBar(value: 65, segments: 6, label: "navigation/AnchorBar")
+            ProgressSteps(value: 72, segments: 7, label: "navigation/ProgressSteps")
+            MenuBar(value: 79, segments: 8, label: "navigation/MenuBar")
+            TocTree(value: 86, segments: 3, label: "navigation/TocTree")
+          }
+        }
+      }
+      // family: data (21 kinds)
+      Container(p: 16, rounded: 14, shadow: 3, bg: "#FFFFFF", border: "#E4E9F2") {
+        Column(gap: 8) {
+          Text("data / 21 kinds", size: 15, role: "heading")
+          Grid(columns: 4) {
+            Table(columns: 3, rows: 2, label: "data/Table")
+            Chart(type: "bar", width: 120, height: 80, label: "data/Chart")
+            Calendar(date: "2026-01-01", height: 100, label: "data/Calendar")
+            Gauge(value: 34, segments: 7, label: "data/Gauge")
+            Sparkline(value: 41, segments: 8, label: "data/Sparkline")
+            AreaChart(value: 48, segments: 3, label: "data/AreaChart")
+            PieChart(value: 55, segments: 4, label: "data/PieChart")
+            DonutChart(value: 62, segments: 5, label: "data/DonutChart")
+            ScatterPlot(value: 69, segments: 6, label: "data/ScatterPlot")
+            StackedBar(value: 76, segments: 7, label: "data/StackedBar")
+            Histogram(value: 83, segments: 8, label: "data/Histogram")
+            Heatmap(value: 90, segments: 3, label: "data/Heatmap")
+            Treemap(value: 97, segments: 4, label: "data/Treemap")
+            Waterfall(value: 24, segments: 5, label: "data/Waterfall")
+            BulletChart(value: 31, segments: 6, label: "data/BulletChart")
+            FunnelChart(value: 38, segments: 7, label: "data/FunnelChart")
+            Waveform(value: 45, segments: 8, label: "data/Waveform")
+            Equalizer(value: 52, segments: 3, label: "data/Equalizer")
+            Candlestick(value: 59, segments: 4, label: "data/Candlestick")
+            BubbleChart(value: 66, segments: 5, label: "data/BubbleChart")
+            PolarChart(value: 73, segments: 6, label: "data/PolarChart")
+          }
+        }
+      }
+    }
+  }
+}

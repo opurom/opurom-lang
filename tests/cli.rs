@@ -587,7 +587,8 @@ fn gesture_and_navigation_lower_to_the_documented_ir() {
     assert!(nodes[1]["props"].get("gesture").is_none());
     assert!(nodes[0]["events"].as_object().unwrap().is_empty());
 
-    // `page` declarations and a `push:` handler lower to the nav action.
+    // Legacy `page Name;` markers still validate `push:` targets, but no longer
+    // emit a names array (retired in favor of per-route trees under `routes`).
     let nav_src = dir.join("navigation.opu");
     fs::write(
         &nav_src,
@@ -6745,4 +6746,26 @@ fn all_nine_emitters_preserve_theme_keys_and_input_props() {
             assert!(check.status.success(), "{target}: invalid JS {js:?}");
         }
     }
+}
+
+#[test]
+fn only_referenced_package_icons_are_embedded_in_the_ir() {
+    // A project that declares an icon package but uses no package icon must not
+    // embed the whole catalog: compile an example that resolves the package and
+    // confirm the emitted IR carries no `icons` key (and stays small).
+    let ir = out_dir("icons-unused").join("todo.opuir.json");
+    let r = compile(&example("todo.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let doc: serde_json::Value = serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap();
+    assert!(doc.get("icons").is_none(), "an icon-free program must not embed the catalog");
+    assert!(fs::read(&ir).unwrap().len() < 20_000, "the IR must not be bloated by unused icons");
+
+    // A program that shows the icon gallery embeds only the icons it references,
+    // never the full vendored catalog.
+    let gal = out_dir("icons-used").join("icons.opuir.json");
+    let r = compile(&example("icons.opu"), &gal);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let doc: serde_json::Value = serde_json::from_slice(&fs::read(&gal).unwrap()).unwrap();
+    let icons = doc.get("icons").and_then(|i| i.as_array()).expect("icons present when used");
+    assert!(!icons.is_empty() && icons.len() < 200, "only referenced icons ({}) are embedded", icons.len());
 }

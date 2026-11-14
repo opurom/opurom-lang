@@ -2594,6 +2594,44 @@ fn build_tree<'c>(
     Ok((tree, conditions))
 }
 
+/// Collects the `name` of every `Icon` node reachable in an IR tree fragment
+/// (top-level `tree` or `routes[*].tree`). Used to embed only referenced
+/// package icons.
+fn collect_icon_names(node: &Json, out: &mut std::collections::BTreeSet<String>) {
+    match node {
+        Json::Object(map) => {
+            if map.get("kind").and_then(Json::as_str) == Some("Icon") {
+                if let Some(name) = map
+                    .get("props")
+                    .and_then(|p| p.get("name"))
+                    .and_then(Json::as_str)
+                {
+                    out.insert(name.to_string());
+                }
+            }
+            if let Some(route_tree) = map.get("tree") {
+                collect_icon_names(route_tree, out);
+            }
+            if let Some(children) = map.get("children").and_then(Json::as_array) {
+                for child in children {
+                    collect_icon_names(child, out);
+                }
+            }
+            if let Some(routes) = map.get("routes").and_then(Json::as_object) {
+                for route in routes.values() {
+                    collect_icon_names(route, out);
+                }
+            }
+        }
+        Json::Array(items) => {
+            for item in items {
+                collect_icon_names(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn lower(program: &Program, path: &str) -> DResult<Json> {
     let mut ctx = Ctx {
         path,
@@ -2794,15 +2832,21 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         out.insert("imports".to_string(), Json::Array(imports));
     }
     if !ctx.icons.is_empty() {
-        // Deterministic order: sorted by icon name.
-        let icons: Vec<Json> = ctx
-            .icons
+        // Only carry package icons the tree actually references, by name. A
+        // project that declares an icon package but uses none must not embed
+        // the whole catalog (that bloats the IR and every emitted package).
+        let mut used: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        collect_icon_names(&Json::Object(out.clone()), &mut used);
+        let icons: Vec<Json> = used
             .iter()
+            .filter_map(|name| ctx.icons.get(name).map(|record| (name, record)))
             .map(|(name, record)| {
                 json!({"name": name, "viewBox": record["viewBox"], "paths": record["paths"]})
             })
             .collect();
-        out.insert("icons".to_string(), Json::Array(icons));
+        if !icons.is_empty() {
+            out.insert("icons".to_string(), Json::Array(icons));
+        }
     }
     if !computed_json.is_empty() {
         out.insert("computed".to_string(), Json::Array(computed_json));

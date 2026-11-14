@@ -1,0 +1,40 @@
+// Showcase: one source file uses catalog components, a11y props and effects.
+// All 240 named components lower onto 100 distinct primitive kinds at compile time.
+app Showcase {
+  state count = 0
+  state dark = false
+
+  theme { mode: light, accent: "#097FEB", radius: 14 , stage: "#EDF0F7" }
+
+  ScrollView(p: 16) {
+    Column(gap: 14) {
+      Container(p: 20, rounded: 18, shadow: 4, gradient: "#097FEB,#043B70", animate: ease) {
+        Heading("Opurom Components", size: 22, color: "#FFFFFF")
+        Paragraph("One catalog, 240 named components, 100 distinct primitive kinds", size: 12, color: "#D6E8FF")
+      }
+      CardGrid(columns: 2) {
+        Tile(p: 14, radius: 14, shadow: 3, bg: "#FFFFFF", border: "#E4E9F2") {
+          Label("Counter", size: 16, color: "#101828")
+          Gap(height: 8)
+          CountBadge(label: "{count}", radius: 12)
+        }
+        ElevationCard(p: 14, rounded: 14, shadow: 3, bg: "#F4F7FB") {
+          Label("Actions", size: 16, color: "#101828")
+          ButtonBar(gap: 8, bg: "#F4F7FB") {
+            PrimaryButton("+", p: 12, rounded: 12, shadow: 2, animate: spring) { count += 1 }
+            DangerButton("Reset", p: 12, rounded: 12, shadow: 2, animate: spring) { count = 0 }
+          }
+        }
+      }
+      if (dark) {
+        InfoCard(p: 14, rounded: 14, shadow: 3, gradient: "#101828,#043B70", highContrast: true, label: "Dark mode details", role: "text") {
+          Caption("High contrast is active", fontScale: 1.25, color: "#D6E8FF")
+        }
+      }
+      ToggleSwitch(bind: dark, label: "Dark mode", role: "checkbox")
+      LinearProgress(value: 40)
+      UserAvatar(label: "OP")
+      Spinner()
+    }
+  }
+}
