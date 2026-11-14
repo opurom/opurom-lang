@@ -5531,3 +5531,55 @@ fn mini_program_grids_lower_column_counts_to_percentage_cells() {
         assert!(css.contains("width:40px;"), "{target} keeps the authored cell width");
     }
 }
+
+#[test]
+fn mini_program_pages_paint_the_theme_stage_backdrop() {
+    // A glass lamina refracts the flat page backdrop, so every mini-program
+    // target must emit `page { background-color: ... }` from theme.tokens.stage.
+    for (target, style_ext) in [
+        ("wechat", "wxss"), ("alipay", "acss"), ("qq", "qss"),
+        ("douyin", "ttss"), ("baidu", "css"), ("kuaishou", "css"),
+    ] {
+        let dir = out_dir(&format!("mini-stage-{target}"));
+        let src = dir.join("stage.opu");
+        fs::write(
+            &src,
+            "app Stage { theme { mode: light, accent: \"#0F766E\", radius: 8, stage: \"#EDF0F7\" } Column { Text(\"hi\") } }\n",
+        )
+        .unwrap();
+        let ir = dir.join("stage.opuir.json");
+        assert!(compile(&src, &ir).status.success(), "{target} compile");
+        let out = dir.join("page");
+        assert!(emit(&ir, target, &out).status.success(), "{target} emit");
+        let css = fs::read_to_string(out.join(format!("pages/index/index.{style_ext}"))).unwrap();
+        assert!(css.starts_with("page { background-color: #EDF0F7; }"),
+            "{target} must lead with the stage backdrop");
+    }
+}
+
+#[test]
+fn mini_program_stage_falls_back_and_rejects_injected_colours() {
+    let dir = out_dir("mini-stage-fallback");
+    let src = dir.join("src.opu");
+    fs::write(&src, "app Plain { Column { Text(\"hi\") } }\n").unwrap();
+    let ir = dir.join("src.opuir.json");
+    assert!(compile(&src, &ir).status.success());
+    let out = dir.join("out");
+    assert!(emit(&ir, "wechat", &out).status.success());
+    let css = fs::read_to_string(out.join("pages/index/index.wxss")).unwrap();
+    assert!(css.starts_with("page { background-color: #ffffff; }"),
+        "an IR without tokens falls back to white");
+
+    // A hostile stage must never reach the stylesheet as CSS.
+    let evil = dir.join("evil.opuir.json");
+    let mut doc: serde_json::Value =
+        serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap();
+    doc["theme"]["tokens"] = serde_json::json!({ "stage": "#FFF; } body { display:none" });
+    fs::write(&evil, serde_json::to_vec(&doc).unwrap()).unwrap();
+    let out2 = dir.join("out2");
+    assert!(emit(&evil, "wechat", &out2).status.success());
+    let css2 = fs::read_to_string(out2.join("pages/index/index.wxss")).unwrap();
+    assert!(css2.starts_with("page { background-color: #ffffff; }"),
+        "a non-hex stage is rejected");
+    assert!(!css2.contains("display:none"), "no injected CSS reaches the page");
+}
