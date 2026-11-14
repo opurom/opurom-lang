@@ -440,6 +440,9 @@ win and preset keys need not be props that the primitive declares. The catalog i
 compile time. `opuromc components` prints `name | primitive | category` rows and a final
 `216 components` line. Unknown kinds remain a diagnostic. The accessibility keys `label`,
 `role`, `fontScale` and `highContrast` are accepted on any node and preserved in IR props.
+A node with `highContrast: true` gets a 2px contrast outline around its filled box and a
+contrast text colour (white on a dark fill, black on a light one) in every target, mirroring
+the native renderer; a node without the key is unchanged.
 `particles` is accepted on any node too and lowers to the bounded `props.particles` object
 the renderer scatters.
 
