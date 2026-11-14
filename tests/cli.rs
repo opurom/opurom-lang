@@ -4834,3 +4834,398 @@ fn icon_path_table_covers_every_canonical_name() {
         "every canonical icon must emit an image"
     );
 }
+
+// ------------------------------------------- repeatable lists and forms ----
+
+const FORMS_SOURCE: &str = r#"app Forms {
+  state items = ["alpha", "beta"]
+  state name = ""
+  Column {
+    for item in state.items {
+      Text("{item}")
+    }
+    for note in items {
+      Text("{note}")
+    }
+    Input(bind: name, required: true, minLength: 3, maxLength: 12, pattern: "^[A-Za-z0-9_]+$")
+    Button("Check") { form.validate() }
+  }
+}
+"#;
+
+fn input_source(args: &str) -> String {
+    format!("app Bad {{ Column {{ Input({args}) }} }}\n")
+}
+
+fn mini_markup_path(target: &str) -> Option<&'static str> {
+    Some(match target {
+        "wechat" => "pages/index/index.wxml",
+        "alipay" => "pages/index/index.axml",
+        "qq" => "pages/index/index.qml",
+        "douyin" => "pages/index/index.ttml",
+        "baidu" => "pages/index/index.swan",
+        "kuaishou" => "pages/index/index.ksml",
+        _ => return None,
+    })
+}
+
+#[test]
+fn repeatable_for_lowers_to_additive_ir() {
+    let dir = out_dir("forms-ir");
+    let src = dir.join("forms.opu");
+    fs::write(&src, FORMS_SOURCE).unwrap();
+    let ir_path = dir.join("forms.opuir.json");
+    let r = compile(&src, &ir_path);
+    assert!(
+        r.status.success(),
+        "forms compile failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let ir: Json = serde_json::from_slice(&fs::read(&ir_path).unwrap()).unwrap();
+    assert_eq!(
+        ir["state"][0],
+        json!({"name": "items", "type": "list", "init": ["alpha", "beta"]})
+    );
+    let repeat_nodes: Vec<&Json> = nodes_of(&ir)
+        .into_iter()
+        .filter(|n| n.get("repeat").is_some())
+        .collect();
+    assert_eq!(repeat_nodes.len(), 2, "the two loops stay as templates");
+    assert_eq!(
+        repeat_nodes[0]["repeat"],
+        json!({"item": "item", "list": "items"})
+    );
+    assert_eq!(
+        repeat_nodes[1]["repeat"],
+        json!({"item": "note", "list": "items"})
+    );
+    assert_eq!(repeat_nodes[0]["kind"], "Column");
+    assert_eq!(repeat_nodes[0]["children"][0]["props"]["value"], "{item}");
+    assert_eq!(repeat_nodes[1]["children"][0]["props"]["value"], "{note}");
+    let unrolled: Vec<&str> = nodes_of(&ir)
+        .into_iter()
+        .filter_map(|n| n["props"]["value"].as_str())
+        .filter(|v| *v == "alpha" || *v == "beta")
+        .collect();
+    assert!(unrolled.is_empty(), "repeatable loops must not unroll");
+
+    let optimized_path = dir.join("optimized.opuir.json");
+    let o = optimize(&ir_path, &optimized_path);
+    assert!(
+        o.status.success(),
+        "forms optimize failed: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let optimized: Json = serde_json::from_slice(&fs::read(&optimized_path).unwrap()).unwrap();
+    assert_eq!(
+        nodes_of(&optimized)
+            .into_iter()
+            .filter(|n| n.get("repeat").is_some())
+            .count(),
+        2
+    );
+    assert_eq!(optimized["tree"]["children"][2]["props"]["required"], true);
+
+    let plain = compile_ok(&fixture("features.opu"));
+    for node in nodes_of(&plain) {
+        assert!(node.get("repeat").is_none(), "plain IR gained repeat");
+        for key in ["required", "minLength", "maxLength", "pattern"] {
+            assert!(node["props"].get(key).is_none(), "plain IR gained {key}");
+        }
+    }
+}
+
+#[test]
+fn validator_props_lower_to_documented_ir_and_action() {
+    let dir = out_dir("forms-valid-ir");
+    let src = dir.join("valid.opu");
+    fs::write(
+        &src,
+        r#"app Validation {
+  state name = ""
+  Column {
+    Input(bind: name, required: true, minLength: 2, maxLength: 8, pattern: "^[A-Za-z]+$")
+    Button("Check") { form.validate() }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let input = nodes_of(&ir)
+        .into_iter()
+        .find(|n| n["kind"] == "Input")
+        .expect("Input node");
+    assert_eq!(
+        input["props"],
+        json!({
+            "bind": "name",
+            "required": true,
+            "minLength": 2,
+            "maxLength": 8,
+            "pattern": "^[A-Za-z]+$"
+        })
+    );
+    let button = nodes_of(&ir)
+        .into_iter()
+        .find(|n| n["kind"] == "Button")
+        .expect("Button node");
+    assert_eq!(
+        button["events"]["tap"],
+        json!({"op": "validate", "target": "form"})
+    );
+
+    let bad = dir.join("unknown-prop.opu");
+    fs::write(
+        &bad,
+        "app BadProp { Column { Input(required: true, bogus: 1) } }\n",
+    )
+    .unwrap();
+    let r = bin().arg("check").arg(&bad).output().expect("run check");
+    assert_eq!(r.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        err.contains("unknown prop 'bogus' on Input"),
+        "unknown prop diagnostic changed: {err}"
+    );
+    assert_error_shape(&err);
+}
+
+#[test]
+fn unknown_repeat_list_is_a_friendly_diagnostic() {
+    let dir = out_dir("forms-unknown-list");
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "state",
+            "app Bad { for item in state.missing { Text(\"{item}\") } }\n",
+            "unknown list state 'missing' in 'for'",
+        ),
+        (
+            "bare",
+            "app Bad { for item in missing { Text(\"{item}\") } }\n",
+            "unknown list state 'missing' in 'for'",
+        ),
+        (
+            "non_list",
+            "app Bad { state count = 0 for item in state.count { Text(\"{item}\") } }\n",
+            "'for' requires a list state, found int state 'count'",
+        ),
+    ];
+    for &(name, source, expected) in cases {
+        let path = dir.join(format!("{name}.opu"));
+        fs::write(&path, source).unwrap();
+        let r = bin().arg("check").arg(&path).output().expect("run check");
+        assert_eq!(r.status.code(), Some(1), "{name} must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            err.contains(expected),
+            "{name}: unexpected diagnostic: {err}"
+        );
+        assert_diag(&err, &path);
+        let out = dir.join(format!("{name}.opuir.json"));
+        let r2 = compile(&path, &out);
+        assert_eq!(r2.status.code(), Some(1), "{name}: compile must fail");
+        assert!(!out.exists(), "{name}: no IR may be written on error");
+    }
+}
+
+#[test]
+fn invalid_validator_values_are_rejected_with_help() {
+    let dir = out_dir("forms-invalid");
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "negative_min",
+            "minLength: -1",
+            "minLength must not be negative, found -1",
+        ),
+        (
+            "negative_max",
+            "maxLength: -2",
+            "maxLength must not be negative, found -2",
+        ),
+        (
+            "reversed_range",
+            "minLength: 8, maxLength: 2",
+            "maxLength 2 is less than minLength 8",
+        ),
+        (
+            "required_type",
+            "required: 1",
+            "prop 'required' expects true or false, found int",
+        ),
+        (
+            "length_type",
+            "minLength: \"3\"",
+            "prop 'minLength' expects a non-negative integer, found string",
+        ),
+        (
+            "pattern_type",
+            "pattern: 5",
+            "prop 'pattern' expects a string, found int",
+        ),
+        (
+            "pattern_group",
+            "pattern: \"(a|b)\"",
+            "invalid regex-lite pattern '(a|b)': unsupported regex syntax '('",
+        ),
+        (
+            "pattern_count",
+            "pattern: \"a{2,4}\"",
+            "invalid regex-lite pattern 'a{2,4}': unsupported regex syntax '{'",
+        ),
+        (
+            "pattern_reversed_class",
+            "pattern: \"[z-a]\"",
+            "invalid regex-lite pattern '[z-a]': reversed character range 'z-a'",
+        ),
+    ];
+    for &(name, args, expected) in cases {
+        let path = dir.join(format!("{name}.opu"));
+        fs::write(&path, input_source(args)).unwrap();
+        let r = bin().arg("check").arg(&path).output().expect("run check");
+        assert_eq!(r.status.code(), Some(1), "{name} must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            err.contains(expected),
+            "{name}: unexpected diagnostic: {err}"
+        );
+        assert_error_shape(&err);
+        let out = dir.join(format!("{name}.opuir.json"));
+        let r2 = compile(&path, &out);
+        assert_eq!(r2.status.code(), Some(1), "{name}: compile must fail");
+        assert!(!out.exists(), "{name}: no IR may be written on error");
+    }
+}
+
+#[test]
+fn all_nine_emitters_preserve_forms_metadata() {
+    let dir = out_dir("forms-emit");
+    let src = dir.join("forms.opu");
+    fs::write(&src, FORMS_SOURCE).unwrap();
+    let ir_path = dir.join("forms.opuir.json");
+    let r = compile(&src, &ir_path);
+    assert!(
+        r.status.success(),
+        "forms compile failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let ir_doc: Json = serde_json::from_slice(&fs::read(&ir_path).unwrap()).unwrap();
+    let cases: &[(&str, &str)] = &[
+        ("native", "src/main.rs"),
+        ("web", "ir.json"),
+        ("wechat", "pages/index/index.js"),
+        ("alipay", "pages/index/index.js"),
+        ("qq", "pages/index/index.js"),
+        ("douyin", "pages/index/index.js"),
+        ("baidu", "pages/index/index.js"),
+        ("kuaishou", "pages/index/index.js"),
+        ("wasm", "host.js"),
+    ];
+    for &(target, artifact) in cases {
+        let out = dir.join(format!("out-{target}"));
+        let e = emit(&ir_path, target, &out);
+        let stderr = String::from_utf8_lossy(&e.stderr);
+        assert!(e.status.success(), "{target} emit failed: {stderr}");
+        assert!(!stderr.contains("panicked"), "{target} emitter panicked");
+        assert!(out.is_dir(), "{target}: no output directory");
+        let text = fs::read_to_string(out.join(artifact))
+            .unwrap_or_else(|_| panic!("{target}: missing {artifact}"));
+        for marker in [
+            "repeat",
+            "item",
+            "list",
+            "items",
+            "required",
+            "minLength",
+            "maxLength",
+            "pattern",
+            "validate",
+            "form",
+        ] {
+            assert!(
+                text.contains(marker),
+                "{target}/{artifact} silently dropped '{marker}'"
+            );
+        }
+        match target {
+            "native" => assert!(text.contains("@validate"), "native lost validate signal"),
+            "web" => {
+                let app_js = fs::read_to_string(out.join("app.js")).unwrap();
+                assert!(app_js.contains("state[\"@validate\"]"));
+                node_check(&out.join("app.js"));
+                let html = fs::read_to_string(out.join("index.html")).unwrap();
+                assert!(html.contains("data-required=\"true\""));
+                assert!(html.contains("data-pattern="));
+            }
+            "wasm" => {
+                assert!(text.contains("OPUROM_META"), "wasm lost metadata");
+                assert!(text.contains("@validate"), "wasm lost validate signal");
+                node_check(&out.join("host.js"));
+            }
+            _ => {
+                assert!(text.contains("OPUROM_META"), "{target} lost metadata");
+                assert!(text.contains("@validate"), "{target} lost validate signal");
+                let markup_path = mini_markup_path(target).unwrap();
+                let markup = fs::read_to_string(out.join(markup_path)).unwrap();
+                assert!(markup.contains("data-repeat"), "{target} lost repeat attr");
+                assert!(
+                    markup.contains("data-required"),
+                    "{target} lost validator attrs"
+                );
+                node_check(&out.join("pages/index/index.js"));
+            }
+        }
+    }
+
+    let native_dir = dir.join("out-native");
+    let (built, build_log) = build_native(&native_dir);
+    assert!(built, "generated native forms crate failed: {build_log}");
+    let tap_id = find_tap_id(&ir_doc);
+    let (ran, stdout) = run_native(
+        &native_dir.join("target/release/opurom_native"),
+        &format!("tap {tap_id}\nstate\nquit\n"),
+    );
+    assert!(ran, "generated native forms app exited nonzero");
+    assert!(
+        stdout.contains("@validate"),
+        "native validate patch missing: {stdout}"
+    );
+}
+
+#[test]
+fn forms_layer_keeps_golden_ir_byte_identical() {
+    let dir = out_dir("forms-golden");
+    let cases = [
+        (spec("counter.opu"), fixture("golden/counter.opuir.json")),
+        (example("profile.opu"), fixture("golden/profile.opuir.json")),
+        (
+            fixture("golden/todo.opu"),
+            fixture("golden/todo.opuir.json"),
+        ),
+        (
+            example("showcase.opu"),
+            fixture("golden/showcase.opuir.json"),
+        ),
+        (example("gallery.opu"), fixture("golden/gallery.opuir.json")),
+    ];
+    for (index, (src, golden)) in cases.iter().enumerate() {
+        let out = dir.join(format!("golden-{index}.opuir.json"));
+        let r = compile(src, &out);
+        assert!(
+            r.status.success(),
+            "{} compile failed: {}",
+            src.display(),
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let got = fs::read(&out).expect("read compiled golden IR");
+        let expected = fs::read(golden).expect("read byte-level golden IR");
+        assert_eq!(got, expected, "{} changed its bytes", golden.display());
+        let ir: Json = serde_json::from_slice(&got).unwrap();
+        for node in nodes_of(&ir) {
+            assert!(node.get("repeat").is_none(), "golden IR gained repeat");
+            for key in ["required", "minLength", "maxLength", "pattern"] {
+                assert!(node["props"].get(key).is_none(), "golden IR gained {key}");
+            }
+        }
+    }
+}

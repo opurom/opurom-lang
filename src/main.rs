@@ -7,6 +7,7 @@ mod lower;
 mod modules;
 mod optimize;
 mod parser;
+mod pattern;
 mod typecheck;
 mod wasm;
 

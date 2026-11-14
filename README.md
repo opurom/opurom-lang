@@ -27,11 +27,13 @@ theme_decl    = "theme" "{" ( "mode" | "accent" | "radius" ) ":" value { "," } "
 page_decl     = "page" IDENT [";"] ;
 node          = KIND [ "(" [ args ] ")" ] [ "async" ] [ ";" | "{" { node | statement | effect } "}" ]
               | "if" "(" IDENT ")" "{" { node } "}" [ "else" "{" { node } "}" ]
-              | "for" "(" IDENT "in" ( INT | IDENT ) ")" "{" { node } "}" ;
+              | "for" "(" IDENT "in" ( INT | IDENT ) ")" "{" { node } "}"
+              | "for" IDENT "in" [ "state" "." ] IDENT "{" { node } "}" ;
 args          = ( IDENT ":" value | value ) { "," ... } [ "," ] ;
 value         = INT | FLOAT | STRING | BOOL | IDENT ;
 statement     = IDENT ( "+=" | "-=" | "=" ) expr [";"]
               | IDENT "." "toggle" "(" ")" [";"]
+              | "form" "." "validate" "(" ")" [";"]
               | "push" ":" IDENT [";"] ;
 effect        = "await" "delay" "(" INT ")" [";"]
               | "await" "fetch" "(" STRING "," IDENT ")" [";"] ;
@@ -80,11 +82,79 @@ computed_factor = [ "-" ] INT | IDENT ;
 | Visual props | `shadow`, `gradient`, `glass`, `opacity`, `border`, `animate` | passed through |
 | Gesture binding | `Button("x", gesture: longPress) { ... }` | handler under the `longPress` event |
 | Particle field | `particles: "count=64,seed=7,radius=2"` | bounded `props.particles` object |
+| Repeatable list | `for item in state.items { Text("{item}") }` | node-level `"repeat": {"item":"item","list":"items"}` with template `children` |
+| Input validators | `Input(required: true, minLength: 3, maxLength: 12, pattern: "^[A-Za-z0-9_]+$")` | same-named `props` on `Input` |
+| Form validation | `Button("Check") { form.validate() }` | `{"op":"validate","target":"form"}` action |
 
 `for` integer counts are limited to 0..64; colors are `#RRGGBB`; `opacity` is 0..1; `shadow` is
 0..8. `particles` is a comma-separated `name=value` list: `count` is required and must be
 0..512, `seed` is 0..4294967295 (default 1), `radius` is 0..32 (default 2), `alpha` is 0..1024
 (default 1024) and `color` is an optional `#RRGGBB` that falls back to the node accent.
+
+### Repeatable lists and form validation
+
+Flutter's [FormState.validate](https://raw.githubusercontent.com/flutter/flutter/main/packages/flutter/lib/src/widgets/form.dart)
+iterates registered fields, while [SliverList.builder](https://raw.githubusercontent.com/flutter/flutter/main/packages/flutter/lib/src/widgets/sliver.dart)
+and [SliverChildBuilderDelegate](https://raw.githubusercontent.com/flutter/flutter/main/packages/flutter/lib/src/widgets/scroll_delegate.dart)
+build list children by index. OPUROM lowers those ideas into additive IR metadata instead of
+runtime callbacks:
+
+```opu
+app FormDemo {
+  state items = ["alpha", "beta"]
+  state name = ""
+  Column {
+    for item in state.items {
+      Text("{item}")
+    }
+    Input(bind: name, required: true, minLength: 3, maxLength: 12, pattern: "^[A-Za-z0-9_]+$")
+    Button("Check") { form.validate() }
+  }
+}
+```
+
+`for item in items` is the bare-name shorthand. The unparenthesized form does not unroll: it
+lowers to one `Column` node whose `children` are the template and whose additive node-level
+field is `"repeat": {"item": "item", "list": "items"}`. The existing `"list"` state entry is
+reused, so a template placeholder such as `"{item}"` stays unresolved for a consumer to
+substitute once per list value. Parenthesized `for (item in items)` remains the earlier
+compile-time unroll. Unknown or non-list names produce friendly diagnostics.
+
+```json
+{
+  "id": 1,
+  "kind": "Column",
+  "props": {},
+  "children": [
+    {"id": 2, "kind": "Text", "props": {"value": "{item}"}, "children": [], "events": {}}
+  ],
+  "events": {},
+  "repeat": {"item": "item", "list": "items"}
+}
+```
+
+`required` is a bool, `minLength` and `maxLength` are non-negative integers with
+`maxLength >= minLength`, and `pattern` is a bounded regex-lite string. Patterns accept ASCII
+literals, `.`, character classes and ranges, optional `^`/`$` anchors, and one `?`, `*` or `+`
+per atom; at most 64 characters and 32 atoms are allowed. Groups, alternation, backslashes and
+`{m,n}` repetition are rejected with a message and help rather than adding a regex dependency.
+The four props lower unchanged to `props` on `Input` nodes, and `form.validate()` lowers to
+`{"op": "validate", "target": "form"}` on the tap event. Genuinely unknown props are still
+rejected. `opuromc optimize` preserves the repeat field, validator props and validate action.
+
+The nine emitters preserve these fields rather than silently dropping them:
+
+| Emitter | Preservation |
+| --- | --- |
+| `native` | `src/main.rs` embeds the full IR and emits an `@validate` patch. |
+| `web` | `ir.json` embeds the full IR; `index.html` carries `data-required`, `data-min-length`, `data-max-length` and `data-pattern`; `app.js` records `state["@validate"]`. |
+| `wechat`, `alipay`, `qq`, `douyin`, `baidu`, `kuaishou` | `pages/index/index.js` carries `OPUROM_META` and an `@validate` set signal; markup carries `data-repeat` and validator data attributes. |
+| `wasm` | `host.js` carries `OPUROM_META`, repeat/validator fields in `TREE`, and `@validate` in the host mirror; the module counts a reserved validation patch. |
+
+These emitters do not yet implement runtime repetition or field-level validation: the documented
+graceful fallback renders the template once, reserves `@validate` as a signal, and keeps every
+additive field available to a consumer that does. Plain programs gain no `repeat`, validator or
+validate keys, and the golden IR fixtures remain byte-identical.
 
 ### Gestures and navigation
 
@@ -426,7 +496,8 @@ The compiler emits node ids pre-order from 0, keeps numeric props as JSON number
 The six mini-program targets share one lowering pass and one small per-platform table
 (extensions, loop/key directives, tap/input directives, state-set API, request API, window title
 key and binding delimiters). All emitters generate code, not an IR parser. They understand the
-the interactive UI and async IR plus `when`, `unless`, `computed` and `list` state entries.
+interactive UI and async IR plus `when`, `unless`, `computed`, `list` state entries, node-level
+`repeat`, `Input` validator props and `validate` actions.
 `Icon` nodes render the canonical 24x24 stroke path on every target: the `web` target strokes it
 with Canvas 2D `Path2D`, and the six mini targets emit an inline SVG data URI on an `<image>`
 element, so the glyph matches the native renderer instead of showing its name as text.
@@ -555,7 +626,7 @@ Optimization is opt-in: default `compile` output stays byte-identical.
 cd opurom-lang
 cargo fmt --all
 cargo fmt --all -- --check
-cargo test --offline                 # 97 tests: 5 unit + 86 CLI + 6 wasm
+cargo test --offline                 # 111 tests: 5 unit + 99 CLI + 7 wasm
 RUSTFLAGS="-D warnings" cargo test --offline   # zero compiler warnings
 ```
 
@@ -565,21 +636,24 @@ plus the wasm `host.js`, runs `cargo build --release --offline` inside generated
 followed by piped-stdin sessions, and builds generated wasm crates for
 `wasm32-unknown-unknown` before instantiating them in Node's `WebAssembly` runtime with an empty
 import object. The language tests cover `else`/`unless`, computed values, list unroll, every new
-diagnostic, all nine emitters, computed native runtime patches and computed wasm ABI state. The
+diagnostic, all nine emitters, computed native runtime patches and computed wasm ABI state. Six
+new CLI tests cover repeatable-list IR and optimizer preservation, all nine emitters' additive
+metadata, unknown list names, validator props/actions, validator diagnostics and golden bytes. The
 component tests cover one, two, nested and in-app component uses, the exact expanded IR, all
 fifteen negative classes, all nine emitters and the optimizer on expanded IR, byte-identical
 plain IR, and the wasm ABI on a component-expanded tree.
 
 ## Verified status
 
-- `cargo test --offline`: 97/97 tests pass (5 unit + 86 CLI + 6 wasm); `RUSTFLAGS="-D warnings"`
+- `cargo test --offline`: 111/111 tests pass (5 unit + 99 CLI + 7 wasm); `RUSTFLAGS="-D warnings"`
   is clean and `cargo fmt --all -- --check` passes.
 - UI-only programs (`counter.opu`, `profile.opu`, `todo.opu`) compile to **byte-identical** IR;
-  no `imports`, `async`, `effects`, `computed`, `unless` or component keys are added to plain IR.
-  The 240/100 vendored catalog is byte-identical to the spec catalog.
+  no `imports`, `async`, `effects`, `computed`, `unless`, component, `repeat`, validator or
+  `validate` keys are added to plain IR. The 240/100 vendored catalog is byte-identical to the spec
+  catalog.
 - Negative fixtures cover the v0.1 classes, the interactive UI classes, the async/import
-  classes, the `else`/computed/list classes, fifteen component classes, thirteen type classes and
-  the integer overflow/range classes. No panics, no stack traces.
+  classes, the `else`/computed/list classes, fifteen component classes, thirteen type classes,
+  the integer overflow/range classes and the validator value classes. No panics, no stack traces.
 - The type checker runs before lowering: state, computed, list, interpolation, action, `valueFrom`,
   `bind`, condition, component parameter types and compile-time int arithmetic are all resolved at
   compile time. Typed and untyped source lower to identical IR, and the golden programs keep
@@ -617,8 +691,9 @@ plain IR, and the wasm ABI on a component-expanded tree.
 - **Modules are compile-time declaration merges.** There is no runtime module registry, no remote
   resolver, no code execution during import resolution and no computed or component declarations
   in imported modules.
-- **Lists are compile-time constants.** A `for` loop unrolls against the initializer, list
-  values may not contain braces, list loops are capped at 64 values and runtime list mutation is
+- **Lists are compile-time constants.** Parenthesized `for` loops unroll against the initializer,
+  list values may not contain braces and those loops are capped at 64 values. The unparenthesized
+  repeatable `for` keeps one template subtree plus `repeat` metadata, but runtime list mutation is
   not emitted.
 
 ### Later work

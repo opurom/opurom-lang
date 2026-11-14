@@ -454,8 +454,8 @@ impl<'a> Checker<'a> {
 
     fn statement(&self, stmt: &Stmt) -> DResult<()> {
         // `push:` targets a declared page, not a state; the page set is checked
-        // during lowering, where the app's `page` declarations are available.
-        if matches!(stmt.kind, StmtKind::Push) {
+        // during lowering. `form.validate()` targets a built-in form receiver.
+        if matches!(stmt.kind, StmtKind::Push | StmtKind::Validate) {
             return Ok(());
         }
         let target = self
@@ -554,7 +554,7 @@ impl<'a> Checker<'a> {
                     ));
                 }
             }
-            StmtKind::Push => {}
+            StmtKind::Push | StmtKind::Validate => {}
         }
         Ok(())
     }
@@ -822,6 +822,47 @@ impl<'a> Checker<'a> {
                     };
                     let mut scope = HashMap::new();
                     scope.insert(var.clone(), local);
+                    self.locals.push(scope);
+                    let result = node
+                        .block
+                        .as_ref()
+                        .map_or(Ok(()), |block| self.block(block));
+                    self.locals.pop();
+                    result?;
+                    continue;
+                }
+                NodeKind::Repeat {
+                    var,
+                    list,
+                    list_pos,
+                } => {
+                    let ty = self.state_of(list).ok_or_else(|| {
+                        self.err(
+                            *list_pos,
+                            format!("unknown list state '{list}' in 'for'"),
+                            "list",
+                            "unknown",
+                            format!(
+                                "declare '{list}' with a string list or use one of: {}",
+                                self.env.state_list()
+                            ),
+                        )
+                    })?;
+                    if ty != ValueTy::List {
+                        return Err(self.err(
+                            *list_pos,
+                            format!(
+                                "'for' requires a list state, found {} state '{}'",
+                                ty.name(),
+                                list
+                            ),
+                            "list",
+                            ty.name(),
+                            "declare the state with a string list or use 'for (i in 3) { ... }'",
+                        ));
+                    }
+                    let mut scope = HashMap::new();
+                    scope.insert(var.clone(), ValueTy::Str);
                     self.locals.push(scope);
                     let result = node
                         .block

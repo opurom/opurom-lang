@@ -43,6 +43,9 @@ pub const TARGETS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Additive `Input` validator props preserved in generated metadata and markup.
+const VALIDATOR_PROPS: &[&str] = &["required", "minLength", "maxLength", "pattern"];
+
 /// Responsive DOM build target. It is deliberately kept out of [`TARGETS`] so
 /// `opuromc targets` still reports exactly the nine v0.1 IR emitters; it is
 /// dispatched explicitly in [`emit`].
@@ -104,6 +107,8 @@ pub struct ENode {
     pub when: Option<String>,
     /// Optional bool state whose false value shows this node and its subtree.
     pub unless: Option<String>,
+    /// Additive repeatable-subtree metadata: `{"item": ..., "list": ...}`.
+    pub repeat: Option<Json>,
 }
 
 #[derive(Clone, Copy)]
@@ -272,6 +277,24 @@ fn read_node(v: &Json, ir_path: &str) -> DResult<ENode> {
     }
     let when = o.get("when").and_then(Json::as_str).map(str::to_string);
     let unless = o.get("unless").and_then(Json::as_str).map(str::to_string);
+    let repeat = match o.get("repeat") {
+        Some(Json::Object(fields)) => {
+            if fields
+                .keys()
+                .any(|k| !matches!(k.as_str(), "item" | "list"))
+                || fields.get("item").and_then(Json::as_str).is_none()
+                || fields.get("list").and_then(Json::as_str).is_none()
+            {
+                return Err(bad_ir(
+                    ir_path,
+                    "IR node 'repeat' needs string 'item' and 'list' fields",
+                ));
+            }
+            o.get("repeat").cloned()
+        }
+        Some(_) => return Err(bad_ir(ir_path, "IR node 'repeat' must be an object")),
+        None => None,
+    };
     Ok(ENode {
         id,
         kind,
@@ -280,6 +303,7 @@ fn read_node(v: &Json, ir_path: &str) -> DResult<ENode> {
         children,
         when,
         unless,
+        repeat,
     })
 }
 
@@ -671,9 +695,12 @@ fn validate_actions(
                 }
             }
             for action in event_actions(event) {
-                // A push is a navigation signal: its target is a declared page,
-                // not a state, so it is exempt from the mutable-state check.
-                if action.get("op").and_then(Json::as_str) == Some("push") {
+                // A push is a navigation signal and validate is a built-in form
+                // signal; neither target is a mutable state.
+                if matches!(
+                    action.get("op").and_then(Json::as_str),
+                    Some("push" | "validate")
+                ) {
                     continue;
                 }
                 if let Some(target) = action.get("target").and_then(Json::as_str) {
@@ -700,6 +727,25 @@ fn html_attr(s: &str) -> String {
         .replace('"', "&quot;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+fn validation_attrs(props: &JsonMap<String, Json>) -> String {
+    let mut out = String::new();
+    for key in VALIDATOR_PROPS {
+        if let Some(value) = props.get(*key) {
+            let rendered = match value {
+                Json::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let attr = match *key {
+                "minLength" => "min-length",
+                "maxLength" => "max-length",
+                other => other,
+            };
+            out.push_str(&format!(" data-{}=\"{}\"", attr, html_attr(&rendered)));
+        }
+    }
+    out
 }
 
 fn markup_text(s: &str) -> String {
@@ -874,6 +920,50 @@ pub fn event_actions(event: &Json) -> Vec<&Json> {
         None if event.get("op").is_some() => vec![event],
         None => Vec::new(),
     }
+}
+
+/// Preserve repeat, validator and validate-action metadata in targets that do
+/// not have native form or builder runtimes yet.
+pub fn additive_meta(tree: &ENode) -> Option<String> {
+    let mut nodes = Vec::new();
+    collect(tree, &mut nodes);
+    let mut repeat = Vec::new();
+    let mut validation = Vec::new();
+    let mut validate = Vec::new();
+    for n in &nodes {
+        if let Some(meta) = &n.repeat {
+            repeat.push(json!({"id": n.id, "repeat": meta.clone()}));
+        }
+        let mut props = JsonMap::new();
+        for key in VALIDATOR_PROPS {
+            if let Some(value) = n.props.get(*key) {
+                props.insert((*key).to_string(), value.clone());
+            }
+        }
+        if !props.is_empty() {
+            validation.push(json!({"id": n.id, "props": Json::Object(props)}));
+        }
+        for (event, action) in &n.events {
+            for one in event_actions(action) {
+                if one.get("op").and_then(Json::as_str) == Some("validate") {
+                    validate.push(json!({
+                        "id": n.id,
+                        "event": event.clone(),
+                        "action": one.clone(),
+                    }));
+                }
+            }
+        }
+    }
+    if repeat.is_empty() && validation.is_empty() && validate.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&json!({
+        "repeat": repeat,
+        "validation": validation,
+        "validate": validate,
+    }))
+    .ok()
 }
 
 fn interp_error(s: &str, off: usize, msg: String, ir_path: &str) -> Diagnostic {
@@ -1054,6 +1144,15 @@ fn native_action(action: &Json, states: &[EState], ir_path: &str) -> DResult<(St
             String::new(),
             format!(
                 "Patch {{ name: \"@nav\", value: {}.to_string() }}",
+                rust_str(target)
+            ),
+        ));
+    }
+    if op == "validate" {
+        return Ok((
+            String::new(),
+            format!(
+                "Patch {{ name: \"@validate\", value: {}.to_string() }}",
                 rust_str(target)
             ),
         ));
@@ -1979,6 +2078,12 @@ fn js_action(action: &Json, ir_path: &str) -> DResult<String> {
             js_lit(&Json::String(target.to_string()))
         ));
     }
+    if op == "validate" {
+        return Ok(format!(
+            "state[\"@validate\"] = {};",
+            js_lit(&Json::String(target.to_string()))
+        ));
+    }
     Ok(match op {
         op @ ("add" | "sub") => {
             let rhs = match action.get("valueFrom").and_then(Json::as_str) {
@@ -2198,9 +2303,10 @@ fn emit_web(
         }
         if n.kind == "Input" {
             let placeholder = html_attr(&prop_str(&n.props, "placeholder", ""));
+            let validation = validation_attrs(&n.props);
             input_html.push_str(&format!(
-                "    <input id=\"n{}\" placeholder=\"{}\">\n",
-                n.id, placeholder
+                "    <input id=\"n{}\" placeholder=\"{}\"{}>\n",
+                n.id, placeholder, validation
             ));
             input_listeners.push_str(&format!(
                 "const el{} = document.getElementById(\"n{}\");\nif (el{}) {{ el{}.addEventListener(\"input\", function (e) {{ applyInput({}, e.target.value); }}); }}\n",
@@ -2541,6 +2647,12 @@ fn markup_node(
             p.touch_start_attr, p.touch_move_attr, p.touch_end_attr
         ));
     }
+    if let Some(meta) = &n.repeat {
+        a11y_attr.push_str(&format!(
+            " data-repeat=\"{}\"",
+            html_attr(&meta.to_string())
+        ));
+    }
     match n.kind.as_str() {
         "Text" => {
             let value = markup_interp(&prop_str(&n.props, "value", ""), p, ir_path)?;
@@ -2571,8 +2683,9 @@ fn markup_node(
             } else {
                 String::new()
             };
+            let validation = validation_attrs(&n.props);
             out.push_str(&format!(
-                "{pad}<input class=\"n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr} placeholder=\"{placeholder}\"{value}{input} />\n"
+                "{pad}<input class=\"n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr} placeholder=\"{placeholder}\"{value}{input}{validation} />\n"
             ));
         }
         "Image" => {
@@ -2713,6 +2826,12 @@ fn mini_action(action: &Json, p: &Platform, ir_path: &str) -> DResult<String> {
     if op == "push" {
         return Ok(format!(
             "this.{set}({{\"@nav\": {}}});",
+            js_lit(&Json::String(target.to_string()))
+        ));
+    }
+    if op == "validate" {
+        return Ok(format!(
+            "this.{set}({{\"@validate\": {}}});",
             js_lit(&Json::String(target.to_string()))
         ));
     }
@@ -2967,9 +3086,14 @@ fn emit_mini(
              \x20 },\n",
         );
     }
-    let index_js = format!(
-        "// Generated by opuromc for {}; straight-line code, no IR interpreter.\nPage({{\n  data: {},\n{}}});\n",
-        p.key, data_js, methods
+    let mut prefix = format!(
+        "// Generated by opuromc for {}; straight-line code, no IR interpreter.\n",
+        p.key
     );
+    if let Some(meta) = additive_meta(tree) {
+        prefix.push_str("// Additive metadata: consumers repeat templates and validate inputs; this emitter renders the template once.\n");
+        prefix.push_str(&format!("const OPUROM_META = {meta};\n"));
+    }
+    let index_js = format!("{prefix}Page({{\n  data: {},\n{}}});\n", data_js, methods);
     write(out, "pages/index/index.js", &index_js, ir_path)
 }
