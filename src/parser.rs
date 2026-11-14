@@ -175,6 +175,7 @@ pub struct ThemeDecl {
     pub accent: Option<String>,
     pub radius: Option<i64>,
     pub font_scale: Option<f64>,
+    pub font_family: Option<String>,
     pub transition: Option<String>,
     pub pos: Pos,
 }
@@ -1123,6 +1124,7 @@ impl<'a> Parser<'a> {
             accent: None,
             radius: None,
             font_scale: None,
+            font_family: None,
             transition: None,
             pos: start,
         };
@@ -1214,6 +1216,22 @@ impl<'a> Parser<'a> {
                     };
                     decl.font_scale = Some(fs);
                 }
+                "fontFamily" => {
+                    let (v, vp) = self.value()?;
+                    let family = match v {
+                        Value::Lit(Lit::Str(s)) => s,
+                        _ => {
+                            return Err(Diagnostic::new(
+                                self.path,
+                                vp.line,
+                                vp.col,
+                                "'fontFamily' expects a font family string",
+                                "write 'fontFamily: \"Inter\"'",
+                            ))
+                        }
+                    };
+                    decl.font_family = Some(family);
+                }
                 "transition" => {
                     let (v, vp) = self.value()?;
                     let kind = match v {
@@ -1245,7 +1263,7 @@ impl<'a> Parser<'a> {
                         kp.line,
                         kp.col,
                         format!("unknown theme key '{other}'"),
-                        "theme accepts: mode, accent, radius, fontScale, transition",
+                        "theme accepts: mode, accent, radius, fontScale, fontFamily, transition",
                     ));
                 }
             }

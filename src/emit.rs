@@ -48,6 +48,29 @@ pub const TARGETS: &[(&str, &str)] = &[
 /// dispatched explicitly in [`emit`].
 pub const WEB_DOM_TARGET: &str = "web-dom";
 
+/// Platform-adaptive system font stack. A CSS `font-family` list resolves to the
+/// first family installed on the host, so one declaration renders PingFang on
+/// macOS/iOS, Microsoft YaHei on Windows, and Noto Sans CJK / Roboto on Linux
+/// and Android without any per-OS branch. Concrete family names (not the
+/// `-apple-system` keyword) keep the list valid inside a canvas `ctx.font`.
+pub const SYSTEM_FONT_STACK: &str =
+    "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Microsoft JhengHei', \
+     'Segoe UI', Roboto, 'Noto Sans CJK SC', 'Source Han Sans SC', 'Noto Sans CJK JP', \
+     'Helvetica Neue', Arial, sans-serif";
+
+/// Effective font stack for an IR: a theme `fontFamily` leads the system stack
+/// so a project can ship a bundled typeface while keeping every OS fallback.
+pub fn theme_font_stack(ir: &Json) -> String {
+    match ir
+        .get("theme")
+        .and_then(|t| t.get("fontFamily"))
+        .and_then(|v| v.as_str())
+    {
+        Some(custom) if !custom.trim().is_empty() => format!("{custom}, {SYSTEM_FONT_STACK}"),
+        _ => SYSTEM_FONT_STACK.to_string(),
+    }
+}
+
 /// Path of the sibling responsive DOM emitter, resolved next to this crate.
 fn web_dom_emitter_path() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -914,9 +937,16 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
         ),
         "web" => emit_web(&ir, &app, &states, &computed, &tree, out, ir_path),
         "web-dom" => emit_web_dom(ir_path, out),
-        "wasm" => {
-            crate::wasm::emit_wasm(&app, &states, &computed, &tree, out, ir_path, has_effects)
-        }
+        "wasm" => crate::wasm::emit_wasm(
+            &app,
+            &states,
+            &computed,
+            &tree,
+            out,
+            ir_path,
+            has_effects,
+            &theme_font_stack(&ir),
+        ),
         _ => emit_mini(target, &app, &states, &computed, &tree, out, ir_path),
     }
 }
@@ -2141,6 +2171,11 @@ fn emit_web(
     } else {
         app_js.push_str("applyComputed();\nrender();\n");
     }
+    // All canvas font declarations use `sans-serif` as a placeholder; resolve
+    // the platform-adaptive stack once and apply it to the whole script and the
+    // host page, so text renders with the OS's installed typeface.
+    let font_stack = theme_font_stack(ir);
+    let app_js = app_js.replace("sans-serif", &font_stack);
     write(out, "app.js", &app_js, ir_path)?;
 
     let title = html_attr(app);
@@ -2170,6 +2205,7 @@ fn emit_web(
     let html = format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>{title}</title>\n<style>body {{ font-family: sans-serif; margin: 0; padding: 16px; }} canvas {{ background: #fff; border: 1px solid #ddd; }} #inputs {{ margin-top: 12px; }}{sr_css}{anim_css}</style>\n</head>\n<body>\n<canvas id=\"app\" width=\"800\" height=\"600\"{canvas_cls}></canvas>\n<div id=\"inputs\">\n{input_html}</div>\n<div id=\"a11y\" class=\"sr-only\">{a11y_mirror}</div>\n<script src=\"app.js\"></script>\n</body>\n</html>\n"
     );
+    let html = html.replace("font-family: sans-serif", &format!("font-family: {font_stack}"));
     write(out, "index.html", &html, ir_path)
 }
 
