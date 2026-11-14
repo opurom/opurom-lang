@@ -1063,7 +1063,7 @@ pub fn emit(target: &str, ir_text: &str, ir_path: &str, out: &Path) -> DResult<(
             has_effects,
             &theme_font_stack(&ir),
         ),
-        _ => emit_mini(target, &app, &states, &computed, &tree, out, ir_path),
+        _ => emit_mini(target, &app, &states, &computed, &tree, &ir, out, ir_path),
     }
 }
 
@@ -2959,6 +2959,7 @@ fn emit_mini(
     states: &[EState],
     computed: &[Computed],
     tree: &ENode,
+    ir: &Json,
     out: &Path,
     ir_path: &str,
 ) -> DResult<()> {
@@ -2998,9 +2999,24 @@ fn emit_mini(
 
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
-    let mut style = String::from(
-        ".col { display: flex; flex-direction: column; }\n.row { display: flex; flex-direction: row; }\n.grid { display: flex; flex-direction: row; flex-wrap: wrap; }\n@keyframes opurom-entry { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }\n.anim-entry { transform-origin: center; animation: opurom-entry 480ms ease-out both; }\n.anim-spring { animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }\n.anim-ease { animation-timing-function: ease-out; }\n.anim-inertia { animation-timing-function: ease-in-out; }\n.anim-collision { animation-timing-function: cubic-bezier(0.5, 1.6, 0.4, 1); }\n",
-    );
+    // The stage is the flat page backdrop a glass lamina refracts. Mini-program
+    // WXSS has no body element, so `page` is the platform-native canvas; a
+    // missing token falls back to `surface` and then to white. Only a strict
+    // hex colour is accepted so an authored IR cannot inject CSS.
+    let tokens = ir.get("theme").and_then(|t| t.get("tokens"));
+    let stage = tokens
+        .and_then(|t| t.get("stage"))
+        .or_else(|| tokens.and_then(|t| t.get("surface")))
+        .and_then(Json::as_str)
+        .filter(|s| {
+            let digits = s.strip_prefix('#').unwrap_or("");
+            (digits.len() == 6 || digits.len() == 8)
+                && digits.bytes().all(|b| b.is_ascii_hexdigit())
+        })
+        .unwrap_or("#ffffff");
+    let mut style = String::from(&format!(
+        "page {{ background-color: {stage}; }}\n.col {{ display: flex; flex-direction: column; }}\n.row {{ display: flex; flex-direction: row; }}\n.grid {{ display: flex; flex-direction: row; flex-wrap: wrap; }}\n@keyframes opurom-entry {{ from {{ transform: scale(0); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}\n.anim-entry {{ transform-origin: center; animation: opurom-entry 480ms ease-out both; }}\n.anim-spring {{ animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }}\n.anim-ease {{ animation-timing-function: ease-out; }}\n.anim-inertia {{ animation-timing-function: ease-in-out; }}\n.anim-collision {{ animation-timing-function: cubic-bezier(0.5, 1.6, 0.4, 1); }}\n",
+    ));
     for n in &nodes {
         let s = style_of(&n.props, n.kind == "Container", is_text_kind(&n.kind));
         if !s.is_empty() {
