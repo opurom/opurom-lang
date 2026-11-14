@@ -671,6 +671,11 @@ fn validate_actions(
                 }
             }
             for action in event_actions(event) {
+                // A push is a navigation signal: its target is a declared page,
+                // not a state, so it is exempt from the mutable-state check.
+                if action.get("op").and_then(Json::as_str) == Some("push") {
+                    continue;
+                }
                 if let Some(target) = action.get("target").and_then(Json::as_str) {
                     ensure_mutable(target, states, computed, ir_path)?;
                 }
@@ -1043,6 +1048,16 @@ fn patch_value(states: &[EState], target: &str) -> String {
 fn native_action(action: &Json, states: &[EState], ir_path: &str) -> DResult<(String, String)> {
     let op = action_str(action, "op", ir_path)?;
     let target = action_str(action, "target", ir_path)?;
+    // A push is a navigation signal, mirroring the kernel's reserved patch.
+    if op == "push" {
+        return Ok((
+            String::new(),
+            format!(
+                "Patch {{ name: \"@nav\", value: {}.to_string() }}",
+                rust_str(target)
+            ),
+        ));
+    }
     let patch = format!(
         "Patch {{ name: {}, value: {} }}",
         rust_str(target),
@@ -1958,6 +1973,12 @@ fn fallback_text(n: &ENode) -> String {
 fn js_action(action: &Json, ir_path: &str) -> DResult<String> {
     let op = action_str(action, "op", ir_path)?;
     let target = action_str(action, "target", ir_path)?;
+    if op == "push" {
+        return Ok(format!(
+            "state[\"@nav\"] = {};",
+            js_lit(&Json::String(target.to_string()))
+        ));
+    }
     Ok(match op {
         op @ ("add" | "sub") => {
             let rhs = match action.get("valueFrom").and_then(Json::as_str) {
@@ -2689,6 +2710,12 @@ fn mini_action(action: &Json, p: &Platform, ir_path: &str) -> DResult<String> {
     let op = action_str(action, "op", ir_path)?;
     let target = action_str(action, "target", ir_path)?;
     let set = &p.state_set;
+    if op == "push" {
+        return Ok(format!(
+            "this.{set}({{\"@nav\": {}}});",
+            js_lit(&Json::String(target.to_string()))
+        ));
+    }
     Ok(match op {
         op @ ("add" | "sub") => {
             let rhs = match action.get("valueFrom").and_then(Json::as_str) {

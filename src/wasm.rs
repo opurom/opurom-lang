@@ -35,12 +35,33 @@ fn collect<'a>(n: &'a ENode, out: &mut Vec<&'a ENode>) {
 
 /// One generated action step. `value` is a literal, `value_from` reads another state.
 enum Step {
-    Set { target: usize, value: i64 },
-    Add { target: usize, value: i64 },
-    Sub { target: usize, value: i64 },
-    AddFrom { target: usize, from: usize },
-    SubFrom { target: usize, from: usize },
-    SetFrom { target: usize, from: usize },
+    Set {
+        target: usize,
+        value: i64,
+    },
+    Add {
+        target: usize,
+        value: i64,
+    },
+    Sub {
+        target: usize,
+        value: i64,
+    },
+    AddFrom {
+        target: usize,
+        from: usize,
+    },
+    SubFrom {
+        target: usize,
+        from: usize,
+    },
+    SetFrom {
+        target: usize,
+        from: usize,
+    },
+    /// A navigation signal: the host mirror records the target under `@nav`.
+    /// The Rust side contributes no state step but still counts as a patch.
+    Nav,
 }
 
 fn int_index(states: &[WasmState], name: &str) -> Option<usize> {
@@ -55,6 +76,13 @@ fn steps_of(event: &Json, states: &[WasmState], ir_path: &str) -> DResult<Vec<St
             .get("op")
             .and_then(Json::as_str)
             .ok_or_else(|| bad_ir(ir_path, "event action is missing string 'op'"))?;
+        if op == "push" {
+            if action.get("target").and_then(Json::as_str).is_none() {
+                return Err(bad_ir(ir_path, "push action is missing string 'target'"));
+            }
+            out.push(Step::Nav);
+            continue;
+        }
         let target = action
             .get("target")
             .and_then(Json::as_str)
@@ -147,6 +175,8 @@ fn emit_steps(steps: &[Step], indent: &str) -> String {
             Step::SetFrom { target, from } => {
                 out.push_str(&format!("{indent}set_state({target}, state({from}));\n"))
             }
+            // Navigation is a host-side signal; no WASM state step.
+            Step::Nav => {}
         }
     }
     out
@@ -576,7 +606,9 @@ fn host_source(
         "function applyMirror(id) {\n",
         "  for (const action of MIRROR_ACTIONS[id] || []) {\n",
         "    const target = action.target;\n",
-        "    if (action.op === \"toggle\") {\n",
+        "    if (action.op === \"push\") {\n",
+        "      mirror[\"@nav\"] = target;\n",
+        "    } else if (action.op === \"toggle\") {\n",
         "      mirror[target] = !mirror[target];\n",
         "    } else if (action.op === \"set\") {\n",
         "      mirror[target] = action.valueFrom !== undefined ? mirror[action.valueFrom] : action.value;\n",

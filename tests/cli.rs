@@ -1191,6 +1191,112 @@ fn canvas_web_emitter_binds_gestures_with_a_clock_free_recognizer() {
 }
 
 #[test]
+fn all_targets_emit_navigation_signals() {
+    let dir = out_dir("emit-nav");
+    let ir = dir.join("nav.opuir.json");
+    let src = dir.join("nav.opu");
+    fs::write(
+        &src,
+        "app Nav {\n  page Home;\n  page Settings;\n  Button(\"Go\") { push: Settings }\n}\n",
+    )
+    .unwrap();
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    // native: a reserved @nav patch, no state mutation.
+    let native = out_dir("emit-nav-native");
+    let r = emit(&ir, "native", &native);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let main_rs = fs::read_to_string(native.join("src/main.rs")).unwrap();
+    assert!(main_rs.contains("name: \"@nav\", value: \"Settings\".to_string()"));
+    let (built, stderr) = build_native(&native);
+    assert!(built, "native build failed:\n{stderr}");
+    let (ran, stdout) = run_native(
+        &native.join("target/release/opurom_native"),
+        "tap 0\nquit\n",
+    );
+    assert!(ran, "native binary exited nonzero");
+    assert!(stdout.contains("patch @nav=Settings"), "{stdout}");
+
+    // canvas web and the six mini targets: the same reserved signal.
+    let web = out_dir("emit-nav-web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let app_js = fs::read_to_string(web.join("app.js")).unwrap();
+    assert!(
+        app_js.contains("state[\"@nav\"] = \"Settings\";"),
+        "{app_js}"
+    );
+    for target in ["wechat", "alipay", "qq", "douyin", "baidu", "kuaishou"] {
+        let out = out_dir(&format!("emit-nav-{target}"));
+        let r = emit(&ir, target, &out);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        let js = fs::read_to_string(out.join("pages/index/index.js")).unwrap();
+        assert!(js.contains("\"@nav\": \"Settings\""), "{target} nav signal");
+        let check = Command::new("node")
+            .arg("--check")
+            .arg(out.join("pages/index/index.js"))
+            .output()
+            .expect("run node --check");
+        assert!(check.status.success(), "{target} JS invalid");
+    }
+
+    // wasm: the host mirror records the signal and the tap returns one patch.
+    let wasm = out_dir("emit-nav-wasm");
+    let r = emit(&ir, "wasm", &wasm);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let host = fs::read_to_string(wasm.join("host.js")).unwrap();
+    assert!(host.contains("{ op: \"push\", target: \"Settings\" }"));
+    assert!(host.contains("mirror[\"@nav\"] = target;"));
+    let lib = fs::read_to_string(wasm.join("src/lib.rs")).unwrap();
+    assert!(lib.contains("fn tap_0() -> u32"));
+    let build = Command::new(cargo_path())
+        .arg("build")
+        .arg("--release")
+        .arg("--target")
+        .arg("wasm32-unknown-unknown")
+        .current_dir(&wasm)
+        .env("CARGO_TARGET_DIR", wasm.join("target"))
+        .env(
+            "PATH",
+            format!(
+                "{}/.cargo/bin:{}",
+                std::env::var("HOME").unwrap_or_default(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .output()
+        .expect("run cargo build --release --target wasm32-unknown-unknown");
+    assert!(
+        build.status.success(),
+        "wasm build failed:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let artifact = wasm.join("target/wasm32-unknown-unknown/release/opurom_wasm.wasm");
+    assert!(artifact.is_file(), "no .wasm artifact");
+    let script = dir.join("nav.mjs");
+    fs::write(
+        &script,
+        "import { readFile } from \"node:fs/promises\";\nconst bytes = await readFile(process.argv[2]);\nconst m = await WebAssembly.instantiate(bytes, {});\nconst e = m.instance.exports;\nconsole.log(JSON.stringify({ tap: e.opu_tap(0), unknown: e.opu_tap(9999) }));\n",
+    )
+    .unwrap();
+    let run = Command::new("node")
+        .arg(&script)
+        .arg(&artifact)
+        .output()
+        .expect("run node nav conformance");
+    assert!(
+        run.status.success(),
+        "nav conformance failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let text = String::from_utf8_lossy(&run.stdout);
+    let got: serde_json::Value = serde_json::from_str(text.trim()).expect("parse nav JSON");
+    assert_eq!(got["tap"], 1, "{text}");
+    assert_eq!(got["unknown"], 0, "{text}");
+}
+
+#[test]
 fn effects_and_animation_stay_absent_without_the_props() {
     // A source with no visual-effect or entry-animation props must not gain
     // effect drawing, keyframes or an animation class; `animate: none` is
