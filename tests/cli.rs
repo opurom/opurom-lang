@@ -1750,9 +1750,7 @@ fn components_lists_240_rows() {
     }
     for name in FLUTTER_COMPONENTS {
         assert!(
-            lines
-                .iter()
-                .any(|l| l.starts_with(&format!("{name} | "))),
+            lines.iter().any(|l| l.starts_with(&format!("{name} | "))),
             "missing Flutter-aligned catalog row {name}"
         );
     }
@@ -3469,7 +3467,11 @@ fn unknown_prop_on_new_component_is_a_friendly_diagnostic() {
         "app BadProp {\n  Column {\n    Scaffold(bogus: 1)\n  }\n}\n",
     )
     .unwrap();
-    let r = bin().arg("check").arg(&src_path).output().expect("run check");
+    let r = bin()
+        .arg("check")
+        .arg(&src_path)
+        .output()
+        .expect("run check");
     assert_eq!(r.status.code(), Some(1));
     let err = String::from_utf8_lossy(&r.stderr);
     assert!(err.contains("unknown prop 'bogus' on Scaffold"), "{err}");
