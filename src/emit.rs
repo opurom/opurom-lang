@@ -7,7 +7,7 @@ use serde_json::{json, Map as JsonMap, Value as Json};
 
 use crate::diag::{DResult, Diagnostic};
 use crate::icons;
-use crate::lower::{interp_parts, offset_pos, Part};
+use crate::lower::{interp_parts, offset_pos, Part, EXTENDED_PRIMITIVE_KINDS};
 use crate::parser::Pos;
 
 pub const TARGETS: &[(&str, &str)] = &[
@@ -2528,6 +2528,40 @@ fn markup_node(
             out.push_str(&format!(
                 "{pad}<view class=\"n{id}{anim}\"{style_attr}{cond_attr}{a11y_attr}>{inner}</view>\n"
             ));
+        }
+        k if EXTENDED_PRIMITIVE_KINDS.contains(&k) => {
+            // Structured extended-primitive markup: a kind-specific class plus
+            // every prop as a data attribute, so mini-program CSS and scripts
+            // can style or drive each primitive without losing its numbers.
+            let slug = k.to_lowercase();
+            let mut data = format!(" data-kind=\"{}\"", html_attr(k));
+            for (key, value) in &n.props {
+                let rendered = match value {
+                    Json::String(s) => markup_interp(s, p, ir_path)?,
+                    other => other.to_string(),
+                };
+                let attr = key.replace('_', "-");
+                data.push_str(&format!(" data-{}=\"{}\"", attr, html_attr(&rendered)));
+            }
+            if n.children.is_empty() {
+                let label = markup_text(&fallback_text(n));
+                let inner = if label.is_empty() {
+                    String::new()
+                } else {
+                    format!("<text>{label}</text>")
+                };
+                out.push_str(&format!(
+                    "{pad}<view class=\"opu-x opu-x-{slug} n{id}{anim}\"{data}{style_attr}{cond_attr}{a11y_attr}>{inner}</view>\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "{pad}<view class=\"opu-x opu-x-{slug} n{id}{anim}\"{data}{style_attr}{cond_attr}{a11y_attr}>\n"
+                ));
+                for child in &n.children {
+                    markup_node(child, p, depth + 1, out, ir_path)?;
+                }
+                out.push_str(&format!("{pad}</view>\n"));
+            }
         }
         kind => {
             // Documented fallback: an unknown kind renders as a Container
