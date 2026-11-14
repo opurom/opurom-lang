@@ -32,9 +32,8 @@ fn compile(dir: &Path, file: &str) -> Result<Value, String> {
         .output()
         .unwrap();
     if result.status.success() {
-        Ok(serde_json::from_slice(&result.stdout).unwrap_or_else(|_| {
-            serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap()
-        }))
+        Ok(serde_json::from_slice(&result.stdout)
+            .unwrap_or_else(|_| serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap()))
     } else {
         Err(String::from_utf8_lossy(&result.stderr).to_string())
     }
@@ -91,7 +90,10 @@ fn package_project(tag: &str, main: &str) -> PathBuf {
         &dir.join("registry/opurom-ui/0.1.0/opurom-pkg.json"),
         r##"{"name":"opurom-ui","version":"0.1.0","files":["opurom-pkg.json","theme/default.opu"]}"##,
     );
-    write(&dir.join("registry/opurom-ui/0.1.0/theme/default.opu"), THEME_MODULE);
+    write(
+        &dir.join("registry/opurom-ui/0.1.0/theme/default.opu"),
+        THEME_MODULE,
+    );
     write(&dir.join("main.opu"), main);
     dir
 }
@@ -128,7 +130,10 @@ app Packages {
 fn a_missing_lockfile_leaves_plain_module_roots_working() {
     let dir = unique("no-lock");
     write(&dir.join("opurom.json"), MANIFEST);
-    write(&dir.join("registry/shared.opu"), "state shared = \"from-root\"\n");
+    write(
+        &dir.join("registry/shared.opu"),
+        "state shared = \"from-root\"\n",
+    );
     write(
         &dir.join("main.opu"),
         r#"import "registry/shared.opu";
@@ -171,7 +176,11 @@ app Escape {
 "#,
     );
     let lock = dir.join("opurom.lock");
-    fs::write(&lock, LOCK.replace("registry/opurom-ui/0.1.0", "../../escape-pkg")).unwrap();
+    fs::write(
+        &lock,
+        LOCK.replace("registry/opurom-ui/0.1.0", "../../escape-pkg"),
+    )
+    .unwrap();
     let error = compile(&dir, "main.opu").expect_err("an escaping lock path must be rejected");
     // The traversal guard fires before the containment check, so the
     // diagnostic names the unsafe path form either way.
@@ -217,7 +226,10 @@ fn a_package_icon_name_compiles_and_carries_path_data() {
         "sha256": "0",
         "files": []
     }));
-    write(&dir.join("opurom.lock"), &serde_json::to_string_pretty(&lock).unwrap());
+    write(
+        &dir.join("opurom.lock"),
+        &serde_json::to_string_pretty(&lock).unwrap(),
+    );
     write(
         &dir.join("registry/opurom-icons/0.1.0/opurom-pkg.json"),
         r##"{"name":"opurom-icons","version":"0.1.0","kind":"icons","entry":"icons/icons.json","files":["opurom-pkg.json","icons/icons.json"]}"##,
@@ -237,8 +249,14 @@ fn a_package_icon_name_compiles_and_carries_path_data() {
 "#,
     );
     let ir = compile(&dir, "main.opu").expect("package and built-in icons must compile");
-    let icons = ir["icons"].as_array().expect("package icons must reach the IR");
-    assert_eq!(icons.len(), 1, "built-in names must not enter the package table");
+    let icons = ir["icons"]
+        .as_array()
+        .expect("package icons must reach the IR");
+    assert_eq!(
+        icons.len(),
+        1,
+        "built-in names must not enter the package table"
+    );
     assert_eq!(icons[0]["name"], "sparkle");
     assert_eq!(icons[0]["viewBox"], "0 0 256 256");
     assert!(icons[0]["paths"].as_array().unwrap()[0]
@@ -264,5 +282,8 @@ fn an_unknown_name_still_fails_with_the_built_in_help() {
 "#,
     );
     let error = compile(&dir, "main.opu").expect_err("an unknown name must fail");
-    assert!(error.contains("unknown icon name 'no-such-glyph'"), "{error}");
+    assert!(
+        error.contains("unknown icon name 'no-such-glyph'"),
+        "{error}"
+    );
 }

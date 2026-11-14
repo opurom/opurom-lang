@@ -137,7 +137,10 @@ fn package_roots(root: &Path, manifest: &Path, doc: &Json) -> DResult<Vec<PathBu
     if dependencies.is_empty() {
         return Ok(Vec::new());
     }
-    let lock_path = manifest.parent().unwrap_or_else(|| Path::new(".")).join("opurom.lock");
+    let lock_path = manifest
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("opurom.lock");
     // A missing or malformed lockfile is not fatal: exact version pins in the
     // manifest still resolve, so a project without `opurom-pkg` can import
     // packages; only range dependencies then stay unresolved.

@@ -58,7 +58,10 @@ pub fn resolve(project_root: &Path) -> JsonMap<String, Json> {
             .iter()
             .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(name.as_str()))
         {
-            entry.get("path").and_then(|p| p.as_str()).map(PathBuf::from)
+            entry
+                .get("path")
+                .and_then(|p| p.as_str())
+                .map(PathBuf::from)
         } else if pinned.split('.').count() == 3
             && pinned.chars().all(|c| c.is_ascii_digit() || c == '.')
         {
@@ -107,7 +110,11 @@ pub fn resolve(project_root: &Path) -> JsonMap<String, Json> {
             };
             let data: Vec<Json> = paths
                 .iter()
-                .filter_map(|p| p.get("d").and_then(|d| d.as_str()).map(|d| Json::String(d.to_string())))
+                .filter_map(|p| {
+                    p.get("d")
+                        .and_then(|d| d.as_str())
+                        .map(|d| Json::String(d.to_string()))
+                })
                 .collect();
             if data.is_empty() {
                 continue;
@@ -138,7 +145,9 @@ pub fn resolve(project_root: &Path) -> JsonMap<String, Json> {
 /// so containment checks against canonicalized package directories hold even
 /// when the compiler was invoked with a relative source path.
 pub fn project_root(source_path: &str) -> PathBuf {
-    let start = Path::new(source_path).parent().unwrap_or_else(|| Path::new("."));
+    let start = Path::new(source_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
     for dir in start.ancestors() {
         if dir.join("opurom.json").is_file() {
             return fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
@@ -152,7 +161,13 @@ pub fn project_root(source_path: &str) -> PathBuf {
 
 /// A diagnostics helper for an unknown name that also is not in any package.
 pub fn unknown_error(path: &str, pos: crate::parser::Pos, name: &str, help: String) -> Diagnostic {
-    Diagnostic::new(path, pos.line, pos.col, format!("unknown icon name '{name}' on Icon"), help)
+    Diagnostic::new(
+        path,
+        pos.line,
+        pos.col,
+        format!("unknown icon name '{name}' on Icon"),
+        help,
+    )
 }
 
 #[cfg(test)]
@@ -183,7 +198,11 @@ mod tests {
             r##"{"name":"evil","version":"1.0.0","kind":"icons","entry":"icons.json"}"##,
         )
         .unwrap();
-        fs::write(dir.join("outside/icons.json"), r##"{"icons":[{"name":"x","paths":[{"d":"M0 0"}]}]}"##).unwrap();
+        fs::write(
+            dir.join("outside/icons.json"),
+            r##"{"icons":[{"name":"x","paths":[{"d":"M0 0"}]}]}"##,
+        )
+        .unwrap();
         // No lockfile: the exact-pin fallback builds registry/evil/1.0.0, which
         // does not exist, so nothing resolves and nothing escapes the root.
         assert!(resolve(&dir).is_empty());
