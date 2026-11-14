@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn vendored_catalog_is_valid_and_large() {
         let catalog = parse_catalog(CATALOG_JSON).expect("vendored catalog");
-        assert_eq!(catalog.components.len(), 240);
+        assert_eq!(catalog.components.len(), 260);
         let unique: HashSet<&str> = catalog
             .components
             .iter()

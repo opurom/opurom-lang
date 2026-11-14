@@ -37,6 +37,64 @@ const FLUTTER_COMPONENTS: &[&str] = &[
     "CupertinoSegmentedControl",
 ];
 
+const CORE_PRIMITIVES: &[&str] = &[
+    "Column",
+    "Row",
+    "Container",
+    "Text",
+    "Button",
+    "Input",
+    "Image",
+    "Spacer",
+    "Card",
+    "Divider",
+    "Icon",
+    "Badge",
+    "Progress",
+    "Switch",
+    "Slider",
+    "Checkbox",
+    "Radio",
+    "Dialog",
+    "Tabs",
+    "List",
+    "Grid",
+    "Scroll",
+    "Avatar",
+    "Spinner",
+    "Table",
+    "Chart",
+    "Calendar",
+    "RichText",
+    "Player",
+    "Map",
+    "Menu",
+    "Tooltip",
+];
+
+const FEEDBACK_DISPLAY_COMPONENTS: &[(&str, &str, &str)] = &[
+    ("Confirm", "", "Dialog"),
+    ("Drawer", "", "Sidebar"),
+    ("Toast", "", "Card"),
+    ("SuccessToast", "", "Card"),
+    ("WarningToast", "", "Card"),
+    ("ErrorToast", "", "Card"),
+    ("Tooltip", "", "Tooltip"),
+    ("HoverTooltip", "", "Tooltip"),
+    ("Notification", "", "Card"),
+    ("Badge", "label: \"8\"", "Badge"),
+    ("StatusBadge", "", "Badge"),
+    ("ProgressBar", "", "Progress"),
+    ("Progress", "value: 50", "Progress"),
+    ("RadialProgress", "", "ProgressRing"),
+    ("Spinner", "", "Spinner"),
+    ("LoadingSpinner", "", "Spinner"),
+    ("Skeleton", "", "Container"),
+    ("SkeletonCard", "", "Card"),
+    ("Avatar", "label: \"JD\"", "Avatar"),
+    ("StatusAvatar", "", "Avatar"),
+];
+
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_opuromc"))
 }
@@ -2132,15 +2190,15 @@ fn icon_names_are_validated_at_compile_time() {
 }
 
 #[test]
-fn components_lists_240_rows() {
+fn components_lists_260_rows() {
     let r = bin().arg("components").output().expect("run components");
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let text = String::from_utf8_lossy(&r.stdout);
     let lines: Vec<&str> = text.lines().collect();
     let last = *lines.last().expect("count line");
-    assert_eq!(last, "240 components", "final count line: {last}");
+    assert_eq!(last, "260 components", "final count line: {last}");
     let count: usize = last.split_whitespace().next().unwrap().parse().unwrap();
-    assert_eq!(count, 240, "catalog count: {count}");
+    assert_eq!(count, 260, "catalog count: {count}");
     assert_eq!(lines.len(), count + 1, "one row per component plus count");
     for row in &lines[..count] {
         let parts: Vec<&str> = row.split(" | ").collect();
@@ -2198,6 +2256,39 @@ fn components_lists_240_rows() {
             "missing Flutter-aligned catalog row {name}"
         );
     }
+    for name in [
+        "Modal",
+        "Confirm",
+        "Drawer",
+        "Toast",
+        "Tooltip",
+        "Notification",
+    ] {
+        assert!(
+            lines.iter().any(|l| l.starts_with(&format!("{name} | "))),
+            "missing feedback family catalog row {name}"
+        );
+    }
+    for name in [
+        "Badge",
+        "Tag",
+        "ProgressBar",
+        "ProgressRing",
+        "Spinner",
+        "Skeleton",
+        "Avatar",
+    ] {
+        assert!(
+            lines.iter().any(|l| l.starts_with(&format!("{name} | "))),
+            "missing display family catalog row {name}"
+        );
+    }
+    for &(name, _, _) in FEEDBACK_DISPLAY_COMPONENTS {
+        assert!(
+            lines.iter().any(|l| l.starts_with(&format!("{name} | "))),
+            "missing new catalog row {name}"
+        );
+    }
 }
 
 #[test]
@@ -2218,7 +2309,7 @@ fn vendored_catalog_matches_spec_when_present() {
         vendored, expected,
         "vendored catalog drifted from opurom-spec"
     );
-    assert_eq!(vendored["count"], 240);
+    assert_eq!(vendored["count"], 260);
     assert_eq!(vendored["primitives"], 100);
 }
 
@@ -3727,7 +3818,7 @@ fn expanded_ir_keeps_emitters_catalog_and_optimizer() {
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     assert_eq!(
         String::from_utf8_lossy(&r.stdout).lines().last().unwrap(),
-        "240 components",
+        "260 components",
         "the built-in catalog is unchanged"
     );
 }
@@ -3775,7 +3866,7 @@ fn canonical_extended_kinds() -> Vec<String> {
         .lines()
         .filter_map(|l| {
             let p: Vec<&str> = l.split(" | ").collect();
-            if p.len() == 3 && p[0] == p[1] {
+            if p.len() == 3 && p[0] == p[1] && !CORE_PRIMITIVES.contains(&p[0]) {
                 Some(p[0].to_string())
             } else {
                 None
@@ -3924,6 +4015,96 @@ fn unknown_prop_on_new_component_is_a_friendly_diagnostic() {
     let out = dir.join("out.opuir.json");
     assert_eq!(compile(&src_path, &out).status.code(), Some(1));
     assert!(!out.exists(), "no IR may be written on error");
+}
+
+#[test]
+fn feedback_and_display_catalog_components_compile_and_emit_every_target() {
+    let dir = out_dir("feedback-display-catalog");
+    let src_path = dir.join("components.opu");
+    let mut src = String::from("app FeedbackDisplayCatalog {\n  Column {\n");
+    for &(name, args, _) in FEEDBACK_DISPLAY_COMPONENTS {
+        src.push_str(&format!("    {name}({args})\n"));
+    }
+    src.push_str("  }\n}\n");
+    fs::write(&src_path, src).unwrap();
+
+    let ir_path = dir.join("components.opuir.json");
+    let r = compile(&src_path, &ir_path);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let ir: Json = serde_json::from_slice(&fs::read(&ir_path).unwrap()).unwrap();
+    let nodes = nodes_of(&ir);
+    assert_eq!(nodes.len(), FEEDBACK_DISPLAY_COMPONENTS.len() + 1);
+    for (index, &(name, _, primitive)) in FEEDBACK_DISPLAY_COMPONENTS.iter().enumerate() {
+        let node = &nodes[index + 1];
+        assert_eq!(node["kind"], primitive, "wrong primitive for {name}");
+        if CORE_PRIMITIVES.contains(&name) {
+            assert!(node.get("component").is_none(), "{name} is a primitive");
+        } else {
+            assert_eq!(node["component"], name, "missing catalog component {name}");
+        }
+    }
+
+    let cases: &[(&str, &str)] = &[
+        ("native", "src/main.rs"),
+        ("web", "app.js"),
+        ("wechat", "pages/index/index.js"),
+        ("alipay", "pages/index/index.js"),
+        ("qq", "pages/index/index.js"),
+        ("douyin", "pages/index/index.js"),
+        ("baidu", "pages/index/index.js"),
+        ("kuaishou", "pages/index/index.js"),
+        ("wasm", "host.js"),
+    ];
+    for &(target, artifact) in cases {
+        let out = out_dir(&format!("feedback-display-{target}"));
+        let e = emit(&ir_path, target, &out);
+        assert!(
+            e.status.success(),
+            "{target} emit failed: {}",
+            String::from_utf8_lossy(&e.stderr)
+        );
+        let file = out.join(artifact);
+        assert!(file.is_file(), "{target}: missing {artifact}");
+        if artifact.ends_with(".js") {
+            node_check(&file);
+        }
+    }
+}
+
+#[test]
+fn unknown_props_on_feedback_and_display_components_are_friendly() {
+    let dir = out_dir("feedback-display-badprop");
+    for &(name, args, _) in FEEDBACK_DISPLAY_COMPONENTS {
+        let call_args = if args.is_empty() {
+            String::from("bogus: 1")
+        } else {
+            format!("{args}, bogus: 1")
+        };
+        let src_path = dir.join(format!("{name}-bad.opu"));
+        fs::write(
+            &src_path,
+            format!("app BadProp {{\n  Column {{\n    {name}({call_args})\n  }}\n}}\n"),
+        )
+        .unwrap();
+        let r = bin()
+            .arg("check")
+            .arg(&src_path)
+            .output()
+            .expect("run check");
+        assert_eq!(r.status.code(), Some(1), "{name} must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            err.contains(&format!("unknown prop 'bogus' on {name}")),
+            "{name}: unexpected diagnostic: {err}"
+        );
+        assert_diag(&err, &src_path);
+
+        let out = dir.join(format!("{name}-out.opuir.json"));
+        let r2 = compile(&src_path, &out);
+        assert_eq!(r2.status.code(), Some(1), "{name}: compile must fail");
+        assert!(!out.exists(), "{name}: no IR may be written on error");
+    }
 }
 
 // ------------------------------------------------- static types and inference ---
@@ -5300,6 +5481,9 @@ fn grid_compact_columns_lower_as_a_numeric_prop() {
     )
     .unwrap();
     let r = compile(&bad, &dir.join("bad.opuir.json"));
-    assert!(!r.status.success(), "a non-numeric compactColumns must be rejected");
+    assert!(
+        !r.status.success(),
+        "a non-numeric compactColumns must be rejected"
+    );
     assert!(String::from_utf8_lossy(&r.stderr).contains("compactColumns"));
 }

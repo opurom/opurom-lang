@@ -112,11 +112,11 @@ fn run() -> DResult<()> {
         }
         Some("components") => {
             let catalog = catalog::catalog()?;
-            if catalog.components.len() != 240 {
+            if catalog.components.len() != 260 {
                 return Err(Diagnostic::file(
                     "opuromc",
                     format!(
-                        "catalog has {} components, expected 240",
+                        "catalog has {} components, expected 260",
                         catalog.components.len()
                     ),
                     "sync the vendored catalog in src/catalog.json with opurom-spec",
