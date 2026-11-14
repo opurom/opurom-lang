@@ -1128,6 +1128,69 @@ fn mini_targets_bind_gestures_with_a_deterministic_recognizer() {
 }
 
 #[test]
+fn canvas_web_emitter_binds_gestures_with_a_clock_free_recognizer() {
+    let dir = out_dir("emit-gesture-web");
+    let ir = dir.join("gesture.opuir.json");
+    let src = dir.join("gesture.opu");
+    fs::write(
+        &src,
+        "app CG {\n  state n: int = 0;\n  Column(gap: 8) {\n    Button(\"D\", gesture: doubleTap) { n += 1 }\n    Button(\"L\", gesture: longPress) { n += 5 }\n    Button(\"G\", gesture: drag) { n += 10 }\n  }\n}\n",
+    )
+    .unwrap();
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = out_dir("emit-gesture-web-out");
+    let r = emit(&ir, "web", &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    let js = fs::read_to_string(out.join("app.js")).unwrap();
+    for method in [
+        "async function applyDoubleTap(id)",
+        "async function applyLongPress(id)",
+        "async function applyDrag(id)",
+        "function gestureHit(x, y)",
+        "pointerdown",
+        "pointermove",
+        "pointerup",
+    ] {
+        assert!(js.contains(method), "canvas web generates {method}");
+    }
+    assert!(!js.contains("Date.now"), "recognizer is clock-free");
+    assert!(
+        js.contains("e.timeStamp"),
+        "recognizer uses event timeStamp"
+    );
+    let check = Command::new("node")
+        .arg("--check")
+        .arg(out.join("app.js"))
+        .output()
+        .expect("run node --check");
+    assert!(
+        check.status.success(),
+        "canvas web JS invalid: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    // A program without gestures stays byte-identical: no recognizer is emitted.
+    let plain = dir.join("plain.opu");
+    fs::write(
+        &plain,
+        "app CP {\n  state n: int = 0;\n  Button(\"T\") { n += 1 }\n}\n",
+    )
+    .unwrap();
+    let plain_ir = dir.join("plain.opuir.json");
+    let r = compile(&plain, &plain_ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let plain_out = out_dir("emit-gesture-web-plain");
+    let r = emit(&plain_ir, "web", &plain_out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let plain_js = fs::read_to_string(plain_out.join("app.js")).unwrap();
+    assert!(!plain_js.contains("gestureHit"));
+    assert!(!plain_js.contains("pointerdown"));
+    assert!(plain_js.contains("applyTap"));
+}
+
+#[test]
 fn effects_and_animation_stay_absent_without_the_props() {
     // A source with no visual-effect or entry-animation props must not gain
     // effect drawing, keyframes or an animation class; `animate: none` is

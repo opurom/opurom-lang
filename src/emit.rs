@@ -2108,6 +2108,8 @@ fn emit_web(
     let mut tap_arms = String::new();
     let mut input_arms = String::new();
     let mut clicks = String::new();
+    let mut gesture_arms = [String::new(), String::new(), String::new()];
+    let mut gesture_hits = String::new();
     let mut input_html = String::new();
     let mut input_listeners = String::new();
     for n in &nodes {
@@ -2131,6 +2133,37 @@ fn emit_web(
                     fmt_num(b.x + b.w),
                     fmt_num(b.y),
                     fmt_num(b.y + b.h),
+                    n.id
+                ));
+            }
+        }
+        // Gesture nodes get one hit-test arm plus an action chain per event.
+        let has_gesture = n
+            .events
+            .keys()
+            .any(|k| matches!(k.as_str(), "doubleTap" | "longPress" | "drag"));
+        if has_gesture {
+            let b = boxes.get(&n.id).copied().unwrap_or(Box2 {
+                x: 0.0,
+                y: 0.0,
+                w: 0.0,
+                h: 0.0,
+            });
+            gesture_hits.push_str(&format!(
+                "  if (x >= {} && x <= {} && y >= {} && y <= {}) return {};\n",
+                fmt_num(b.x),
+                fmt_num(b.x + b.w),
+                fmt_num(b.y),
+                fmt_num(b.y + b.h),
+                n.id
+            ));
+        }
+        for (i, event) in ["doubleTap", "longPress", "drag"].iter().enumerate() {
+            if let Some(action) = n.events.get(*event) {
+                let effect_code = web_effects(&event_effects(action, ir_path)?, ir_path)?;
+                let code = js_action_chain(action, ir_path)?;
+                gesture_arms[i].push_str(&format!(
+                    "  if (id === {}) {{ {effect_code}{code}  {computed_call}render(); return; }}\n",
                     n.id
                 ));
             }
@@ -2175,6 +2208,44 @@ fn emit_web(
     app_js.push_str("function applyInput(id, text) {\n");
     app_js.push_str(&input_arms);
     app_js.push_str("}\n\n");
+    if !gesture_hits.is_empty() {
+        for (i, name) in ["applyDoubleTap", "applyLongPress", "applyDrag"]
+            .iter()
+            .enumerate()
+        {
+            app_js.push_str(&format!("async function {name}(id) {{\n"));
+            app_js.push_str(&gesture_arms[i]);
+            app_js.push_str("}\n\n");
+        }
+        app_js.push_str("function gestureHit(x, y) {\n");
+        app_js.push_str(&gesture_hits);
+        app_js.push_str("  return -1;\n}\n\n");
+        // The recognizer reads the event's own timeStamp (no wall clock) and
+        // one pointer: a moved pointer is drag, a stationary hold of >=500 ms
+        // is longPress, and two short taps within 300 ms are doubleTap.
+        app_js.push_str(concat!(
+            "let _g = null;\n",
+            "let _lastTap = {};\n",
+            "canvas.addEventListener(\"pointerdown\", function (e) {\n",
+            "  const rect = canvas.getBoundingClientRect();\n",
+            "  const id = gestureHit(e.clientX - rect.left, e.clientY - rect.top);\n",
+            "  _g = id < 0 ? null : { id: id, x: e.clientX, y: e.clientY, t: e.timeStamp, moved: false };\n",
+            "});\n",
+            "canvas.addEventListener(\"pointermove\", function (e) {\n",
+            "  if (!_g) return;\n",
+            "  if (Math.abs(e.clientX - _g.x) > 10 || Math.abs(e.clientY - _g.y) > 10) _g.moved = true;\n",
+            "});\n",
+            "canvas.addEventListener(\"pointerup\", function (e) {\n",
+            "  if (!_g) return;\n",
+            "  const g = _g; _g = null;\n",
+            "  const dt = e.timeStamp - g.t;\n",
+            "  if (g.moved) applyDrag(g.id);\n",
+            "  else if (dt >= 500) applyLongPress(g.id);\n",
+            "  else if (_lastTap[g.id] !== undefined && g.t - _lastTap[g.id] <= 300) { _lastTap[g.id] = undefined; applyDoubleTap(g.id); }\n",
+            "  else _lastTap[g.id] = g.t;\n",
+            "});\n\n",
+        ));
+    }
     if !clicks.is_empty() {
         app_js.push_str("canvas.addEventListener(\"click\", function (e) {\n");
         app_js.push_str("  const rect = canvas.getBoundingClientRect();\n");
