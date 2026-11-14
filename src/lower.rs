@@ -449,9 +449,9 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             tap: false,
         },
         "Button" => KindInfo {
-            props: &["label"],
+            props: &["label", "width"],
             required: &["label"],
-            numeric: &[],
+            numeric: &["width"],
             positional: Some("label"),
             children: false,
             tap: true,
@@ -464,9 +464,13 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
                 "minLength",
                 "maxLength",
                 "pattern",
+                "textBuffer",
+                "secure",
+                "value",
+                "width",
             ],
             required: &[],
-            numeric: &[],
+            numeric: &["width"],
             positional: None,
             children: false,
             tap: false,
@@ -512,9 +516,9 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             tap: false,
         },
         "Badge" => KindInfo {
-            props: &["label"],
+            props: &["label", "width"],
             required: &["label"],
-            numeric: &[],
+            numeric: &["width"],
             positional: None,
             children: false,
             tap: false,
@@ -2717,6 +2721,9 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             if let Some(ref ff) = t.font_family {
                 theme["fontFamily"] = json!(ff);
             }
+            if let Some(ref fm) = t.font_metrics {
+                theme["fontMetrics"] = json!(fm);
+            }
             // Design tokens land in the IR theme so every target resolves the
             // same stage and ink colors; nothing is written when none are set.
             let mut tokens_json = JsonMap::new();
@@ -2729,6 +2736,12 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
                     check_color(&ctx, t.pos, key, color)?;
                     tokens_json.insert(key.to_string(), json!(color));
                 }
+            }
+            // Semantic tokens share the same `tokens` object; a later entry
+            // simply wins, so the stage/ink and semantic keys never split.
+            for (name, color) in &t.tokens {
+                check_color(&ctx, t.pos, name, color)?;
+                tokens_json.insert(name.clone(), json!(color));
             }
             if !tokens_json.is_empty() {
                 theme["tokens"] = json!(tokens_json);

@@ -6547,3 +6547,202 @@ fn optimizer_rejects_inconsistent_multi_page_ir() {
         "got: {stderr}"
     );
 }
+
+// ---------------------------------------------------- theme fontMetrics / tokens ----
+
+#[test]
+fn theme_font_metrics_and_tokens_lower_to_ir() {
+    let dir = out_dir("theme-metrics");
+    let src = dir.join("metrics.opu");
+    fs::write(
+        &src,
+        "app Metrics {\n  theme {\n    fontMetrics: proportional\n    tokens: { success: \"#1FB14C\", warning: \"#FD960E\", error: \"#F62B35\", info: \"#0A71FC\" }\n  }\n  Container { Text(\"hi\") }\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    assert_eq!(ir["theme"]["fontMetrics"], json!("proportional"));
+    assert_eq!(ir["theme"]["tokens"]["success"], json!("#1FB14C"));
+    assert_eq!(ir["theme"]["tokens"]["warning"], json!("#FD960E"));
+    assert_eq!(ir["theme"]["tokens"]["error"], json!("#F62B35"));
+    assert_eq!(ir["theme"]["tokens"]["info"], json!("#0A71FC"));
+
+    // The bare `tokens { ... }` form (no colon) parses identically.
+    let bare = dir.join("bare.opu");
+    fs::write(
+        &bare,
+        "app Bare {\n  theme { fontMetrics: fixed tokens { success: \"#1FB14C\" } }\n  Container { Text(\"hi\") }\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&bare);
+    assert_eq!(ir["theme"]["fontMetrics"], json!("fixed"));
+    assert_eq!(ir["theme"]["tokens"]["success"], json!("#1FB14C"));
+}
+
+#[test]
+fn theme_tokens_merge_with_surface_stage_behavior() {
+    let dir = out_dir("theme-merge");
+    let src = dir.join("merge.opu");
+    fs::write(
+        &src,
+        "app Merge {\n  theme { surface: \"#F5F6F8\" stage: \"#0B1220\" tokens: { primary: \"#097FEB\" } }\n  Container { Text(\"hi\") }\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    assert_eq!(ir["theme"]["tokens"]["surface"], json!("#F5F6F8"));
+    assert_eq!(ir["theme"]["tokens"]["stage"], json!("#0B1220"));
+    assert_eq!(ir["theme"]["tokens"]["primary"], json!("#097FEB"));
+    // Absent fontMetrics writes no key, keeping golden IR unchanged.
+    assert_eq!(ir["theme"].get("fontMetrics"), None);
+}
+
+#[test]
+fn theme_font_metrics_rejects_bogus_values() {
+    let dir = out_dir("theme-metrics-bad");
+    let src = dir.join("bad.opu");
+    fs::write(
+        &src,
+        "app Bad { theme { fontMetrics: elastic } Container { Text(\"hi\") } }\n",
+    )
+    .unwrap();
+    let r = compile(&src, &dir.join("bad.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(stderr.contains("unknown fontMetrics 'elastic'"), "{stderr}");
+    assert!(stderr.contains("proportional") && stderr.contains("fixed"), "{stderr}");
+}
+
+#[test]
+fn theme_tokens_reject_unknown_names_and_bad_colors() {
+    let dir = out_dir("theme-tokens-bad");
+    let unknown = dir.join("unknown.opu");
+    fs::write(
+        &unknown,
+        "app A { theme { tokens { danger: \"#FF0000\" } } Container { Text(\"hi\") } }\n",
+    )
+    .unwrap();
+    let r = compile(&unknown, &dir.join("u.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(stderr.contains("unknown theme token 'danger'"), "{stderr}");
+    assert!(stderr.contains("success, warning, error, info"), "{stderr}");
+
+    let bad_color = dir.join("badcolor.opu");
+    fs::write(
+        &bad_color,
+        "app A { theme { tokens { success: \"green\" } } Container { Text(\"hi\") } }\n",
+    )
+    .unwrap();
+    let r = compile(&bad_color, &dir.join("c.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(stderr.contains("invalid color 'green' for 'success'"), "{stderr}");
+}
+
+#[test]
+fn input_text_buffer_props_lower_and_unknown_still_rejected() {
+    let dir = out_dir("input-text-buffer");
+    let src = dir.join("input.opu");
+    fs::write(
+        &src,
+        "app Edit {\n  Input(placeholder: \"Type\", textBuffer: true, secure: true, maxLength: 32, value: \"hi\")\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let node = nodes_of(&ir)
+        .into_iter()
+        .find(|n| n["kind"] == json!("Input"))
+        .expect("an Input node");
+    assert_eq!(node["props"]["textBuffer"], json!(true));
+    assert_eq!(node["props"]["secure"], json!(true));
+    assert_eq!(node["props"]["value"], json!("hi"));
+    assert_eq!(node["props"]["maxLength"], json!(32));
+
+    let bad = dir.join("bad.opu");
+    fs::write(&bad, "app A { Input(placeholder: \"x\", blah: true) }\n").unwrap();
+    let r = compile(&bad, &dir.join("b.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(stderr.contains("unknown prop 'blah' on Input"), "{stderr}");
+    assert!(stderr.contains("textBuffer"), "{stderr}");
+}
+
+/// Read the primary artifact each of the nine emitters writes, so the test can
+/// assert the new theme keys and Input text-buffer props survive per target.
+fn primary_artifact(dir: &Path, target: &str) -> PathBuf {
+    match target {
+        "native" => dir.join("src/main.rs"),
+        "web" => dir.join("ir.json"),
+        "wasm" => dir.join("host.js"),
+        "wechat" => dir.join("pages/index/index.wxml"),
+        "alipay" => dir.join("pages/index/index.axml"),
+        "qq" => dir.join("pages/index/index.qml"),
+        "douyin" => dir.join("pages/index/index.ttml"),
+        "baidu" => dir.join("pages/index/index.swan"),
+        "kuaishou" => dir.join("pages/index/index.ksml"),
+        _ => panic!("unknown target {target}"),
+    }
+}
+
+#[test]
+fn all_nine_emitters_preserve_theme_keys_and_input_props() {
+    let dir = out_dir("emit-theme-input");
+    let src = dir.join("app.opu");
+    fs::write(
+        &src,
+        "app Carry {\n  theme {\n    fontMetrics: proportional\n    tokens: { success: \"#1FB14C\", error: \"#F62B35\" }\n  }\n  Input(placeholder: \"Type\", textBuffer: true, secure: true)\n}\n",
+    )
+    .unwrap();
+    let ir = dir.join("app.opuir.json");
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    for target in [
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
+    ] {
+        let out = out_dir(&format!("emit-theme-input-{target}"));
+        let r = emit(&ir, target, &out);
+        assert!(
+            r.status.success(),
+            "{target} emit failed: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let artifact = fs::read_to_string(primary_artifact(&out, target)).unwrap();
+        // The nine IR emitters must carry the theme keys: embedded IR (native,
+        // web) or the mini-program's app.js. wasm is a bonus host-only target.
+        if target != "wasm" {
+            let theme_carrier = match target {
+                "native" | "web" => artifact.clone(),
+                _ => fs::read_to_string(out.join("app.js")).unwrap(),
+            };
+            assert!(
+                theme_carrier.contains("proportional"),
+                "{target}: theme.fontMetrics missing:\n{theme_carrier}"
+            );
+            assert!(
+                theme_carrier.contains("#1FB14C") && theme_carrier.contains("#F62B35"),
+                "{target}: theme.tokens missing:\n{theme_carrier}"
+            );
+        }
+        // textBuffer is a hyphenated data attribute in markup, camelCase in the
+        // embedded IR/JS; accept either spelling of the same prop.
+        assert!(
+            artifact.contains("textBuffer") || artifact.contains("text-buffer"),
+            "{target}: Input textBuffer missing:\n{artifact}"
+        );
+        // Generated JS must be syntactically valid in every target that emits JS.
+        let js = match target {
+            "native" => None, // native emits Rust, checked by the native suite.
+            "web" => Some(out.join("app.js")),
+            "wasm" => Some(out.join("host.js")),
+            _ => Some(out.join("pages/index/index.js")),
+        };
+        if let Some(js) = js {
+            let check = Command::new("node")
+                .arg("--check")
+                .arg(&js)
+                .output()
+                .expect("run node --check");
+            assert!(check.status.success(), "{target}: invalid JS {js:?}");
+        }
+    }
+}

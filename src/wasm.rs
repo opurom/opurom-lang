@@ -837,7 +837,16 @@ fn node_table(tree: &ENode) -> String {
         let pad = "  ".repeat(depth);
         let mut props = String::new();
         for key in [
-            "value", "label", "color", "title", "name", "pattern", "state", "variant", "tone",
+            "value",
+            "label",
+            "color",
+            "title",
+            "name",
+            "pattern",
+            "state",
+            "variant",
+            "tone",
+            "placeholder",
         ] {
             if let Some(Json::String(v)) = n.props.get(key) {
                 props.push_str(&format!(
@@ -862,6 +871,11 @@ fn node_table(tree: &ENode) -> String {
         }
         if let Some(Json::Bool(v)) = n.props.get("required") {
             props.push_str(&format!(", required: {v}"));
+        }
+        for key in ["textBuffer", "secure"] {
+            if let Some(Json::Bool(v)) = n.props.get(key) {
+                props.push_str(&format!(", {}: {v}", key));
+            }
         }
         if let Some(repeat) = &n.repeat {
             props.push_str(&format!(", repeat: {repeat}"));

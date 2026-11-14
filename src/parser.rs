@@ -194,8 +194,22 @@ pub struct ThemeDecl {
     pub on_surface: Option<String>,
     pub stage: Option<String>,
     pub transition: Option<String>,
+    pub font_metrics: Option<String>,
+    /// Semantic design tokens as `(name, color)` pairs, in source order.
+    pub tokens: Vec<(String, String)>,
     pub pos: Pos,
 }
+
+/// Semantic token names accepted in `theme { tokens { ... } }`. The reader
+/// resolves the same set, so an unknown name fails at its source position.
+const THEME_TOKEN_NAMES: &[&str] = &[
+    "success",
+    "warning",
+    "error",
+    "info",
+    "primary",
+    "secondary",
+];
 
 /// A named route registered by `page Name;` inside the app body. Pages are the
 /// targets a `push` action navigates to; the UI for each page is supplied by
@@ -1283,6 +1297,8 @@ impl<'a> Parser<'a> {
             on_surface: None,
             stage: None,
             transition: None,
+            font_metrics: None,
+            tokens: Vec::new(),
             pos: start,
         };
         loop {
@@ -1297,7 +1313,11 @@ impl<'a> Parser<'a> {
                 ));
             }
             let (key, kp) = self.expect_ident("a theme key")?;
-            self.expect_sym(":", "write 'mode: dark' with a colon")?;
+            // `tokens` is a nested map written either as `tokens: { ... }` or
+            // the bare `tokens { ... }`; every other key needs its colon.
+            if key != "tokens" {
+                self.expect_sym(":", "write 'mode: dark' with a colon")?;
+            }
             match key.as_str() {
                 "mode" => {
                     let (v, vp) = self.value()?;
@@ -1436,13 +1456,84 @@ impl<'a> Parser<'a> {
                     }
                     decl.transition = Some(kind);
                 }
+                "fontMetrics" => {
+                    let (v, vp) = self.value()?;
+                    let metrics = match v {
+                        Value::Ident(s) => s,
+                        _ => {
+                            return Err(Diagnostic::new(
+                                self.path,
+                                vp.line,
+                                vp.col,
+                                "'fontMetrics' expects proportional or fixed",
+                                "write 'fontMetrics: proportional'",
+                            ))
+                        }
+                    };
+                    if !matches!(metrics.as_str(), "proportional" | "fixed") {
+                        return Err(Diagnostic::new(
+                            self.path,
+                            vp.line,
+                            vp.col,
+                            format!("unknown fontMetrics '{metrics}'"),
+                            "use 'proportional' or 'fixed'",
+                        ));
+                    }
+                    decl.font_metrics = Some(metrics);
+                }
+                "tokens" => {
+                    // A `tokens { name: "#RRGGBB" ... }` sub-block of semantic
+                    // colors. The block is optional after the colon so the bare
+                    // `tokens { ... }` form parses too.
+                    self.eat_sym(":");
+                    self.expect_sym("{", "a tokens block opens with '{'")?;
+                    loop {
+                        self.eat_sym(";");
+                        if self.eat_sym("}") {
+                            break;
+                        }
+                        if matches!(self.peek().tok, Tok::Eof) {
+                            return Err(self.err(
+                                "unexpected end of file, expected '}'",
+                                "close the tokens block with a matching '}'",
+                            ));
+                        }
+                        let (name, np) = self.expect_ident("a token name")?;
+                        self.expect_sym(":", "write 'success: \"#1FB14C\"' with a colon")?;
+                        let (v, vp) = self.value()?;
+                        let color = match v {
+                            Value::Lit(Lit::Str(s)) => s,
+                            _ => {
+                                return Err(Diagnostic::new(
+                                    self.path,
+                                    vp.line,
+                                    vp.col,
+                                    format!("token '{name}' expects a '#RRGGBB' color string"),
+                                    format!("write '{name}: \"#1FB14C\"'"),
+                                ))
+                            }
+                        };
+                        if !THEME_TOKEN_NAMES.contains(&name.as_str()) {
+                            return Err(Diagnostic::new(
+                                self.path,
+                                np.line,
+                                np.col,
+                                format!("unknown theme token '{name}'"),
+                                format!("use one of: {}", THEME_TOKEN_NAMES.join(", ")),
+                            ));
+                        }
+                        decl.tokens.push((name, color));
+                        self.eat_sym(",");
+                        self.eat_sym(";");
+                    }
+                }
                 other => {
                     return Err(Diagnostic::new(
                         self.path,
                         kp.line,
                         kp.col,
                         format!("unknown theme key '{other}'"),
-                        "theme accepts: mode, accent, radius, fontScale, fontFamily, surface, onSurface, stage, transition",
+                        "theme accepts: mode, accent, radius, fontScale, fontFamily, surface, onSurface, stage, transition, fontMetrics, tokens",
                     ));
                 }
             }
