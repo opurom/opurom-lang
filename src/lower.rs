@@ -973,7 +973,8 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
                         "prop 'animate' expects a keyword, found {}",
                         value_desc(other)
                     ),
-                    "write animate: spring, animate: ease, animate: inertia or animate: none".to_string(),
+                    "write animate: spring, animate: ease, animate: inertia or animate: none"
+                        .to_string(),
                 ))
             }
         };
