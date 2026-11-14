@@ -222,7 +222,7 @@ const GENERIC_NUMERIC: &[&str] = &["padding", "margin", "radius"];
 
 const HANDLER_VERBS: &[&str] = &["list", "get", "create", "update", "delete"];
 
-const ANIMATE_VALUES: &[&str] = &["spring", "ease", "none"];
+const ANIMATE_VALUES: &[&str] = &["spring", "ease", "inertia", "none"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Ty {
@@ -973,7 +973,7 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
                         "prop 'animate' expects a keyword, found {}",
                         value_desc(other)
                     ),
-                    "write animate: spring, animate: ease or animate: none".to_string(),
+                    "write animate: spring, animate: ease, animate: inertia or animate: none".to_string(),
                 ))
             }
         };
@@ -981,7 +981,7 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             return Err(ctx.err(
                 arg.pos,
                 format!("unknown animate value '{s}'"),
-                "use one of: spring, ease, none".to_string(),
+                "use one of: spring, ease, inertia, none".to_string(),
             ));
         }
         return Ok(json!(s));
