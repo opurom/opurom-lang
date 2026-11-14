@@ -753,11 +753,15 @@ fn canvas_and_mini_emitters_expose_explicit_a11y_roles() {
     }
 
     // Regression: a program without roles still builds and emits valid JS.
-    let counter = workspace()
-        .join("..")
-        .join("opurom-examples")
-        .join("counter.opu");
-    let counter_ir = dir.join("counter.opuir.json");
+    // Use an inline source so the test never depends on a sibling repo (CI
+    // clones only opurom-lang).
+    let counter = dir.join("plain.opu");
+    fs::write(
+        &counter,
+        "app Plain {\n  Column {\n    Text(\"hello\")\n    Button(\"Go\") { }\n  }\n}\n",
+    )
+    .unwrap();
+    let counter_ir = dir.join("plain.opuir.json");
     let r = compile(&counter, &counter_ir);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let plain_web = out_dir("emit-a11y-counter-web");
