@@ -8,6 +8,7 @@ mod modules;
 mod optimize;
 mod parser;
 mod pattern;
+mod pkg_icons;
 mod typecheck;
 mod wasm;
 

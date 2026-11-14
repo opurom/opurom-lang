@@ -187,3 +187,82 @@ fn state_value(ir: &Value, name: &str) -> Value {
         .map(|s| s["init"].clone())
         .unwrap_or(Value::Null)
 }
+
+#[test]
+fn a_package_icon_name_compiles_and_carries_path_data() {
+    let dir = unique("icons");
+    write(
+        &dir.join("opurom.json"),
+        r##"{
+  "name": "sample-app",
+  "version": "0.1.0",
+  "moduleRoots": ["registry"],
+  "dependencies": {
+    "opurom-icons": "0.1.0",
+    "opurom-ui": "0.1.0"
+  }
+}"##,
+    );
+    write(&dir.join("opurom.lock"), LOCK);
+    write(
+        &dir.join("registry/opurom-ui/0.1.0/theme/default.opu"),
+        THEME_MODULE,
+    );
+    // A second package entry acts as the icon package for this fixture.
+    let mut lock: Value = serde_json::from_str(LOCK).unwrap();
+    lock["packages"].as_array_mut().unwrap().push(json!({
+        "name": "opurom-icons",
+        "version": "0.1.0",
+        "path": "registry/opurom-icons/0.1.0",
+        "sha256": "0",
+        "files": []
+    }));
+    write(&dir.join("opurom.lock"), &serde_json::to_string_pretty(&lock).unwrap());
+    write(
+        &dir.join("registry/opurom-icons/0.1.0/opurom-pkg.json"),
+        r##"{"name":"opurom-icons","version":"0.1.0","kind":"icons","entry":"icons/icons.json","files":["opurom-pkg.json","icons/icons.json"]}"##,
+    );
+    write(
+        &dir.join("registry/opurom-icons/0.1.0/icons/icons.json"),
+        r##"{"format":1,"viewBox":"0 0 256 256","count":1,"icons":[{"name":"sparkle","viewBox":"0 0 256 256","paths":[{"d":"M128 8 L160 96 L248 128 L160 160 L128 248 L96 160 L8 128 L96 96 Z"}]}]}"##,
+    );
+    write(
+        &dir.join("main.opu"),
+        r#"app Icons {
+  Column {
+    Icon(name: "sparkle")
+    Icon(name: "check")
+  }
+}
+"#,
+    );
+    let ir = compile(&dir, "main.opu").expect("package and built-in icons must compile");
+    let icons = ir["icons"].as_array().expect("package icons must reach the IR");
+    assert_eq!(icons.len(), 1, "built-in names must not enter the package table");
+    assert_eq!(icons[0]["name"], "sparkle");
+    assert_eq!(icons[0]["viewBox"], "0 0 256 256");
+    assert!(icons[0]["paths"].as_array().unwrap()[0]
+        .as_str()
+        .unwrap()
+        .starts_with("M128 8"));
+}
+
+#[test]
+fn an_unknown_name_still_fails_with_the_built_in_help() {
+    let dir = unique("unknown-icon");
+    write(&dir.join("opurom.json"), MANIFEST);
+    write(&dir.join("opurom.lock"), LOCK);
+    write(
+        &dir.join("registry/opurom-ui/0.1.0/theme/default.opu"),
+        THEME_MODULE,
+    );
+    write(
+        &dir.join("main.opu"),
+        r#"app Icons {
+  Icon(name: "no-such-glyph")
+}
+"#,
+    );
+    let error = compile(&dir, "main.opu").expect_err("an unknown name must fail");
+    assert!(error.contains("unknown icon name 'no-such-glyph'"), "{error}");
+}

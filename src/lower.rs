@@ -733,6 +733,9 @@ struct Ctx<'a> {
     loops: Vec<(String, LoopValue)>,
     /// Page names declared by `page Name;`, used to validate `push:` targets.
     pages: HashSet<String>,
+    /// Package icon table: name -> {viewBox, paths}, from locked icon packages.
+    /// Empty unless the program actually references a package icon name.
+    icons: JsonMap<String, Json>,
 }
 
 impl<'a> Ctx<'a> {
@@ -952,7 +955,7 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         // that still interpolates state is resolved at view time and cannot be
         // checked statically, so it is passed through.
         if let AstValue::Lit(Lit::Str(s)) = &arg.value {
-            if !s.contains('{') && !is_icon(s) {
+            if !s.contains('{') && !is_icon(s) && !ctx.icons.contains_key(s) {
                 return Err(ctx.err(
                     arg.pos,
                     format!("unknown icon name '{s}' on Icon"),
@@ -2517,6 +2520,7 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         lists: HashMap::new(),
         loops: Vec::new(),
         pages: program.pages.iter().map(|p| p.name.clone()).collect(),
+        icons: crate::pkg_icons::resolve(&crate::pkg_icons::project_root(path)),
     };
     let mut state_json = Vec::new();
     let (state_types, state_inits) = typecheck::infer_states(program, path)?;
@@ -2692,6 +2696,17 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             .map(|p| json!(p.name))
             .collect::<Vec<Json>>();
         out.insert("pages".to_string(), Json::Array(pages));
+    }
+    if !ctx.icons.is_empty() {
+        // Deterministic order: sorted by icon name.
+        let icons: Vec<Json> = ctx
+            .icons
+            .iter()
+            .map(|(name, record)| {
+                json!({"name": name, "viewBox": record["viewBox"], "paths": record["paths"]})
+            })
+            .collect();
+        out.insert("icons".to_string(), Json::Array(icons));
     }
     if !computed_json.is_empty() {
         out.insert("computed".to_string(), Json::Array(computed_json));
