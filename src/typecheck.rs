@@ -455,7 +455,10 @@ impl<'a> Checker<'a> {
     fn statement(&self, stmt: &Stmt) -> DResult<()> {
         // `push:` targets a declared page, not a state; the page set is checked
         // during lowering. `form.validate()` targets a built-in form receiver.
-        if matches!(stmt.kind, StmtKind::Push | StmtKind::Validate) {
+        if matches!(
+            stmt.kind,
+            StmtKind::Push | StmtKind::Validate | StmtKind::Pop
+        ) {
             return Ok(());
         }
         let target = self
@@ -554,7 +557,7 @@ impl<'a> Checker<'a> {
                     ));
                 }
             }
-            StmtKind::Push | StmtKind::Validate => {}
+            StmtKind::Push | StmtKind::Validate | StmtKind::Pop => {}
         }
         Ok(())
     }

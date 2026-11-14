@@ -600,7 +600,7 @@ fn gesture_and_navigation_lower_to_the_documented_ir() {
     )
     .unwrap();
     let ir = compile_ok(&nav_src);
-    assert_eq!(ir["pages"], json!(["Home", "Settings"]));
+    assert!(ir.get("pages").is_none(), "pages names array is retired");
     assert_eq!(
         nodes_of(&ir)[0]["events"]["tap"],
         json!({"op": "push", "target": "Settings"})
@@ -6165,5 +6165,385 @@ fn design_props_render_end_to_end_with_stable_digest() {
         render_digest(&out3),
         d1,
         "design props must change the rendered digest"
+    );
+}
+
+#[test]
+fn route_blocks_lower_to_per_route_trees() {
+    let dir = out_dir("routes");
+    let src = dir.join("routes.opu");
+    fs::write(
+        &src,
+        r#"app MultiPage {
+  state tab = 0
+  route Home {
+    Column {
+      Text("Home")
+      Button("Open") { push: Detail }
+    }
+  }
+  route Detail {
+    Column {
+      Text("Detail")
+      Button("Back") { pop }
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    // 0.1.0 stays 0.1.0; multi-page routing is an additive 0.1.0 capability.
+    assert_eq!(ir["ir"], "0.1.0");
+    assert_eq!(ir["initialRoute"], "Home");
+    // No single top-level tree when routes are present.
+    assert!(ir.get("tree").is_none(), "multi-page IR has no top-level tree");
+    let routes = ir["routes"].as_object().expect("routes object");
+    assert_eq!(routes.len(), 2, "exactly the two declared routes");
+    let home = &ir["routes"]["Home"];
+    let detail = &ir["routes"]["Detail"];
+    assert_eq!(home["title"], "Home");
+    assert_eq!(detail["title"], "Detail");
+    assert_shape(&home["tree"]);
+    assert_shape(&detail["tree"]);
+    // Node ids share ONE global pre-order space across every route tree; the
+    // runtime dispatches taps by node id alone.
+    fn collect_ids(node: &Json, ids: &mut Vec<u64>) {
+        ids.push(node["id"].as_u64().expect("numeric node id"));
+        for child in node["children"].as_array().unwrap() {
+            collect_ids(child, ids);
+        }
+    }
+    let mut ids = Vec::new();
+    collect_ids(&home["tree"], &mut ids);
+    collect_ids(&detail["tree"], &mut ids);
+    let mut sorted = ids.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted.len(), ids.len(), "node ids must be globally unique");
+    assert_eq!(
+        ids,
+        (0..ids.len() as u64).collect::<Vec<_>>(),
+        "ids stay pre-order across routes"
+    );
+    // `push: Detail` in Home lowers to the documented push action.
+    let home_tap = &home["tree"]["children"][1]["events"]["tap"];
+    assert_eq!(home_tap, &json!({"op": "push", "target": "Detail"}));
+    // `pop` in Detail lowers to the pop action.
+    let detail_tap = &detail["tree"]["children"][1]["events"]["tap"];
+    assert_eq!(detail_tap, &json!({"op": "pop"}));
+}
+
+#[test]
+fn program_without_routes_stays_single_page_ir() {
+    let dir = out_dir("single-page");
+    let src = dir.join("single.opu");
+    fs::write(
+        &src,
+        r#"app Counter {
+  state count = 0
+  Column(gap: 8) {
+    Text("Count: {count}")
+    Button("+1") { count += 1 }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    assert_eq!(ir["ir"], "0.1.0");
+    assert!(ir.get("tree").is_some(), "single-page keeps the top-level tree");
+    assert!(ir.get("routes").is_none(), "single-page emits no routes map");
+    assert!(ir.get("initialRoute").is_none());
+    assert!(ir.get("pages").is_none(), "retired pages array is not emitted");
+}
+
+#[test]
+fn duplicate_route_name_is_a_friendly_error() {
+    let dir = out_dir("dup-route");
+    let src = dir.join("dup.opu");
+    fs::write(
+        &src,
+        r#"app Dup {
+  route Home { Text("a") }
+  route Home { Text("b") }
+}
+"#,
+    )
+    .unwrap();
+    let out = dir.join("out.opuir.json");
+    let r = compile(&src, &out);
+    assert!(!r.status.success(), "duplicate route must fail");
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert_diag(&stderr, &src);
+    assert!(stderr.contains("duplicate route 'Home'"), "got: {stderr}");
+}
+
+#[test]
+fn push_to_undeclared_route_is_a_friendly_error() {
+    let dir = out_dir("bad-push-route");
+    let src = dir.join("badpush.opu");
+    fs::write(
+        &src,
+        r#"app BadPush {
+  route Home { Button("x") { push: Nope } }
+}
+"#,
+    )
+    .unwrap();
+    let out = dir.join("out.opuir.json");
+    let r = compile(&src, &out);
+    assert!(!r.status.success(), "push to undeclared route must fail");
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert_diag(&stderr, &src);
+    assert!(stderr.contains("unknown route 'Nope'"), "got: {stderr}");
+}
+
+/// A minimal two-route IR matching the additive multi-page contract: no
+/// top-level `tree`, an `initialRoute`, and per-route `{tree,title}` records.
+fn two_route_ir(name: &str) -> PathBuf {
+    let dir = out_dir(name);
+    let ir = dir.join("routes.opuir.json");
+    let doc = json!({
+        "ir": "0.1.0",
+        "app": "Shop",
+        "state": [],
+        "initialRoute": "Home",
+        "routes": {
+            "Home": {
+                "title": "Home Screen",
+                "tree": {"id": 1, "kind": "Column", "props": {"gap": 8}, "events": {}, "children": [
+                    {"id": 2, "kind": "Text", "props": {"value": "Welcome"}, "events": {}, "children": []},
+                    {"id": 3, "kind": "Button", "props": {"label": "Detail"},
+                     "events": {"tap": {"op": "push", "target": "Detail"}}, "children": []}
+                ]}
+            },
+            "Detail": {
+                "title": "Detail Screen",
+                "tree": {"id": 4, "kind": "Column", "props": {"gap": 8}, "events": {}, "children": [
+                    {"id": 5, "kind": "Text", "props": {"value": "Item"}, "events": {}, "children": []},
+                    {"id": 6, "kind": "Button", "props": {"label": "Back"},
+                     "events": {"tap": {"op": "pop"}}, "children": []}
+                ]}
+            }
+        },
+        "theme": {"mode": "light", "accent": "#097FEB", "radius": 12}
+    });
+    fs::write(&ir, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+    ir
+}
+
+#[test]
+fn mini_emitters_render_one_section_per_route() {
+    let ir = two_route_ir("emit-mp-mini");
+    for target in ["wechat", "alipay", "qq", "douyin", "baidu", "kuaishou"] {
+        let out = out_dir(&format!("emit-mp-{target}"));
+        let r = emit(&ir, target, &out);
+        assert!(r.status.success(), "{target}: {}", String::from_utf8_lossy(&r.stderr));
+        // Both route sections are present with their own data-route marker.
+        let markup = fs::read_to_string(out.join("pages/index/index.wxml"))
+            .or_else(|_| fs::read_to_string(out.join("pages/index/index.axml")))
+            .or_else(|_| fs::read_to_string(out.join("pages/index/index.qml")))
+            .or_else(|_| fs::read_to_string(out.join("pages/index/index.ttml")))
+            .or_else(|_| fs::read_to_string(out.join("pages/index/index.swan")))
+            .or_else(|_| fs::read_to_string(out.join("pages/index/index.ksml")))
+            .unwrap();
+        assert!(markup.contains("data-route=\"Home\""), "{target} missing Home section");
+        assert!(markup.contains("data-route=\"Detail\""), "{target} missing Detail section");
+        assert!(markup.contains("Welcome") && markup.contains("Item"), "{target} content");
+        // The page data seeds the route stack at the initial route; push/pop update it.
+        let js = fs::read_to_string(out.join("pages/index/index.js")).unwrap();
+        assert!(
+            js.contains("\"currentRoute\":\"Home\"") && js.contains("\"routeStack\":[\"Home\"]"),
+            "{target} route data: {js}"
+        );
+        assert!(js.contains("routeStack"), "{target} push/pop runtime");
+        let check = Command::new("node")
+            .arg("--check")
+            .arg(out.join("pages/index/index.js"))
+            .output()
+            .expect("run node --check");
+        assert!(check.status.success(), "{target} JS invalid");
+    }
+}
+
+#[test]
+fn web_emitter_draws_active_route_sections() {
+    let ir = two_route_ir("emit-mp-web");
+    let out = out_dir("emit-mp-web-out");
+    let r = emit(&ir, "web", &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let app_js = fs::read_to_string(out.join("app.js")).unwrap();
+    // One draw function per route, driven by a route stack seeded at initialRoute.
+    assert!(app_js.contains("function draw_Home()"), "{app_js}");
+    assert!(app_js.contains("function draw_Detail()"), "{app_js}");
+    assert!(app_js.contains("const routeStack = [\"Home\"];"), "{app_js}");
+    assert!(app_js.contains("function push(route)"), "push runtime");
+    assert!(app_js.contains("function pop()"), "pop runtime");
+    assert!(app_js.contains("push(\"Detail\")"), "push action");
+    // The multi-page bundle carries no single top-level tree render.
+    let check = Command::new("node")
+        .arg("--check")
+        .arg(out.join("app.js"))
+        .output()
+        .expect("run node --check");
+    assert!(check.status.success(), "web JS invalid");
+}
+
+#[test]
+fn native_and_wasm_carry_the_route_table() {
+    let ir = two_route_ir("emit-mp-native");
+    // native: the embedded IR carries routes + initialRoute, and both route
+    // taps dispatch a reserved @nav patch (push -> Detail, pop -> @pop).
+    let native = out_dir("emit-mp-native-out");
+    let r = emit(&ir, "native", &native);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let main_rs = fs::read_to_string(native.join("src/main.rs")).unwrap();
+    assert!(main_rs.contains("\\\"initialRoute\\\":\\\"Home\\\""), "embedded initialRoute");
+    assert!(main_rs.contains("\\\"routes\\\""), "embedded routes");
+    assert!(main_rs.contains("value: \"Detail\".to_string()"), "push patch");
+    assert!(main_rs.contains("value: \"@pop\".to_string()"), "pop patch");
+
+    // wasm: the host exposes the ROUTES table and INITIAL_ROUTE and handles pop.
+    let wasm = out_dir("emit-mp-wasm-out");
+    let r = emit(&ir, "wasm", &wasm);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let host = fs::read_to_string(wasm.join("host.js")).unwrap();
+    assert!(host.contains("const ROUTES = "), "ROUTES table");
+    assert!(host.contains("const INITIAL_ROUTE = \"Home\";"), "initial route");
+    assert!(host.contains("action.op === \"pop\""), "pop handling in host");
+}
+
+#[test]
+fn single_page_ir_still_draws_one_tree() {
+    // A 0.1.0 single-page IR keeps its exact single-page output: no routes, one
+    // top-level tree, and no route runtime leaks into the generated files.
+    let dir = out_dir("emit-single-unchanged");
+    let ir = dir.join("single.opuir.json");
+    let doc = json!({
+        "ir": "0.1.0", "app": "Solo", "state": [],
+        "tree": {"id": 1, "kind": "Column", "props": {"gap": 4}, "events": {}, "children": [
+            {"id": 2, "kind": "Text", "props": {"value": "hi"}, "events": {}, "children": []}
+        ]},
+        "theme": {"mode": "light", "accent": "#097FEB", "radius": 12}
+    });
+    fs::write(&ir, serde_json::to_string(&doc).unwrap()).unwrap();
+    let web = out_dir("emit-single-unchanged-web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let app_js = fs::read_to_string(web.join("app.js")).unwrap();
+    assert!(!app_js.contains("routeStack"), "no route runtime on single page");
+    assert!(!app_js.contains("function draw_"), "no per-route draw");
+    let mini = out_dir("emit-single-unchanged-mini");
+    let r = emit(&ir, "wechat", &mini);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let js = fs::read_to_string(mini.join("pages/index/index.js")).unwrap();
+    assert!(!js.contains("routeStack"), "no route runtime on single-page mini");
+}
+
+#[test]
+fn optimizer_keeps_multi_page_ir_intact() {
+    let dir = out_dir("routes-optimize");
+    let src = dir.join("routes.opu");
+    fs::write(
+        &src,
+        r#"app MultiPage {
+  state used = 0
+  state dead = 0
+  route Home {
+    Column {
+      Text("Home {used}")
+      Button("Open") { push: Detail }
+    }
+  }
+  route Detail {
+    Column {
+      Text("Detail")
+      Button("Back") { pop }
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+    let compiled = dir.join("out.opuir.json");
+    let r = compile(&src, &compiled);
+    assert!(r.status.success(), "compile failed for optimize input");
+    let out = dir.join("optimized.opuir.json");
+    let r = optimize(&compiled, &out);
+    assert!(r.status.success(), "optimize failed on multi-page IR");
+    let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(ir["initialRoute"], "Home");
+    assert!(ir.get("tree").is_none());
+    assert!(ir["routes"]["Home"]["tree"].is_object());
+    assert!(ir["routes"]["Detail"]["tree"].is_object());
+    // Dead-state elimination runs across every route tree: `used` survives
+    // (Home reads it) and `dead` is dropped.
+    let names: Vec<&str> = ir["state"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["used"]);
+    // Node ids stay globally unique across the optimized route trees.
+    fn walk(node: &Json, ids: &mut Vec<u64>) {
+        ids.push(node["id"].as_u64().unwrap());
+        for child in node["children"].as_array().unwrap() {
+            walk(child, ids);
+        }
+    }
+    let mut ids = Vec::new();
+    walk(&ir["routes"]["Home"]["tree"], &mut ids);
+    walk(&ir["routes"]["Detail"]["tree"], &mut ids);
+    let mut sorted = ids.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted.len(), ids.len(), "ids stay unique after optimize");
+}
+
+#[test]
+fn optimizer_rejects_inconsistent_multi_page_ir() {
+    let dir = out_dir("routes-optimize-bad");
+    let ir = dir.join("both.opuir.json");
+    fs::write(
+        &ir,
+        r#"{
+  "ir": "0.1.0", "app": "Bad", "state": [],
+  "tree": {"id": 0, "kind": "Text", "props": {"value": "x"}, "children": [], "events": {}},
+  "theme": {},
+  "initialRoute": "Home",
+  "routes": {"Home": {"tree": {"id": 1, "kind": "Text", "props": {"value": "y"}, "children": [], "events": {}}, "title": "Home"}}
+}
+"#,
+    )
+    .unwrap();
+    let out = dir.join("out.json");
+    let r = optimize(&ir, &out);
+    assert!(!r.status.success(), "tree plus routes must be rejected");
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("must not also have a top-level 'tree'"),
+        "got: {stderr}"
+    );
+
+    let ir2 = dir.join("noroute.opuir.json");
+    fs::write(
+        &ir2,
+        r#"{
+  "ir": "0.1.0", "app": "Bad", "state": [],
+  "theme": {},
+  "initialRoute": "Missing",
+  "routes": {"Home": {"tree": {"id": 0, "kind": "Text", "props": {"value": "y"}, "children": [], "events": {}}, "title": "Home"}}
+}
+"#,
+    )
+    .unwrap();
+    let r = optimize(&ir2, &out);
+    assert!(!r.status.success(), "unknown initialRoute must be rejected");
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("'initialRoute' 'Missing' is not a declared route"),
+        "got: {stderr}"
     );
 }

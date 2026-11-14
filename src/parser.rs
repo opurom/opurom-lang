@@ -65,6 +65,8 @@ pub enum StmtKind {
     /// `push: PageName` navigates to a declared page. The page name is the
     /// statement target.
     Push,
+    /// `pop` returns to the previous route on the navigation stack.
+    Pop,
     /// `form.validate()` asks the consumer to validate every Input subtree.
     /// The built-in receiver is stored as the statement target.
     Validate,
@@ -204,6 +206,15 @@ pub struct PageDecl {
     pub pos: Pos,
 }
 
+/// A multi-page route declared by `route Name { ... }`. Its children are that
+/// route's content tree; the first route in source order is the initial route.
+#[derive(Clone, Debug)]
+pub struct RouteDecl {
+    pub name: String,
+    pub nodes: Vec<Node>,
+    pub pos: Pos,
+}
+
 #[derive(Clone, Debug)]
 pub struct FieldDecl {
     pub name: String,
@@ -246,6 +257,7 @@ pub struct Program {
     pub models: Vec<ModelDecl>,
     pub apis: Vec<ApiDecl>,
     pub pages: Vec<PageDecl>,
+    pub routes: Vec<RouteDecl>,
 }
 
 fn is_kind(t: &Token) -> bool {
@@ -279,6 +291,8 @@ fn is_decl_start(t: &Token) -> bool {
                 | "api"
                 | "theme"
                 | "import"
+                | "page"
+                | "route"
                 | "if"
                 | "for"
                 | "else"
@@ -691,6 +705,23 @@ impl<'a> Parser<'a> {
                 target,
                 pos: ppos,
                 kind: StmtKind::Push,
+            });
+        }
+        // `pop` returns to the previous route; it takes no target. Guard on the
+        // statement ending so a state literally named `pop` still assigns.
+        let pop_stmt = self.word("pop")
+            && matches!(
+                self.toks.get(self.i + 1).map(|t| &t.tok),
+                Some(Tok::Sym(s)) if s == ";" || s == "}"
+            );
+        if pop_stmt {
+            let ppos = self.pos();
+            self.bump();
+            self.eat_sym(";");
+            return Ok(Stmt {
+                target: String::new(),
+                pos: ppos,
+                kind: StmtKind::Pop,
             });
         }
         let start = self.pos();
@@ -1509,6 +1540,43 @@ impl<'a> Parser<'a> {
         Ok(PageDecl { name, pos })
     }
 
+    /// `route Name { ...nodes... }` declares a page whose children form its tree.
+    fn route_decl(&mut self) -> DResult<RouteDecl> {
+        self.bump();
+        let (name, pos) = self.expect_ident("a route name")?;
+        self.expect_sym("{", "a route body starts with '{'")?;
+        let mut nodes = Vec::new();
+        loop {
+            self.eat_sym(";");
+            if self.eat_sym("}") {
+                break;
+            }
+            if matches!(self.peek().tok, Tok::Eof) {
+                return Err(self.err(
+                    "unexpected end of file, expected '}'",
+                    "close the route body with a matching '}'",
+                ));
+            }
+            if self.word("if") || self.word("for") {
+                nodes.push(self.conditional()?);
+                continue;
+            }
+            if is_kind(self.peek()) {
+                nodes.push(self.node()?);
+                continue;
+            }
+            return Err(self.err(
+                format!(
+                    "expected a node kind in route '{}', found {}",
+                    name,
+                    self.peek().describe()
+                ),
+                "a route body holds nodes such as Column { ... }; declare state at the app top level",
+            ));
+        }
+        Ok(RouteDecl { name, nodes, pos })
+    }
+
     fn api_decl(&mut self) -> DResult<ApiDecl> {
         let start = self.pos();
         self.bump();
@@ -1656,6 +1724,7 @@ fn parse_with_options(
     let mut models = Vec::new();
     let mut apis = Vec::new();
     let mut pages = Vec::new();
+    let mut routes = Vec::new();
     loop {
         p.eat_sym(";");
         if p.eat_sym("}") {
@@ -1747,6 +1816,31 @@ fn parse_with_options(
             pages.push(decl);
             continue;
         }
+        if p.word("route") {
+            if !p.allow_nodes {
+                return Err(p.err(
+                    "imported module may declare only state, model, api, theme and imports",
+                    "move route declarations into the importing app",
+                ));
+            }
+            let decl = p.route_decl()?;
+            if routes.iter().any(|r: &RouteDecl| r.name == decl.name) {
+                let names = routes
+                    .iter()
+                    .map(|r| r.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(Diagnostic::new(
+                    p.path,
+                    decl.pos.line,
+                    decl.pos.col,
+                    format!("duplicate route '{}'", decl.name),
+                    format!("declare every route once; declared routes are: {names}"),
+                ));
+            }
+            routes.push(decl);
+            continue;
+        }
         if p.word("api") {
             apis.push(p.api_decl()?);
             continue;
@@ -1820,6 +1914,7 @@ fn parse_with_options(
         models,
         apis,
         pages,
+        routes,
     })
 }
 

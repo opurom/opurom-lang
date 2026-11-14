@@ -10,7 +10,9 @@ use crate::lower::{interp_parts, Part};
 
 const IR_FIELDS: &[&str] = &[
     "ir", "app", "state", "tree", "theme", "models", "api", "imports", "computed",
+    "initialRoute", "routes",
 ];
+const ROUTE_FIELDS: &[&str] = &["tree", "title"];
 const STATE_FIELDS: &[&str] = &["name", "type", "init"];
 const COMPUTED_FIELDS: &[&str] = &["name", "type", "expr"];
 const NODE_FIELDS: &[&str] = &[
@@ -107,10 +109,68 @@ fn validate(ir: &Json, path: &str) -> DResult<()> {
             }
         }
     }
-    let tree = o
-        .get("tree")
-        .ok_or_else(|| bad_ir(path, "IR is missing the 'tree' field"))?;
-    validate_node(tree, path)
+    let routes = o.get("routes");
+    match (o.get("tree"), routes) {
+        (Some(tree), None) => validate_node(tree, path)?,
+        (None, Some(routes)) => {
+            let map = routes.as_object().ok_or_else(|| {
+                bad_ir(path, "IR 'routes' must be an object of route entries")
+            })?;
+            if map.is_empty() {
+                return Err(bad_ir(path, "IR 'routes' must declare at least one route"));
+            }
+            for (name, entry) in map {
+                let fields = entry.as_object().ok_or_else(|| {
+                    bad_ir(path, format!("IR route '{name}' must be an object"))
+                })?;
+                for key in fields.keys() {
+                    if !ROUTE_FIELDS.contains(&key.as_str()) {
+                        return Err(bad_ir(
+                            path,
+                            format!("unknown IR route field '{key}' in route '{name}'"),
+                        ));
+                    }
+                }
+                let tree = fields.get("tree").ok_or_else(|| {
+                    bad_ir(path, format!("IR route '{name}' is missing its 'tree'"))
+                })?;
+                validate_node(tree, path)?;
+                if let Some(title) = fields.get("title") {
+                    if !title.is_string() {
+                        return Err(bad_ir(
+                            path,
+                            format!("IR route '{name}' 'title' must be a string"),
+                        ));
+                    }
+                }
+            }
+            let initial = o.get("initialRoute").ok_or_else(|| {
+                bad_ir(path, "multi-page IR must declare 'initialRoute'")
+            })?;
+            match initial.as_str() {
+                Some(name) if map.contains_key(name) => {}
+                Some(name) => {
+                    return Err(bad_ir(
+                        path,
+                        format!("IR 'initialRoute' '{name}' is not a declared route"),
+                    ))
+                }
+                None => {
+                    return Err(bad_ir(path, "IR 'initialRoute' must be a route name string"))
+                }
+            }
+        }
+        (Some(_), Some(_)) => {
+            return Err(bad_ir(
+                path,
+                "multi-page IR carries per-route trees and must not also have a top-level 'tree'",
+            ))
+        }
+        (None, None) => {
+            return Err(bad_ir(path, "IR is missing the 'tree' field"));
+        }
+    }
+    Ok(())
 }
 
 fn validate_node(v: &Json, path: &str) -> DResult<()> {
@@ -291,7 +351,16 @@ fn optimize(ir: &mut Json) {
         })
         .unwrap_or_default();
     let mut refs = HashSet::new();
-    collect_refs(&ir["tree"], &states, &mut refs);
+    if let Some(tree) = ir.get("tree") {
+        collect_refs(tree, &states, &mut refs);
+    }
+    if let Some(routes) = ir.get("routes").and_then(Json::as_object) {
+        for entry in routes.values() {
+            if let Some(tree) = entry.get("tree") {
+                collect_refs(tree, &states, &mut refs);
+            }
+        }
+    }
     prune_dead_computed(ir, &mut refs);
     if let Some(list) = ir.get_mut("state").and_then(Json::as_array_mut) {
         list.retain(|s| {
@@ -302,7 +371,16 @@ fn optimize(ir: &mut Json) {
             is_list || refs.contains(name)
         });
     }
-    drop_null_props(&mut ir["tree"]);
+    if let Some(tree) = ir.get_mut("tree") {
+        drop_null_props(tree);
+    }
+    if let Some(routes) = ir.get_mut("routes").and_then(Json::as_object_mut) {
+        for entry in routes.values_mut() {
+            if let Some(tree) = entry.get_mut("tree") {
+                drop_null_props(tree);
+            }
+        }
+    }
 }
 
 pub fn run(ir_path: &str, out: &Path) -> DResult<()> {

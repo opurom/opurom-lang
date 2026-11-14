@@ -733,6 +733,9 @@ struct Ctx<'a> {
     loops: Vec<(String, LoopValue)>,
     /// Page names declared by `page Name;`, used to validate `push:` targets.
     pages: HashSet<String>,
+    /// Route names declared by `route Name { ... }`, in source order. When this
+    /// is non-empty the program is multi-page: `push` targets are routes.
+    route_names: Vec<String>,
     /// Package icon table: name -> {viewBox, paths}, from locked icon packages.
     /// Empty unless the program actually references a package icon name.
     icons: JsonMap<String, Json>,
@@ -768,6 +771,14 @@ impl<'a> Ctx<'a> {
                 .map(|n| n.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
+        }
+    }
+
+    fn route_list(&self) -> String {
+        if self.route_names.is_empty() {
+            "(no routes declared)".to_string()
+        } else {
+            self.route_names.join(", ")
         }
     }
 
@@ -1345,7 +1356,20 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
             }
         },
         StmtKind::Push => {
-            if !ctx.pages.contains(&stmt.target) {
+            if !ctx.route_names.is_empty() {
+                // With route blocks present, a push must target a declared route.
+                if !ctx.route_names.contains(&stmt.target) {
+                    return Err(ctx.err(
+                        stmt.pos,
+                        format!("unknown route '{}'", stmt.target),
+                        format!(
+                            "declare 'route {} {{ ... }}' in the app or use one of: {}",
+                            stmt.target,
+                            ctx.route_list()
+                        ),
+                    ));
+                }
+            } else if !ctx.pages.contains(&stmt.target) {
                 return Err(ctx.err(
                     stmt.pos,
                     format!("unknown page '{}'", stmt.target),
@@ -1358,6 +1382,7 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
             }
             Ok(json!({"op": "push", "target": stmt.target}))
         }
+        StmtKind::Pop => Ok(json!({"op": "pop"})),
         StmtKind::Validate => Ok(json!({"op": "validate", "target": stmt.target})),
         StmtKind::Toggle => Ok(json!({"op": "toggle", "target": stmt.target})),
     }
@@ -2095,6 +2120,7 @@ fn substitute_stmt(path: &str, stmt: &Stmt, bindings: &HashMap<String, Lit>) -> 
         StmtKind::Set(v, p) => StmtKind::Set(substitute_value(v, bindings), *p),
         StmtKind::Toggle => StmtKind::Toggle,
         StmtKind::Push => StmtKind::Push,
+        StmtKind::Pop => StmtKind::Pop,
         StmtKind::Validate => StmtKind::Validate,
     };
     Ok(Stmt {
@@ -2509,6 +2535,61 @@ fn lower_apis(program: &Program, ctx: &Ctx) -> DResult<Vec<Json>> {
     Ok(out)
 }
 
+/// Expand, type-check, lower and validate one route's (or the whole single-page
+/// program's) node list into an IR tree. Returns the tree plus the `when`/`unless`
+/// condition positions discovered, so the caller can validate them against the
+/// final IR.
+fn build_tree<'c>(
+    path: &str,
+    label: &str,
+    nodes: &[Node],
+    comps: &HashMap<&str, &ComponentDecl>,
+    component_types: &mut typecheck::ComponentTypes,
+    ctx: &mut Ctx,
+) -> DResult<(Json, HashMap<String, Pos>)> {
+    let expanded = expand_nodes(
+        path,
+        nodes,
+        comps,
+        component_types,
+        &mut Vec::new(),
+        &HashMap::new(),
+    )?;
+    let env = typecheck::Env {
+        types: ctx.types.clone(),
+        inits: ctx.inits.clone(),
+        computed: ctx.computed.clone(),
+        order: ctx.order.clone(),
+    };
+    let conditions = typecheck::check_nodes(&expanded, env.clone(), path)?;
+    let total = count_expanded(&expanded, ctx)?;
+    if total == 0 {
+        return Err(Diagnostic::new(
+            path,
+            1,
+            1,
+            format!("{label} has no UI node"),
+            "add a root node such as Column(gap: 8) { Text(\"hi\") }",
+        ));
+    }
+    let tree = if total == 1 {
+        let mut lowered = lower_node_list(ctx, &expanded, Cond::default())?;
+        lowered.remove(0)
+    } else {
+        let root_id = ctx.take_id();
+        let lowered = lower_node_list(ctx, &expanded, Cond::default())?;
+        json!({
+            "id": root_id,
+            "kind": "Column",
+            "props": {},
+            "children": lowered,
+            "events": {},
+        })
+    };
+    typecheck::check_ir_conditions(&tree, env, &conditions, path)?;
+    Ok((tree, conditions))
+}
+
 fn lower(program: &Program, path: &str) -> DResult<Json> {
     let mut ctx = Ctx {
         path,
@@ -2520,6 +2601,7 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         lists: HashMap::new(),
         loops: Vec::new(),
         pages: program.pages.iter().map(|p| p.name.clone()).collect(),
+        route_names: program.routes.iter().map(|r| r.name.clone()).collect(),
         icons: crate::pkg_icons::resolve(&crate::pkg_icons::project_root(path)),
     };
     let mut state_json = Vec::new();
@@ -2586,45 +2668,35 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         );
     }
     check_components(path, &program.components)?;
-    let expanded = expand_nodes(
-        path,
-        &program.nodes,
-        &comps,
-        &mut component_types,
-        &mut Vec::new(),
-        &HashMap::new(),
-    )?;
-    let env = typecheck::Env {
-        types: ctx.types.clone(),
-        inits: ctx.inits.clone(),
-        computed: ctx.computed.clone(),
-        order: ctx.order.clone(),
-    };
-    let conditions = typecheck::check_nodes(&expanded, env.clone(), path)?;
-    let total = count_expanded(&expanded, &ctx)?;
-    if total == 0 {
-        return Err(Diagnostic::new(
+    // A route block's body is that route's tree. When routes exist the program is
+    // multi-page: each route lowers to its own tree and the app has no single
+    // top-level tree. Without routes the app body is the one implicit page.
+    let mut route_trees: Vec<(String, Json)> = Vec::new();
+    let tree: Option<Json>;
+    if program.routes.is_empty() {
+        let (t, _conditions) = build_tree(
             path,
-            1,
-            1,
-            format!("app '{}' has no UI node", program.app),
-            "add a root node such as Column(gap: 8) { Text(\"hi\") }",
-        ));
-    }
-    let tree = if total == 1 {
-        let mut nodes = lower_node_list(&mut ctx, &expanded, Cond::default())?;
-        nodes.remove(0)
+            &format!("app '{}'", program.app),
+            &program.nodes,
+            &comps,
+            &mut component_types,
+            &mut ctx,
+        )?;
+        tree = Some(t);
     } else {
-        let root_id = ctx.take_id();
-        let nodes = lower_node_list(&mut ctx, &expanded, Cond::default())?;
-        json!({
-            "id": root_id,
-            "kind": "Column",
-            "props": {},
-            "children": nodes,
-            "events": {},
-        })
-    };
+        for decl in &program.routes {
+            let (t, _conditions) = build_tree(
+                path,
+                &format!("route '{}'", decl.name),
+                &decl.nodes,
+                &comps,
+                &mut component_types,
+                &mut ctx,
+            )?;
+            route_trees.push((decl.name.clone(), t));
+        }
+        tree = None;
+    }
     let theme = match &program.theme {
         Some(t) => {
             let mode = t.mode.clone().unwrap_or_else(|| "system".to_string());
@@ -2670,7 +2742,26 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
     out.insert("ir".to_string(), json!("0.1.0"));
     out.insert("app".to_string(), json!(program.app));
     out.insert("state".to_string(), Json::Array(state_json));
-    out.insert("tree".to_string(), tree.clone());
+    match &tree {
+        Some(t) => {
+            out.insert("tree".to_string(), t.clone());
+        }
+        None => {
+            // Multi-page: per-route trees plus the initial route, no top-level tree.
+            out.insert(
+                "initialRoute".to_string(),
+                json!(program.routes[0].name.clone()),
+            );
+            let mut routes = JsonMap::new();
+            for (name, route_tree) in &route_trees {
+                routes.insert(
+                    name.clone(),
+                    json!({"tree": route_tree.clone(), "title": name.clone()}),
+                );
+            }
+            out.insert("routes".to_string(), Json::Object(routes));
+        }
+    }
     out.insert("theme".to_string(), theme);
     if let Some(tr) = transition {
         out.insert("transition".to_string(), json!(tr));
@@ -2689,14 +2780,6 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             .collect::<Vec<Json>>();
         out.insert("imports".to_string(), Json::Array(imports));
     }
-    if !program.pages.is_empty() {
-        let pages = program
-            .pages
-            .iter()
-            .map(|p| json!(p.name))
-            .collect::<Vec<Json>>();
-        out.insert("pages".to_string(), Json::Array(pages));
-    }
     if !ctx.icons.is_empty() {
         // Deterministic order: sorted by icon name.
         let icons: Vec<Json> = ctx
@@ -2711,6 +2794,5 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
     if !computed_json.is_empty() {
         out.insert("computed".to_string(), Json::Array(computed_json));
     }
-    typecheck::check_ir_conditions(&tree, env, &conditions, path)?;
     Ok(Json::Object(out))
 }

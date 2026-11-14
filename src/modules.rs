@@ -290,6 +290,7 @@ impl Merge {
             models,
             apis,
             pages,
+            routes,
         } = main;
         self.states.extend(states);
         self.models.extend(models);
@@ -305,6 +306,7 @@ impl Merge {
             models: self.models,
             apis: self.apis,
             pages,
+            routes,
         }
     }
 }
