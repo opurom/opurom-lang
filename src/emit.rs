@@ -1672,6 +1672,33 @@ fn canvas_effect_fill(n: &ENode, x: &str, y: &str, w: &str, h: &str, out: &mut S
     }
 }
 
+/// The fill colour a `highContrast` node outlines against: its own `bg`, a
+/// container-kind `color`, or the first gradient stop. `None` when it has no
+/// fill, or when the `highContrast` prop is absent.
+fn contrast_fill(n: &ENode) -> Option<String> {
+    if !n
+        .props
+        .get("highContrast")
+        .and_then(Json::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let bg = n.props.get("bg").and_then(Json::as_str).map(str::to_string);
+    let container_color = matches!(
+        n.kind.as_str(),
+        "Container" | "Card" | "Dialog" | "List" | "Grid" | "Scroll"
+    )
+    .then(|| prop_str(&n.props, "color", "#f1f5f9"));
+    let grad = n
+        .props
+        .get("gradient")
+        .and_then(Json::as_str)
+        .and_then(|s| s.split_once(','))
+        .map(|(a, _)| a.trim().to_string());
+    bg.or(container_color).or(grad)
+}
+
 fn draw_node(
     n: &ENode,
     boxes: &HashMap<u64, Box2>,
@@ -1699,7 +1726,32 @@ fn draw_node(
     match n.kind.as_str() {
         "Text" => {
             let size = fmt_num(prop_num(&n.props, "size", 16.0));
-            let color = js_lit(&Json::String(prop_str(&n.props, "color", "#111111")));
+            // `highContrast` recolours the glyphs to the contrast colour of the
+            // text's background (its own bg/color, else the page surface),
+            // matching the native renderer; absent the prop the colour is
+            // unchanged.
+            let color = if n
+                .props
+                .get("highContrast")
+                .and_then(Json::as_bool)
+                .unwrap_or(false)
+            {
+                let surface = n
+                    .props
+                    .get("bg")
+                    .and_then(Json::as_str)
+                    .map(str::to_string)
+                    .or_else(|| {
+                        n.props
+                            .get("color")
+                            .and_then(Json::as_str)
+                            .map(str::to_string)
+                    })
+                    .unwrap_or_else(|| "#ffffff".to_string());
+                js_lit(&Json::String(contrast_colour(&surface)))
+            } else {
+                js_lit(&Json::String(prop_str(&n.props, "color", "#111111")))
+            };
             let expr = js_interp(&prop_str(&n.props, "value", ""), ir_path)?;
             out.push_str(&format!(
                 "  ctx.font = \"{size}px sans-serif\";\n  ctx.fillStyle = {color};\n  ctx.fillText({expr}, {x}, {y});\n"
@@ -1812,6 +1864,16 @@ fn draw_node(
                 ));
             }
         }
+    }
+    // `highContrast`: the 2px outline goes after the node's own fill so the fill
+    // cannot paint over it. Absent the prop nothing is drawn and the output is
+    // unchanged. A node with no fill gets no outline, matching the native
+    // renderer.
+    if let Some(fill) = contrast_fill(n) {
+        out.push_str(&format!(
+            "  ctx.strokeStyle = {};\n  ctx.lineWidth = 2;\n  ctx.strokeRect({x}, {y}, {w}, {h});\n",
+            js_lit(&Json::String(contrast_colour(&fill)))
+        ));
     }
     for child in &n.children {
         draw_node(child, boxes, out, ir_path)?;
@@ -2113,7 +2175,47 @@ fn emit_web(
 
 // ----------------------------------------------------------- mini programs ----
 
-fn style_of(props: &JsonMap<String, Json>, background: bool) -> String {
+/// Pure white on a dark background, pure black on a light one, from the integer
+/// luminance `(r*299 + g*587 + b*114) / 1000`. Mirrors the native renderer's
+/// `contrast_text` so every target picks the same high-contrast colour.
+fn contrast_colour(hex: &str) -> String {
+    let b = hex.trim_start_matches('#').as_bytes();
+    let (r, g, bl) = if b.len() >= 6 {
+        (
+            u32::from_str_radix(&hex.trim_start_matches('#')[0..2], 16).unwrap_or(0),
+            u32::from_str_radix(&hex.trim_start_matches('#')[2..4], 16).unwrap_or(0),
+            u32::from_str_radix(&hex.trim_start_matches('#')[4..6], 16).unwrap_or(0),
+        )
+    } else {
+        (0, 0, 0)
+    };
+    if (r * 299 + g * 587 + bl * 114) / 1000 < 128 {
+        "#ffffff".to_string()
+    } else {
+        "#000000".to_string()
+    }
+}
+
+/// Whether a kind draws a foreground text run, so `highContrast` recolours its
+/// glyphs. Mirrors the renderer's text-colour rule for Text and the primitive
+/// kinds whose mini markup renders a `<text>` label.
+fn is_text_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "Text"
+            | "Badge"
+            | "Avatar"
+            | "Progress"
+            | "Switch"
+            | "Slider"
+            | "Checkbox"
+            | "Radio"
+            | "Tabs"
+            | "Icon"
+    )
+}
+
+fn style_of(props: &JsonMap<String, Json>, background: bool, justified: bool) -> String {
     let mut parts = Vec::new();
     for k in ["gap", "padding", "width", "height", "radius", "size"] {
         if let Some(v) = props.get(k) {
@@ -2166,6 +2268,27 @@ fn style_of(props: &JsonMap<String, Json>, background: bool) -> String {
     }
     if let Some(Json::String(c)) = props.get("border") {
         parts.push(format!("border:1px solid {c}"));
+    }
+    // `highContrast` mirrors the native renderer: a 2px contrast outline on any
+    // node with a fill, and a contrast text colour on a justified (text-bearing)
+    // node. Text colour is applied here so it overrides an earlier `color`.
+    if props
+        .get("highContrast")
+        .and_then(Json::as_bool)
+        .unwrap_or(false)
+    {
+        let fill = bg
+            .map(str::to_string)
+            .or_else(|| (background).then(|| prop_str(props, "color", "")))
+            .or_else(|| grad.map(|(a, _)| a.trim().to_string()))
+            .filter(|s| !s.is_empty());
+        if let Some(fill) = &fill {
+            parts.push(format!("border:2px solid {}", contrast_colour(fill)));
+        }
+        if justified {
+            let surface = fill.as_deref().unwrap_or("#ffffff");
+            parts.push(format!("color:{}", contrast_colour(surface)));
+        }
     }
     parts.join(";")
 }
@@ -2223,7 +2346,7 @@ fn markup_node(
 ) -> DResult<()> {
     let pad = "  ".repeat(depth);
     let id = n.id;
-    let style = style_of(&n.props, n.kind == "Container");
+    let style = style_of(&n.props, n.kind == "Container", is_text_kind(&n.kind));
     let anim = anim_class(&n.props);
     let style_attr = if style.is_empty() {
         String::new()
@@ -2328,7 +2451,7 @@ fn markup_node(
                         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"{path}\"/></svg>"
                     );
                     let b64 = base64_encode(&svg);
-                    let mut style = style_of(&n.props, false);
+                    let mut style = style_of(&n.props, false, is_text_kind(&n.kind));
                     if !style.contains("width:") {
                         style = if style.is_empty() {
                             "width:16px;height:16px".to_string()
@@ -2549,7 +2672,7 @@ fn emit_mini(
         ".col { display: flex; flex-direction: column; }\n.row { display: flex; flex-direction: row; }\n@keyframes opurom-entry { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }\n.anim-entry { transform-origin: center; animation: opurom-entry 480ms ease-out both; }\n.anim-spring { animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }\n.anim-ease { animation-timing-function: ease-out; }\n.anim-inertia { animation-timing-function: ease-in-out; }\n",
     );
     for n in &nodes {
-        let s = style_of(&n.props, n.kind == "Container");
+        let s = style_of(&n.props, n.kind == "Container", is_text_kind(&n.kind));
         if !s.is_empty() {
             style.push_str(&format!(".n{} {{ {}; }}\n", n.id, s));
         }

@@ -858,6 +858,70 @@ fn canvas_and_mini_emitters_apply_effects_and_animation() {
 }
 
 #[test]
+fn canvas_and_mini_emitters_apply_high_contrast() {
+    // `highContrast` must reach the canvas web target and the mini targets the
+    // way the native renderer applies it: a 2px contrast outline on a filled
+    // node and a contrast text colour. A node without the prop is unchanged.
+    let dir = out_dir("emit-hc");
+    let ir = dir.join("hc.opuir.json");
+    let src = dir.join("hc.opu");
+    fs::write(
+        &src,
+        "app HC {\n  Column {\n    Container(bg: \"#112233\", highContrast: true) {\n      \
+         Text(\"Dark\", highContrast: true)\n    }\n    Container(bg: \"#EEEEEE\", highContrast: true) {\n      \
+         Text(\"Light\", highContrast: true)\n    }\n    Container(bg: \"#112233\") {\n      Text(\"Normal\")\n    }\n  }\n}\n",
+    )
+    .unwrap();
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    // Canvas web: a 2px white outline on the dark fill, a 2px black outline on
+    // the light fill, and no extra outline for the node without the prop.
+    let web = out_dir("emit-hc-web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let app_js = fs::read_to_string(web.join("app.js")).unwrap();
+    assert!(
+        app_js.contains("ctx.strokeStyle = \"#ffffff\";\n  ctx.lineWidth = 2;"),
+        "canvas web: dark fill needs a 2px white outline: {app_js}"
+    );
+    assert!(
+        app_js.contains("ctx.strokeStyle = \"#000000\";\n  ctx.lineWidth = 2;"),
+        "canvas web: light fill needs a 2px black outline: {app_js}"
+    );
+    // The dark Text has no own fill, so its contrast colour is black on the
+    // page surface; either way the text branch uses a contrast colour.
+    assert!(
+        app_js.contains("ctx.fillStyle = \"#000000\";\n  ctx.fillText(\"Dark\""),
+        "canvas web: high-contrast text must use a contrast colour: {app_js}"
+    );
+    assert_eq!(
+        app_js.matches("ctx.lineWidth = 2;").count(),
+        2,
+        "only the two high-contrast containers get a 2px outline: {app_js}"
+    );
+
+    // Mini target: the same mapping as CSS classes.
+    let wx = out_dir("emit-hc-wechat");
+    let r = emit(&ir, "wechat", &wx);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let wxss = fs::read_to_string(wx.join("pages/index/index.wxss")).unwrap();
+    assert!(
+        wxss.contains("border:2px solid #ffffff"),
+        "mini: dark fill needs a white border: {wxss}"
+    );
+    assert!(
+        wxss.contains("border:2px solid #000000"),
+        "mini: light fill needs a black border: {wxss}"
+    );
+    assert_eq!(
+        wxss.matches("border:2px solid").count(),
+        2,
+        "only the two high-contrast containers get a border: {wxss}"
+    );
+}
+
+#[test]
 fn web_layout_places_children_of_every_container_kind() {
     // Self-contained: CI clones only the sibling repos a check needs.
     let src = out_dir("containers").join("containers.opu");
