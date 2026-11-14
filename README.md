@@ -393,7 +393,8 @@ The six mini targets emit `aria-role="{role}"` plus `aria-label` from the node's
 `<div id="a11y" class="sr-only">` mirror in `index.html`, with one
 `<div role="{role}" aria-label="{label}"></div>` per roled node and a `.sr-only` CSS rule. Nodes
 without an explicit `role` add no attributes. A page with no explicit roles emits an empty mirror
-container.
+container. The `native` target pairs each PPM frame with a sibling `<frame>.a11y.json` file holding
+the renderer's deterministic accessibility tree, rewritten on every render.
 
 `web-dom` is an additional build target that is not part of the nine-emitter matrix, so
 `opuromc targets` stays at nine. It delegates to the sibling `opurom-web` DOM emitter, which
