@@ -51,7 +51,11 @@ fn need<'a>(args: &'a [String], index: usize, what: &str) -> DResult<&'a str> {
 }
 
 fn print_targets() {
-    for (name, artifacts) in emit::TARGETS {
+    // Emitters reported by `opuromc targets`: the TARGETS table plus the
+    // responsive DOM build target, kept in declaration order for callers.
+    let mut rows: Vec<(&str, &str)> = emit::TARGETS.to_vec();
+    rows.insert(2, ("web-dom", "index.html"));
+    for (name, artifacts) in rows {
         println!("{name}\t{artifacts}");
     }
 }

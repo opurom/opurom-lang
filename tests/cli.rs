@@ -655,15 +655,17 @@ fn gesture_and_navigation_lower_to_the_documented_ir() {
 }
 
 #[test]
-fn targets_lists_all_ten_emitters() {
+fn targets_lists_all_eleven_emitters() {
+    let expected = [
+        "native", "web", "web-dom", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou",
+        "wasm", "harmony",
+    ];
     let r = bin().arg("targets").output().expect("run targets");
     assert!(r.status.success());
     let text = String::from_utf8_lossy(&r.stdout);
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 10, "targets output: {text}");
-    for name in [
-        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm", "harmony",
-    ] {
+    assert_eq!(lines.len(), expected.len(), "targets output: {text}");
+    for name in expected {
         assert!(
             lines.iter().any(|l| l.starts_with(name)),
             "missing target {name}"
@@ -678,10 +680,8 @@ fn targets_lists_all_ten_emitters() {
     assert!(r.status.success());
     let text = String::from_utf8_lossy(&r.stdout);
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 10, "emit --list output: {text}");
-    for name in [
-        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm", "harmony",
-    ] {
+    assert_eq!(lines.len(), expected.len(), "emit --list output: {text}");
+    for name in expected {
         assert!(
             lines.iter().any(|l| l.starts_with(name)),
             "emit --list missing target {name}"
