@@ -104,11 +104,19 @@ fn workspace() -> PathBuf {
 }
 
 fn contract(name: &str) -> PathBuf {
-    workspace().join("..").join("opurom-examples").join("golden").join(name)
+    workspace()
+        .join("..")
+        .join("opurom-examples")
+        .join("golden")
+        .join(name)
 }
 
 fn example(name: &str) -> PathBuf {
-    workspace().join("..").join("opurom-examples").join("golden").join(name)
+    workspace()
+        .join("..")
+        .join("opurom-examples")
+        .join("golden")
+        .join(name)
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -332,7 +340,11 @@ fn each_error_class_is_a_friendly_diagnostic() {
 
         let out = out_dir("reject").join("out.opuir.json");
         let capability = compile(&path, &out);
-        assert_eq!(capability.status.code(), Some(1), "{file}: compile must fail");
+        assert_eq!(
+            capability.status.code(),
+            Some(1),
+            "{file}: compile must fail"
+        );
         assert!(!out.exists(), "{file}: no IR may be written on error");
     }
 }
@@ -2661,7 +2673,10 @@ fn node_check(file: &Path) {
 #[test]
 fn golden_counter_and_profile_ir_are_byte_identical() {
     let cases = [
-        (contract("counter.opu"), fixture("golden/counter.opuir.json")),
+        (
+            contract("counter.opu"),
+            fixture("golden/counter.opuir.json"),
+        ),
         (
             fixture("golden/profile.opu"),
             fixture("golden/profile.opuir.json"),
@@ -2750,7 +2765,11 @@ fn async_diagnostics_are_friendly() {
         assert_diag(&err, &path);
         let out = out_dir("async-reject").join("out.opuir.json");
         let capability = compile(&path, &out);
-        assert_eq!(capability.status.code(), Some(1), "{file}: compile must fail");
+        assert_eq!(
+            capability.status.code(),
+            Some(1),
+            "{file}: compile must fail"
+        );
         assert!(!out.exists(), "{file}: no IR may be written on error");
     }
 }
@@ -2819,7 +2838,11 @@ fn imports_reject_cycles_traversal_duplicates_and_bad_files() {
         assert_error_shape(&err);
         let out = out_dir("import-reject").join("out.opuir.json");
         let capability = compile(&path, &out);
-        assert_eq!(capability.status.code(), Some(1), "{file}: compile must fail");
+        assert_eq!(
+            capability.status.code(),
+            Some(1),
+            "{file}: compile must fail"
+        );
         assert!(!out.exists(), "{file}: no IR may be written on error");
     }
 }
@@ -3405,7 +3428,11 @@ fn language_diagnostics_are_friendly() {
         assert_error_shape(&err);
         let out = out_dir("lang-reject").join(format!("{label}.opuir.json"));
         let capability = compile(path, &out);
-        assert_eq!(capability.status.code(), Some(1), "{label}: compile must fail");
+        assert_eq!(
+            capability.status.code(),
+            Some(1),
+            "{label}: compile must fail"
+        );
         assert!(!out.exists(), "{label}: no IR may be written on error");
     }
 }
@@ -3874,7 +3901,11 @@ fn component_diagnostics_are_friendly() {
         assert_diag(&err, &path);
         let out = out_dir("component-reject").join(format!("{file}.opuir.json"));
         let capability = compile(&path, &out);
-        assert_eq!(capability.status.code(), Some(1), "{file}: compile must fail");
+        assert_eq!(
+            capability.status.code(),
+            Some(1),
+            "{file}: compile must fail"
+        );
         assert!(!out.exists(), "{file}: no IR may be written on error");
     }
 }
@@ -3938,7 +3969,10 @@ fn expanded_ir_keeps_emitters_catalog_and_optimizer() {
 #[test]
 fn component_plain_ir_stays_byte_identical() {
     let cases = [
-        (contract("counter.opu"), fixture("golden/counter.opuir.json")),
+        (
+            contract("counter.opu"),
+            fixture("golden/counter.opuir.json"),
+        ),
         (
             fixture("golden/profile.opu"),
             fixture("golden/profile.opuir.json"),
@@ -4215,7 +4249,11 @@ fn unknown_props_on_feedback_and_display_components_are_friendly() {
 
         let out = dir.join(format!("{name}-out.opuir.json"));
         let capability = compile(&src_path, &out);
-        assert_eq!(capability.status.code(), Some(1), "{name}: compile must fail");
+        assert_eq!(
+            capability.status.code(),
+            Some(1),
+            "{name}: compile must fail"
+        );
         assert!(!out.exists(), "{name}: no IR may be written on error");
     }
 }
@@ -4290,7 +4328,11 @@ fn every_type_error_class_is_a_friendly_diagnostic() {
         assert_diag(&err, &path);
         let out = out_dir("type-reject").join(format!("{file}.opuir.json"));
         let capability = compile(&path, &out);
-        assert_eq!(capability.status.code(), Some(1), "{file}: compile must fail");
+        assert_eq!(
+            capability.status.code(),
+            Some(1),
+            "{file}: compile must fail"
+        );
         assert!(!out.exists(), "{file}: no IR may be written on error");
     }
 }
@@ -4365,7 +4407,11 @@ fn integer_overflow_is_rejected_with_exact_message() {
         assert_eq!(String::from_utf8_lossy(&r.stderr), expected, "{file}");
         let out = out_dir("overflow-reject").join(format!("{file}.opuir.json"));
         let capability = compile(&path, &out);
-        assert_eq!(capability.status.code(), Some(1), "{file}: compile must fail");
+        assert_eq!(
+            capability.status.code(),
+            Some(1),
+            "{file}: compile must fail"
+        );
         assert!(!out.exists(), "{file}: no IR may be written on error");
     }
 }
@@ -4545,7 +4591,10 @@ app Conflict {
 #[test]
 fn example_programs_keep_byte_identical_ir() {
     let cases = [
-        (contract("counter.opu"), fixture("golden/counter.opuir.json")),
+        (
+            contract("counter.opu"),
+            fixture("golden/counter.opuir.json"),
+        ),
         (
             fixture("golden/profile.opu"),
             fixture("golden/profile.opuir.json"),
@@ -4891,7 +4940,11 @@ fn particles_field_errors_are_precise() {
 
         let out = out_dir("particles-reject").join("out.opuir.json");
         let capability = compile(&path, &out);
-        assert_eq!(capability.status.code(), Some(1), "{file}: compile must fail");
+        assert_eq!(
+            capability.status.code(),
+            Some(1),
+            "{file}: compile must fail"
+        );
         assert!(!out.exists(), "{file}: no IR may be written on error");
     }
 }
@@ -5327,7 +5380,11 @@ fn unknown_repeat_list_is_a_friendly_diagnostic() {
         assert_diag(&err, &path);
         let out = dir.join(format!("{name}.opuir.json"));
         let capability = compile(&path, &out);
-        assert_eq!(capability.status.code(), Some(1), "{name}: compile must fail");
+        assert_eq!(
+            capability.status.code(),
+            Some(1),
+            "{name}: compile must fail"
+        );
         assert!(!out.exists(), "{name}: no IR may be written on error");
     }
 }
@@ -5395,7 +5452,11 @@ fn invalid_validator_values_are_rejected_with_help() {
         assert_error_shape(&err);
         let out = dir.join(format!("{name}.opuir.json"));
         let capability = compile(&path, &out);
-        assert_eq!(capability.status.code(), Some(1), "{name}: compile must fail");
+        assert_eq!(
+            capability.status.code(),
+            Some(1),
+            "{name}: compile must fail"
+        );
         assert!(!out.exists(), "{name}: no IR may be written on error");
     }
 }
@@ -5509,7 +5570,10 @@ fn all_ten_emitters_preserve_forms_metadata() {
 fn forms_layer_keeps_golden_ir_byte_identical() {
     let dir = out_dir("forms-golden");
     let cases = [
-        (contract("counter.opu"), fixture("golden/counter.opuir.json")),
+        (
+            contract("counter.opu"),
+            fixture("golden/counter.opuir.json"),
+        ),
         (
             fixture("golden/profile.opu"),
             fixture("golden/profile.opuir.json"),
@@ -6059,7 +6123,11 @@ fn unknown_design_values_are_rejected_with_help() {
         assert_error_shape(&err);
         let out = dir.join(format!("{name}.opuir.json"));
         let capability = compile(&path, &out);
-        assert_eq!(capability.status.code(), Some(1), "{name}: compile must fail");
+        assert_eq!(
+            capability.status.code(),
+            Some(1),
+            "{name}: compile must fail"
+        );
         assert!(!out.exists(), "{name}: no IR may be written on error");
     }
 }
@@ -6171,7 +6239,10 @@ fn all_ten_emitters_preserve_design_props() {
 fn design_props_keep_golden_ir_byte_identical() {
     let dir = out_dir("design-golden");
     let cases = [
-        (contract("counter.opu"), fixture("golden/counter.opuir.json")),
+        (
+            contract("counter.opu"),
+            fixture("golden/counter.opuir.json"),
+        ),
         (
             fixture("golden/profile.opu"),
             fixture("golden/profile.opuir.json"),
