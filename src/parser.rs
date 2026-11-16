@@ -597,6 +597,9 @@ impl<'a> Parser<'a> {
                 "negative numbers are written as '-1', not as a separate expression",
             ));
         }
+        if self.sym("[") {
+            return Ok((Value::Lit(self.int_pair()?), start));
+        }
         let t = self.peek().clone();
         match t.tok {
             Tok::Int(n) => {
@@ -627,6 +630,55 @@ impl<'a> Parser<'a> {
                 "values are integers, decimals, strings, true/false or state identifiers",
             )),
         }
+    }
+
+    // A two-integer prop slice such as `animInterval: [0, 500]`. The
+    // existing string-list literal is reused as the carrier to keep the
+    // value enum unchanged; only this parser path decodes it as integers.
+    fn int_pair(&mut self) -> DResult<Lit> {
+        self.expect_sym("[", "an interval starts with '['")?;
+        let mut nums = Vec::new();
+        loop {
+            let t = self.peek().clone();
+            let sign = if self.sym("-") {
+                self.bump();
+                -1i64
+            } else {
+                1i64
+            };
+            match self.peek().tok {
+                Tok::Int(n) => {
+                    self.bump();
+                    nums.push(sign * n as i64);
+                }
+                _ => {
+                    return Err(Diagnostic::new(
+                        self.path,
+                        t.line,
+                        t.col,
+                        "an interval needs integer bounds",
+                        "write an interval such as [0, 500]",
+                    ))
+                }
+            }
+            if !self.eat_sym(",") {
+                break;
+            }
+            if self.sym("]") {
+                break;
+            }
+        }
+        self.expect_sym("]", "close the interval with ']'")?;
+        if nums.len() != 2 {
+            return Err(Diagnostic::new(
+                self.path,
+                self.pos().line,
+                self.pos().col,
+                "an interval needs exactly two integers",
+                "write an interval such as [0, 500]",
+            ));
+        }
+        Ok(Lit::List(nums.into_iter().map(|n| n.to_string()).collect()))
     }
 
     fn arg(&mut self) -> DResult<Arg> {

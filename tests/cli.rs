@@ -1283,6 +1283,68 @@ fn collision_curve_compiles_and_emits_across_targets() {
 }
 
 #[test]
+fn shared_clock_stagger_is_opt_in_and_validated() {
+    let dir = out_dir("shared-clock");
+    let src = dir.join("clock.opu");
+    fs::write(
+        &src,
+        "app Home { Column {\n  Text(\"A\", animClock: \"home\", animInterval: [0, 500], duration: 800)\n  Text(\"B\", animClock: \"home\", animInterval: [250, 750], duration: 800)\n  Text(\"plain\")\n} }\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let nodes = nodes_of(&ir);
+    let a = nodes.iter().find(|n| n["props"]["value"] == "A").expect("A node");
+    assert_eq!(a["props"]["animClock"], "home");
+    assert_eq!(a["props"]["animInterval"][0], 0);
+    assert_eq!(a["props"]["animInterval"][1], 500);
+    let b = nodes.iter().find(|n| n["props"]["value"] == "B").expect("B node");
+    assert_eq!(b["props"]["animInterval"][0], 250);
+    assert_eq!(b["props"]["animInterval"][1], 750);
+    let plain = nodes.iter().find(|n| n["props"]["value"] == "plain").expect("plain node");
+    assert!(plain["props"].get("animClock").is_none());
+    assert!(plain["props"].get("animInterval").is_none());
+
+    let golden = compile_ok(&contract("counter.opu"));
+    assert_eq!(
+        golden,
+        serde_json::from_slice::<Json>(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap()
+    );
+
+    for (body, diagnostic) in [
+        (
+            "app B { Text(\"A\", animClock: \"c\", duration: 800) Text(\"B\", animClock: \"c\", duration: 400) }",
+            "conflicting durations",
+        ),
+        (
+            "app B { Text(\"A\", animClock: \"c\") }",
+            "requires an explicit duration",
+        ),
+        (
+            "app B { Text(\"A\", animClock: \"c\", animInterval: [500, 500], duration: 800) }",
+            "0 <= begin < end <= 1000",
+        ),
+        (
+            "app B { Text(\"A\", animInterval: [0, 1001]) }",
+            "0 <= begin < end <= 1000",
+        ),
+        (
+            "app B { Text(\"A\", animInterval: [0]) }",
+            "an interval needs exactly two integers",
+        ),
+    ] {
+        let bad = dir.join(format!("bad-{}.opu", diagnostic.split_whitespace().next().unwrap()));
+        fs::write(&bad, body).unwrap();
+        let r = compile(&bad, &dir.join("bad.opuir.json"));
+        assert!(!r.status.success(), "{body}");
+        assert!(
+            String::from_utf8_lossy(&r.stderr).contains(diagnostic),
+            "{body}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+    }
+}
+
+#[test]
 fn text_typography_is_opt_in_and_validated() {
     let dir = out_dir("text-typography");
     let src = dir.join("typography.opu");

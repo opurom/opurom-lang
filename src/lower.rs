@@ -214,6 +214,8 @@ const GENERIC_PROPS: &[&str] = &[
     "repaintBoundary",
     "relayoutBoundary",
     "columnSpan",
+    "animClock",
+    "animInterval",
 ];
 
 /// Additive `Input` validator props; these are not accepted on other kinds.
@@ -755,6 +757,8 @@ struct Ctx<'a> {
     loops: Vec<(String, LoopValue)>,
     /// Whether the node being lowered is inside a Grid, for `columnSpan`.
     in_grid: bool,
+    /// Declared duration per shared clock id, for the stagger diagnostic.
+    clock_durations: HashMap<String, i64>,
     /// Page names declared by `page Name;`, used to validate `push:` targets.
     pages: HashSet<String>,
     /// Route names declared by `route Name { ... }`, in source order. When this
@@ -1004,6 +1008,38 @@ fn validation_prop_value(ctx: &Ctx, key: &str, arg: &Arg) -> DResult<Json> {
 }
 
 fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> DResult<Json> {
+    if key == "animClock" {
+        return match &arg.value {
+            AstValue::Lit(Lit::Str(s)) if !s.is_empty() => Ok(json!(s)),
+            other => Err(ctx.err(
+                arg.pos,
+                format!("prop 'animClock' expects a non-empty string id, found {}", value_desc(other)),
+                "write animClock: 'home'".to_string(),
+            )),
+        };
+    }
+    if key == "animInterval" {
+        let parse = || -> Option<(i64, i64)> {
+            let AstValue::Lit(Lit::List(parts)) = &arg.value else { return None };
+            if parts.len() != 2 { return None }
+            Some((parts[0].parse().ok()?, parts[1].parse().ok()?))
+        };
+        return match parse() {
+            Some((b, e)) if (0..=1000).contains(&b) && (0..=1000).contains(&e) && e > b => {
+                Ok(json!([b, e]))
+            }
+            Some((b, e)) => Err(ctx.err(
+                arg.pos,
+                format!("animInterval [{b}, {e}] needs 0 <= begin < end <= 1000"),
+                "write animInterval: [0, 500]".to_string(),
+            )),
+            None => Err(ctx.err(
+                arg.pos,
+                "animInterval expects two integer bounds".to_string(),
+                "write animInterval: [0, 500]".to_string(),
+            )),
+        };
+    }
     if key == "weight" {
         return match &arg.value {
             AstValue::Lit(Lit::Str(s)) if s == "normal" || s == "bold" => Ok(json!(s)),
@@ -1680,6 +1716,28 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
             other => other,
         };
         props.insert(key, val);
+    }
+    if let Some(Json::String(clock)) = props.get("animClock") {
+        let Some(duration) = props.get("duration").and_then(Json::as_i64) else {
+            return Err(ctx.err(
+                node.pos,
+                format!("animClock '{clock}' requires an explicit duration"),
+                format!("write duration: 800 on every node using animClock: '{clock}'"),
+            ));
+        };
+        if let Some(previous) = ctx.clock_durations.get(clock) {
+            if *previous != duration {
+                return Err(ctx.err(
+                    node.pos,
+                    format!(
+                        "animClock '{clock}' has conflicting durations {previous} and {duration}"
+                    ),
+                    "use one duration for every node sharing a clock".to_string(),
+                ));
+            }
+        } else {
+            ctx.clock_durations.insert(clock.clone(), duration);
+        }
     }
     // Defaults are compiler-supplied: inject them after explicit validation, explicit wins.
     if let Some(c) = component {
@@ -2946,6 +3004,7 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         lists: HashMap::new(),
         loops: Vec::new(),
         in_grid: false,
+        clock_durations: HashMap::new(),
         pages: program.pages.iter().map(|p| p.name.clone()).collect(),
         route_names: program.routes.iter().map(|r| r.name.clone()).collect(),
         icons: crate::pkg_icons::resolve(&crate::pkg_icons::project_root(path)),
