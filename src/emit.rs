@@ -1840,7 +1840,16 @@ fn write_ppm(frame: &opurom_render::Frame, path: &str) -> std::io::Result<()> {
     std::fs::write(path, ppm)
 }
 
-fn render_frame(state: &State, ir_text: &str) {
+// One preview step of the press clock per rendered frame while a press is
+// held, so a ripple advances between piped commands without any wall clock.
+const PRESS_STEP_MS: i64 = 50;
+
+fn render_frame(
+    state: &State,
+    ir_text: &str,
+    press: Option<&opurom_render::PressPhase>,
+    press_tick: i64,
+) {
     let ir = match opurom_render::parse_ir(ir_text) {
         Ok(ir) => ir,
         Err(e) => {
@@ -1856,7 +1865,13 @@ fn render_frame(state: &State, ir_text: &str) {
             return;
         }
     };
-    let frame = renderer.render(&ir, &view);
+    // Without a press the clock stays at the settled value this preview always
+    // used, so every no-press frame stays byte-identical to the old path.
+    let elapsed_ms = match press {
+        Some(_) => opurom_render::SETTLED_MS + press_tick * PRESS_STEP_MS,
+        None => opurom_render::SETTLED_MS,
+    };
+    let frame = renderer.render_with_press(&ir, &view, elapsed_ms, press);
     let out = std::env::args()
         .nth(1)
         .unwrap_or_else(frame_default_path);
@@ -1900,7 +1915,11 @@ fn render_frame(state: &State, ir_text: &str) {
         "            Err(e) => println!(\"error: cannot load IR from {path}: {e}\"),\n",
         "        }\n",
         "    }\n",
-        "    render_frame(&state, &ir_text);\n",
+        "    // The press phase is caller-owned: held between commands and never\n",
+        "    // written into the state or the IR.\n",
+        "    let mut press: Option<opurom_render::PressPhase> = None;\n",
+        "    let mut press_tick: i64 = 0;\n",
+        "    render_frame(&state, &ir_text, None, 0);\n",
         "    let stdin = io::stdin();\n",
         "    for line in stdin.lock().lines() {\n",
         "        let line = match line { Ok(l) => l, Err(_) => break };\n",
@@ -1918,7 +1937,8 @@ fn render_frame(state: &State, ir_text: &str) {
         "                    Ok(text) => match opurom_render::parse_ir(&text) {\n",
         "                        Ok(_) => {\n",
         "                            ir_text = text;\n",
-        "                            render_frame(&state, &ir_text);\n",
+        "                            render_frame(&state, &ir_text, press.as_ref(), press_tick);\n",
+        "                            if press.is_some() { press_tick += 1; }\n",
         "                        }\n",
         "                        Err(e) => println!(\"error: invalid IR in {path}: {e}\"),\n",
         "                    },\n",
@@ -1940,7 +1960,37 @@ fn render_frame(state: &State, ir_text: &str) {
         "                let patches = apply(&mut state, id, parts[0], input);\n",
         "                print_state(&state);\n",
         "                for p in patches { println!(\"patch {}={}\", p.name, p.value); }\n",
-        "                render_frame(&state, &ir_text);\n",
+        "                render_frame(&state, &ir_text, press.as_ref(), press_tick);\n",
+        "                if press.is_some() { press_tick += 1; }\n",
+        "            }\n",
+        "            \"press\" => {\n",
+        "                if parts.len() < 3 {\n",
+        "                    println!(\"error: usage: press <id> on|off\");\n",
+        "                    continue;\n",
+        "                }\n",
+        "                let id = match parts[1].parse::<u32>() {\n",
+        "                    Ok(id) => id,\n",
+        "                    Err(_) => { println!(\"error: invalid node id {:?}\", parts[1]); continue; }\n",
+        "                };\n",
+        "                match parts[2] {\n",
+        "                    \"on\" => {\n",
+        "                        // The press frame paints one step after DOWN so the\n",
+        "                        // ripple has begun, matching a host's next frame.\n",
+        "                        press = Some(opurom_render::PressPhase {\n",
+        "                            node_id: id,\n",
+        "                            press_start_tick: opurom_render::SETTLED_MS,\n",
+        "                            touch: None,\n",
+        "                        });\n",
+        "                        press_tick = 1;\n",
+        "                    }\n",
+        "                    \"off\" => { press = None; press_tick = 0; }\n",
+        "                    other => {\n",
+        "                        println!(\"error: press phase must be 'on' or 'off', found {:?}\", other);\n",
+        "                        continue;\n",
+        "                    }\n",
+        "                }\n",
+        "                render_frame(&state, &ir_text, press.as_ref(), press_tick);\n",
+        "                if press.is_some() { press_tick += 1; }\n",
         "            }\n",
         "            other => println!(\"error: unknown command {:?}\", other),\n",
         "        }\n",

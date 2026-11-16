@@ -2571,7 +2571,7 @@ fn native_emitter_exposes_ir_override_points() {
     let src = fs::read_to_string(out.join("src/main.rs")).unwrap();
     assert!(src.contains("Opurom_IR_PATH"), "{src}");
     assert!(src.contains("\"reload\" =>"), "{src}");
-    assert!(src.contains("render_frame(&state, &ir_text)"), "{src}");
+    assert!(src.contains("render_frame(&state, &ir_text,"), "{src}");
 }
 
 #[test]
@@ -2757,7 +2757,7 @@ fn native_emitter_renders_and_writes_a_frame() {
     );
     for marker in [
         "opurom_render::Renderer",
-        "render_frame(&state, &ir_text)",
+        "render_frame(&state, &ir_text,",
         "write_ppm",
     ] {
         assert!(native_rs.contains(marker), "native source missing {marker}");
@@ -8700,5 +8700,97 @@ fn token_import_rejects_duplicate_against_inline_and_across_files() {
     assert!(
         stderr.contains("duplicate token 'md-sys-color'"),
         "{stderr}"
+    );
+}
+
+// ---- native press phase (A3/M4 stdin wiring) ----
+
+fn build_press_binary() -> (PathBuf, u32) {
+    let ir = out_dir("native-press-ir").join("counter.opuir.json");
+    let r = compile(&contract("counter.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let dir = out_dir("native-press");
+    let r = emit(&ir, "native", &dir);
+    assert!(
+        r.status.success(),
+        "native emit failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let (built, stderr) = build_native(&dir);
+    assert!(built, "cargo build --release failed:\n{stderr}");
+    assert!(
+        !stderr.contains("warning:"),
+        "generated Rust must be warning-free:\n{stderr}"
+    );
+    let ir_json: Json =
+        serde_json::from_str(&fs::read_to_string(&ir).expect("read IR")).expect("IR is valid JSON");
+    let press_id = first_positive_add_tap_id(ir_json.get("tree").expect("IR tree"))
+        .expect("counter has a positive add tap");
+    (dir, press_id)
+}
+
+fn run_native_frame(exe: &Path, frame: &Path, stdin: &str) -> (String, Vec<u8>) {
+    let mut child = Command::new(exe)
+        .arg(frame.to_str().expect("utf8 frame path"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn generated native binary");
+    {
+        let mut pipe = child.stdin.take().expect("stdin pipe");
+        pipe.write_all(stdin.as_bytes()).expect("write stdin");
+    }
+    let out = child.wait_with_output().expect("wait for native binary");
+    assert!(
+        out.status.success(),
+        "native frame render failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        fs::read(frame).expect("read rendered frame"),
+    )
+}
+
+#[test]
+fn native_press_on_changes_the_frame() {
+    let (dir, press_id) = build_press_binary();
+    let exe = dir.join("target/release/opurom_native");
+    let (base_stdout, base_bytes) = run_native_frame(&exe, &dir.join("base.ppm"), "quit\n");
+    assert!(
+        base_stdout.contains("frame: 800x600 wrote"),
+        "{base_stdout}"
+    );
+    let (press_stdout, press_bytes) = run_native_frame(
+        &exe,
+        &dir.join("press-on.ppm"),
+        &format!("press {press_id} on\nquit\n"),
+    );
+    assert!(
+        press_stdout.contains("frame: 800x600 wrote"),
+        "{press_stdout}"
+    );
+    assert_ne!(
+        base_bytes, press_bytes,
+        "press on must change the rendered frame"
+    );
+}
+
+#[test]
+fn native_without_press_frames_are_byte_identical() {
+    let (dir, press_id) = build_press_binary();
+    let exe = dir.join("target/release/opurom_native");
+    let (_, a) = run_native_frame(&exe, &dir.join("no-a.ppm"), "quit\n");
+    let (_, b) = run_native_frame(&exe, &dir.join("no-b.ppm"), "quit\n");
+    assert_eq!(a, b, "two no-command runs must be byte-identical");
+    let (_, off) = run_native_frame(
+        &exe,
+        &dir.join("press-off.ppm"),
+        &format!("press {press_id} off\nquit\n"),
+    );
+    assert_eq!(
+        a, off,
+        "press off must be byte-identical to no press command"
     );
 }
