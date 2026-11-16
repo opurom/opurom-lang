@@ -6816,6 +6816,41 @@ fn two_route_ir(name: &str) -> PathBuf {
 }
 
 #[test]
+fn mini_targets_render_list_for_as_native_loop() {
+    // DYNAMIC_LISTS.md Phase B: a runtime For node maps to the platform loop
+    // directive, with the item variable bound to the template placeholder.
+    let dir = out_dir("mini-wx-for");
+    let src = dir.join("wxfor.opu");
+    fs::write(
+        &src,
+        "app MPFor {\n  state items = [\"a\", \"b\"]\n  Column {\n    for (item in items) {\n      Text(\"{item}\")\n    }\n  }\n}\n",
+    )
+    .unwrap();
+    let ir = dir.join("wxfor.opuir.json");
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    for (target, ext, ns) in [
+        ("wechat", "wxml", "wx"),
+        ("alipay", "axml", "a"),
+        ("qq", "qml", "qq"),
+        ("douyin", "ttml", "tt"),
+        ("baidu", "swan", "s"),
+        ("kuaishou", "ksml", "ks"),
+    ] {
+        let out = out_dir(&format!("mini-wx-for-{target}"));
+        let r = emit(&ir, target, &out);
+        assert!(r.status.success(), "{target}: {}", String::from_utf8_lossy(&r.stderr));
+        let markup = fs::read_to_string(out.join(format!("pages/index/index.{ext}"))).unwrap();
+        assert!(
+            markup.contains(&format!("{ns}:for=\"{{{{items}}}}\"")),
+            "{target} loop directive: {markup}"
+        );
+        assert!(markup.contains(&format!("{ns}:for-item=\"item\"")), "{target} item var");
+        assert!(markup.contains("{{item}}"), "{target} template placeholder");
+    }
+}
+
+#[test]
 fn mini_emitters_emit_one_page_quad_per_route() {
     // PLATFORM_DELIVERY.md §7: each route gets its own page quad, the launch
     // page redirects to initialRoute, push/pop use the platform navigation API,

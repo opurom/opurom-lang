@@ -546,7 +546,9 @@ redirects to `initialRoute`, `push`/`pop` lower to the platform navigation API
 page mirroring it in `onShow`, and the `routeStack`/`currentRoute` simulation is gone. Single-route
 programs keep the `emit_mini` output byte-identical. They understand the
 interactive UI and async IR plus `when`, `unless`, `computed`, `list` state entries, node-level
-`repeat`, `Input` validator props and `validate` actions.
+`repeat`, runtime `For` nodes (mapped to the platform's native loop directive, e.g.
+`wx:for="{{items}}" wx:for-item="item"`), the `append`/`removeAt`/`assign` list event ops,
+`Input` validator props and `validate` actions.
 `Icon` nodes render the canonical 24x24 stroke path on every target: the `web` target strokes it
 with Canvas 2D `Path2D`, and the six mini targets emit an inline SVG data URI on an `<image>`
 element, so the glyph matches the native renderer instead of showing its name as text.

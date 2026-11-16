@@ -3346,6 +3346,34 @@ fn markup_node(
                 out.push_str(&format!("{pad}</view>\n"));
             }
         }
+        "For" => {
+            // Runtime list loop (DYNAMIC_LISTS.md Phase B): the platform's loop
+            // directive renders the template once per element of `source`.
+            // cond_attr "wx:if" becomes "wx:for"; the item var rides "<ns>-item".
+            let source = prop_str(&n.props, "source", "");
+            let item = prop_str(&n.props, "item", "");
+            // cond_attr is "<ns>:if" or "<ns>-if"; keep just the namespace.
+            let ns = p
+                .cond_attr
+                .trim_end_matches("if")
+                .trim_end_matches([':', '-']);
+            let loop_attr = format!(
+                " {ns}:for=\"{}{}{}\" {ns}:for-item=\"{}\" {ns}:key=\"index\"",
+                p.open,
+                html_attr(&source),
+                p.close,
+                html_attr(&item)
+            );
+            out.push_str(&format!(
+                "{pad}<view class=\"col n{id}{anim}\"{loop_attr}{cond_attr}>
+"
+            ));
+            for child in &n.children {
+                markup_node(child, p, depth + 1, out, ir_path, dark)?;
+            }
+            out.push_str(&format!("{pad}</view>
+"));
+        }
         kind => {
             // Documented fallback: an unknown kind renders as a Container
             // showing its label, so gallery exhibits stay visible in pages.
@@ -3408,7 +3436,7 @@ fn mini_action(action: &Json, p: &Platform, ir_path: &str) -> DResult<String> {
             format!("this.{set}({{\"{target}\": this.data.{target} {sign} ({rhs})}});")
         }
         "toggle" => format!("this.{set}({{\"{target}\": !this.data.{target}}});"),
-        "set" => match action.get("valueFrom").and_then(Json::as_str) {
+        "set" | "assign" => match action.get("valueFrom").and_then(Json::as_str) {
             Some(from) => format!("this.{set}({{\"{target}\": this.data.{from}}});"),
             None => {
                 let v = action
@@ -3418,6 +3446,22 @@ fn mini_action(action: &Json, p: &Platform, ir_path: &str) -> DResult<String> {
                 format!("this.{set}({{\"{target}\": {}}});", js_lit(&v))
             }
         },
+        // List mutations read the current array, edit a copy, and write it back
+        // so the platform diff sees a new reference (DYNAMIC_LISTS Phase B).
+        "append" => {
+            let elem = match action.get("valueFrom").and_then(Json::as_str) {
+                Some(from) => format!("this.data.{from}"),
+                None => { let v = action.get("value").cloned().unwrap_or(Json::Null); js_lit(&v) }
+            };
+            format!("this.{set}({{\"{target}\": this.data.{target}.concat([{elem}])}});")
+        }
+        "removeAt" => {
+            let idx = match action.get("valueFrom").and_then(Json::as_str) {
+                Some(from) => format!("this.data.{from}"),
+                None => action.get("value").and_then(Json::as_i64).unwrap_or(0).to_string(),
+            };
+            format!("this.{set}({{\"{target}\": this.data.{target}.slice(0, {idx}).concat(this.data.{target}.slice({idx} + 1))}});")
+        }
         _ => return Err(bad_ir(ir_path, format!("unknown event op '{op}'"))),
     })
 }
