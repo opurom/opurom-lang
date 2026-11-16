@@ -709,14 +709,12 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
 #[derive(Clone, Debug)]
 enum LoopValue {
     Int(i64),
-    Str(String),
 }
 
 impl LoopValue {
     fn text(&self) -> String {
         match self {
             LoopValue::Int(n) => n.to_string(),
-            LoopValue::Str(s) => s.clone(),
         }
     }
 }
@@ -801,12 +799,14 @@ impl<'a> Ctx<'a> {
     fn index_value(&self, index: &IndexExpr) -> Option<i64> {
         match index {
             IndexExpr::Int(n) => Some(*n),
-            IndexExpr::Var(name) => self.loops.iter().rev().find(|(v, _)| v == name).and_then(
-                |(_, value)| match value {
+            IndexExpr::Var(name) => self
+                .loops
+                .iter()
+                .rev()
+                .find(|(v, _)| v == name)
+                .and_then(|(_, value)| match value {
                     LoopValue::Int(n) => Some(*n),
-                    LoopValue::Str(_) => None,
-                },
-            ),
+                }),
         }
     }
 }
@@ -1378,12 +1378,30 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
             };
             Ok(json!({"op": "add", "target": stmt.target, "value": value}))
         }
-        StmtKind::Set(v, _p) => match v {
-            AstValue::Lit(l) => {
-                Ok(json!({"op": "set", "target": stmt.target, "value": json_lit(l)}))
+        StmtKind::Set(v, _p) => {
+            // A list state gets the `assign` op; scalars keep `set`.
+            let op = if ctx.types.get(&stmt.target).copied() == Some(Ty::List) {
+                "assign"
+            } else {
+                "set"
+            };
+            match v {
+                AstValue::Lit(l) => Ok(json!({"op": op, "target": stmt.target, "value": json_lit(l)})),
+                AstValue::Ident(name) => {
+                    Ok(json!({"op": op, "target": stmt.target, "valueFrom": name}))
+                }
             }
+        }
+        StmtKind::Append(v, _p) => match v {
+            AstValue::Lit(l) => Ok(json!({"op": "append", "target": stmt.target, "value": json_lit(l)})),
             AstValue::Ident(name) => {
-                Ok(json!({"op": "set", "target": stmt.target, "valueFrom": name}))
+                Ok(json!({"op": "append", "target": stmt.target, "valueFrom": name}))
+            }
+        },
+        StmtKind::RemoveAt(v, _p) => match v {
+            AstValue::Lit(l) => Ok(json!({"op": "removeAt", "target": stmt.target, "value": json_lit(l)})),
+            AstValue::Ident(name) => {
+                Ok(json!({"op": "removeAt", "target": stmt.target, "valueFrom": name}))
             }
         },
         StmtKind::Push => {
@@ -1785,7 +1803,8 @@ fn count_expanded(nodes: &[Node], ctx: &Ctx) -> DResult<usize> {
                                         "split the list or use an integer count loop",
                                     ));
                                 }
-                                values.len()
+                                // One runtime node, not one node per initial row.
+                                1
                             }
                             (Some(ty), _) => {
                                 return Err(ctx.err(
@@ -1904,7 +1923,7 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], cond: Cond) -> DResult<Vec<Jso
                         "put effects inside an async tap-handler block".to_string(),
                     ));
                 }
-                let values: Vec<LoopValue> = match iter {
+                match iter {
                     ForIter::Count { count, pos } => {
                         if *count > 64 {
                             return Err(ctx.err(
@@ -1914,7 +1933,12 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], cond: Cond) -> DResult<Vec<Jso
                                     .to_string(),
                             ));
                         }
-                        (0..*count).map(|i| LoopValue::Int(i as i64)).collect()
+                        for i in 0..*count {
+                            ctx.loops.push((var.clone(), LoopValue::Int(i as i64)));
+                            let lowered = lower_node_list(ctx, &block.nodes, cond);
+                            ctx.loops.pop();
+                            out.extend(lowered?);
+                        }
                     }
                     ForIter::List { name, pos } => {
                         let ty = ctx.types.get(name).copied().ok_or_else(|| {
@@ -1942,7 +1966,7 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], cond: Cond) -> DResult<Vec<Jso
                             ctx.err(
                                 *pos,
                                 format!("list state '{name}' has no initializer"),
-                                "declare it with 'state items = [\"a\", \"b\"]'",
+                                format!("declare it with 'state {name} = [\"a\", \"b\"]'"),
                             )
                         })?;
                         if values.len() > 64 {
@@ -1952,17 +1976,30 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], cond: Cond) -> DResult<Vec<Jso
                                     "list '{name}' has more than 64 values, found {}",
                                     values.len()
                                 ),
-                                "split the list or use an integer count loop".to_string(),
+                                "split the list or use an integer count loop",
                             ));
                         }
-                        values.into_iter().map(LoopValue::Str).collect()
+                        // A list-typed state keeps iterating at runtime: one For
+                        // node carries the template, and the renderer lays it out
+                        // once per element. The template keeps `{item}` for the
+                        // runtime binding; count loops stay statically unrolled.
+                        let id = ctx.take_id();
+                        let children = lower_node_list(ctx, &block.nodes, Cond::default())?;
+                        let mut node_json = JsonMap::new();
+                        node_json.insert("id".to_string(), json!(id));
+                        node_json.insert("kind".to_string(), json!("For"));
+                        node_json
+                            .insert("props".to_string(), json!({"source": name, "item": var}));
+                        node_json.insert("children".to_string(), Json::Array(children));
+                        node_json.insert("events".to_string(), Json::Object(JsonMap::new()));
+                        if let Some(w) = cond.when {
+                            node_json.insert("when".to_string(), json!(w));
+                        }
+                        if let Some(u) = cond.unless {
+                            node_json.insert("unless".to_string(), json!(u));
+                        }
+                        out.push(Json::Object(node_json));
                     }
-                };
-                for value in values {
-                    ctx.loops.push((var.clone(), value));
-                    let lowered = lower_node_list(ctx, &block.nodes, cond);
-                    ctx.loops.pop();
-                    out.extend(lowered?);
                 }
             }
             NodeKind::Repeat {
@@ -2162,6 +2199,8 @@ fn substitute_stmt(path: &str, stmt: &Stmt, bindings: &HashMap<String, Lit>) -> 
         StmtKind::Add(v, p) => StmtKind::Add(substitute_value(v, bindings), *p),
         StmtKind::Sub(v, p) => StmtKind::Sub(substitute_value(v, bindings), *p),
         StmtKind::Set(v, p) => StmtKind::Set(substitute_value(v, bindings), *p),
+        StmtKind::Append(v, p) => StmtKind::Append(substitute_value(v, bindings), *p),
+        StmtKind::RemoveAt(v, p) => StmtKind::RemoveAt(substitute_value(v, bindings), *p),
         StmtKind::Toggle => StmtKind::Toggle,
         StmtKind::Push => StmtKind::Push,
         StmtKind::Pop => StmtKind::Pop,

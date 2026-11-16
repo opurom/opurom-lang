@@ -1,0 +1,23 @@
+app ListMutate {
+  state items = ["a", "b"]
+  state other = ["c"]
+  state tag = "z"
+  state index = 1
+  Column {
+    for (item in items) {
+      Text("{item}")
+    }
+    Button("add") {
+      items.append("d")
+      items.append(tag)
+    }
+    Button("drop") {
+      items.removeAt(0)
+      items.removeAt(index)
+    }
+    Button("reset") {
+      items = ["x", "y"]
+      items = other
+    }
+  }
+}

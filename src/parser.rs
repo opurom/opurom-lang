@@ -70,6 +70,10 @@ pub enum StmtKind {
     /// `form.validate()` asks the consumer to validate every Input subtree.
     /// The built-in receiver is stored as the statement target.
     Validate,
+    /// `items.append(value)` appends one element to a list state.
+    Append(Value, Pos),
+    /// `items.removeAt(index)` removes one element of a list state by position.
+    RemoveAt(Value, Pos),
 }
 
 #[derive(Clone, Debug)]
@@ -753,15 +757,34 @@ impl<'a> Parser<'a> {
             let (v, p) = self.value()?;
             StmtKind::Sub(v, p)
         } else if self.eat_sym("=") {
-            let (v, p) = self.value()?;
+            // A list state may be replaced wholesale with a string-array
+            // literal; scalars keep the plain value form.
+            let p = self.pos();
+            let v = if self.sym("[") {
+                Value::Lit(self.list_lit()?)
+            } else {
+                self.value()?.0
+            };
             StmtKind::Set(v, p)
         } else if self.eat_sym(".") {
-            let (method, mp) = self.expect_ident("'toggle' or 'validate'")?;
+            let (method, mp) = self.expect_ident("'toggle', 'validate', 'append' or 'removeAt'")?;
             match method.as_str() {
                 "toggle" => {
                     self.expect_sym("(", "toggle() needs an opening '('")?;
                     self.expect_sym(")", "toggle() needs a closing ')'")?;
                     StmtKind::Toggle
+                }
+                "append" => {
+                    self.expect_sym("(", "append() needs an opening '('")?;
+                    let (value, vpos) = self.value()?;
+                    self.expect_sym(")", "append() needs a closing ')'")?;
+                    StmtKind::Append(value, vpos)
+                }
+                "removeAt" => {
+                    self.expect_sym("(", "removeAt() needs an opening '('")?;
+                    let (value, vpos) = self.value()?;
+                    self.expect_sym(")", "removeAt() needs a closing ')'")?;
+                    StmtKind::RemoveAt(value, vpos)
                 }
                 "validate" => {
                     if target != "form" {
@@ -782,8 +805,10 @@ impl<'a> Parser<'a> {
                         self.path,
                         mp.line,
                         mp.col,
-                        format!("unknown method '{method}', expected 'toggle' or 'validate'"),
-                        "write 'name.toggle()' on a bool state or 'form.validate()'",
+                        format!(
+                            "unknown method '{method}', expected 'toggle', 'validate', 'append' or 'removeAt'"
+                        ),
+                        "write 'name.toggle()' on a bool state, 'items.append(x)' on a list state or 'form.validate()'",
                     ));
                 }
             }

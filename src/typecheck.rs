@@ -11,7 +11,8 @@ use crate::parser::{
 };
 
 /// The value lattice of the language: `int`, `bool` and `string` are stored in
-/// IR state, `list` is compile-time only and `number` is a literal-only type.
+/// IR state, `list` is runtime-mutable only through the list event ops and
+/// `number` is a literal-only type.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ValueTy {
     Int,
@@ -308,7 +309,7 @@ pub fn infer_computed(
                 return Err(type_error(
                     path,
                     expr.pos,
-                    format!("list state '{name}' is compile-time only"),
+                    format!("list state '{name}' is not allowed in a computed expression"),
                     "int, bool or string",
                     "list",
                     "use a declared int, bool or string state in a computed expression",
@@ -415,10 +416,22 @@ impl<'a> Checker<'a> {
     fn list_only(&self, name: &str, pos: Pos) -> Diagnostic {
         self.err(
             pos,
-            format!("list state '{name}' is compile-time only"),
+            format!("list state '{name}' is not allowed here"),
             "int, bool or string",
             "list",
-            "use 'for (item in items)' to unroll list values at compile time",
+            "read a list element with '{items[i]}' or iterate with 'for item in items'",
+        )
+    }
+
+    /// `set`-shaped mutation on a list state: IR_SCHEMA rejects `set` on a
+    /// `list` target and points the source at `assign` instead.
+    fn list_assign_hint(&self, name: &str, pos: Pos) -> Diagnostic {
+        self.err(
+            pos,
+            format!("this mutation is not valid on list state '{name}'"),
+            "list",
+            "list",
+            "use 'items = [\"a\", \"b\"]' to replace, 'items.append(\"x\")' to add or 'items.removeAt(i)' to remove",
         )
     }
 
@@ -468,7 +481,51 @@ impl<'a> Checker<'a> {
             return Err(self.readonly(&stmt.target, target, stmt.pos));
         }
         if target == ValueTy::List {
-            return Err(self.list_only(&stmt.target, stmt.pos));
+            // List states accept only the list operators: append, removeAt and
+            // assignment of a list value (IR_SCHEMA's assign/append/removeAt).
+            match &stmt.kind {
+                StmtKind::Append(value, pos) => {
+                    let found = self.value_ty(value, *pos, "in append()", "string")?;
+                    if found != ValueTy::Str {
+                        return Err(self.err(
+                            *pos,
+                            format!(
+                                "'append()' requires a string element, found {} value",
+                                found.name()
+                            ),
+                            "string",
+                            found.name(),
+                            "list elements are strings; append a string literal or a string state",
+                        ));
+                    }
+                }
+                StmtKind::RemoveAt(value, pos) => {
+                    let found = self.value_ty(value, *pos, "in removeAt()", "int")?;
+                    if found != ValueTy::Int {
+                        return Err(self.err(
+                            *pos,
+                            format!(
+                                "'removeAt()' requires an int index, found {} value",
+                                found.name()
+                            ),
+                            "int",
+                            found.name(),
+                            "use an integer literal or an int state as the index",
+                        ));
+                    }
+                }
+                StmtKind::Set(value, pos) => {
+                    // Assigning a list value to a list state lowers to the
+                    // `assign` op; a scalar keeps the rejection with the
+                    // assign hint IR_SCHEMA specifies.
+                    let found = self.value_ty(value, *pos, "in event expression", "list")?;
+                    if found != ValueTy::List {
+                        return Err(self.list_assign_hint(&stmt.target, stmt.pos));
+                    }
+                }
+                _ => return Err(self.list_assign_hint(&stmt.target, stmt.pos)),
+            }
+            return Ok(());
         }
         match &stmt.kind {
             StmtKind::Add(value, pos) | StmtKind::Sub(value, pos) => {
@@ -542,6 +599,26 @@ impl<'a> Checker<'a> {
                     ));
                 }
             }
+            StmtKind::Append(..) | StmtKind::RemoveAt(..) => {
+                let method = match &stmt.kind {
+                    StmtKind::Append(..) => "append",
+                    _ => "removeAt",
+                };
+                return Err(self.err(
+                    stmt.pos,
+                    format!(
+                        "'{method}()' requires a list state, found {} state '{}'",
+                        target.name(),
+                        stmt.target
+                    ),
+                    "list",
+                    target.name(),
+                    format!(
+                        "declare '{}' as a list, e.g. 'state {} = [\"a\"]'",
+                        stmt.target, stmt.target
+                    ),
+                ));
+            }
             StmtKind::Toggle => {
                 if target != ValueTy::Bool {
                     return Err(self.err(
@@ -570,7 +647,7 @@ impl<'a> Checker<'a> {
             if self.env.computed.contains(into) {
                 return Err(self.readonly(into, ty, *pos));
             }
-            if ty != ValueTy::Str {
+            if ty != ValueTy::Str && ty != ValueTy::List {
                 return Err(self.err(
                     *pos,
                     format!(
@@ -580,7 +657,7 @@ impl<'a> Checker<'a> {
                     ),
                     "string",
                     ty.name(),
-                    format!("declare '{into}' with a string initializer"),
+                    format!("declare '{into}' with a string or list initializer"),
                 ));
             }
         }

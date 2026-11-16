@@ -115,7 +115,8 @@ app FormDemo {
 lowers to one `Column` node whose `children` are the template and whose additive node-level
 field is `"repeat": {"item": "item", "list": "items"}`. The existing `"list"` state entry is
 reused, so a template placeholder such as `"{item}"` stays unresolved for a consumer to
-substitute once per list value. Parenthesized `for (item in items)` remains the earlier
+substitute once per list value. A parenthesized `for (item in items)` lowers to one runtime
+`For` node with `source`/`item` props (DYNAMIC_LISTS.md); `for (i in 3)` count loops remain the
 compile-time unroll. Unknown or non-list names produce friendly diagnostics.
 
 ```json
@@ -329,10 +330,12 @@ app EffectsDemo {
   arithmetic. Earlier consumers ignore the `"computed"` array and therefore see only the compiled
   initial value; this is the documented fallback, not a silent recomputation.
 - `state items = ["a", "b"]` declares a `"list"` state whose `init` is a JSON string array. A
-  `for (item in items) { Text("{item}") }` block unrolls at compile time against that
-  initializer; list values may not contain braces, and a list loop is limited to 64 values.
-  Binding a list, interpolating a list, mutating a list, using it in a computed
-  expression or looping over a non-list state is a friendly diagnostic.
+  `for (item in items) { Text("{item}") }` block lowers to one runtime `For` node carrying
+  `source`/`item` props and the template children; `{item}` stays the runtime placeholder and
+  the consumer renders one row per element (see DYNAMIC_LISTS.md). Count loops (`for (i in 3)`)
+  still unroll at compile time, and a list loop is limited to 64 values. Binding a list,
+  interpolating a list, using one in a computed expression or looping over a non-list state is a
+  friendly diagnostic.
 
   ```json
   {"name": "items", "type": "list", "init": ["a", "b"]}
@@ -675,7 +678,7 @@ followed by piped-stdin sessions, and builds generated wasm crates for
 `wasm32-unknown-unknown` before instantiating them in Node's `WebAssembly` runtime with an empty
 import object. The harmony test checks the complete project layout, full-IR embedding, ArkUI
 markers, generated state/design/validator metadata and balanced ArkTS braces. The language tests
-cover `else`/`unless`, computed values, list unroll, every new diagnostic, all ten emitters,
+cover `else`/`unless`, computed values, runtime list `For` nodes, every new diagnostic, all ten emitters,
 computed native runtime patches and computed wasm ABI state. Six new CLI tests cover repeatable-list
 IR and optimizer preservation, all ten emitters' additive metadata, unknown list names, validator
 props/actions, validator diagnostics and golden bytes. The component tests cover one, two, nested
@@ -731,10 +734,10 @@ tree.
 - **Modules are compile-time declaration merges.** There is no runtime module registry, no remote
   resolver, no code execution during import resolution and no computed or component declarations
   in imported modules.
-- **Lists are compile-time constants.** Parenthesized `for` loops unroll against the initializer,
-  list values may not contain braces and those loops are capped at 64 values. The unparenthesized
-  repeatable `for` keeps one template subtree plus `repeat` metadata, but runtime list mutation is
-  not emitted.
+- **Lists iterate at runtime through one `For` node.** A parenthesized `for` over a list state
+  lowers to `{"kind":"For","props":{"source","item"}}` with the template children; the
+  unparenthesized repeatable `for` keeps one template subtree plus `repeat` metadata. Events
+  mutate list state only through the `assign`, `append` and `removeAt` ops of IR_SCHEMA.
 
 ### Later work
 

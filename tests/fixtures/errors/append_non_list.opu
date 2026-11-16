@@ -1,0 +1,4 @@
+app Bad {
+  state name = "x"
+  Button("go") { name.append("y") }
+}

@@ -3272,12 +3272,24 @@ fn computed_and_list_lower_to_documented_ir() {
     assert!(find("light").get("when").is_none());
     assert_eq!(find("visible")["when"], "visible");
     assert_eq!(find("hidden")["unless"], "visible");
-    let unrolled: Vec<&str> = nodes
+    // A list-typed loop keeps iterating at runtime: one For node carries the
+    // template and `{item}` stays the runtime placeholder (DYNAMIC_LISTS.md).
+    let for_node = nodes
         .iter()
-        .filter_map(|n| (**n)["props"]["value"].as_str())
-        .filter(|v| *v == "a" || *v == "b")
-        .collect();
-    assert_eq!(unrolled, vec!["a", "b"]);
+        .find(|n| (**n)["kind"] == "For")
+        .copied()
+        .expect("For node for list state");
+    assert_eq!(
+        for_node["props"],
+        json!({"source": "items", "item": "item"})
+    );
+    assert_eq!(for_node["children"][0]["props"]["value"], "{item}");
+    assert!(
+        nodes
+            .iter()
+            .all(|n| (**n)["props"]["value"].as_str() != Some("a")),
+        "list rows must not unroll into literal nodes"
+    );
 
     let computed_ir = compile_ok(&fixture("computed_state.opu"));
     assert_eq!(
@@ -3311,11 +3323,59 @@ fn computed_and_list_lower_to_documented_ir() {
         list_ir["state"][0],
         json!({"name": "items", "type": "list", "init": ["a", "b", "c"]})
     );
-    let values: Vec<&str> = nodes_of(&list_ir)
+    // The loop is one runtime For node; `{item}` stays the template
+    // placeholder instead of unrolling into per-row literals.
+    let for_node = nodes_of(&list_ir)
         .into_iter()
+        .find(|n| n["kind"] == "For")
+        .expect("For node for list state");
+    assert_eq!(
+        for_node["props"],
+        json!({"source": "items", "item": "item"})
+    );
+    let values: Vec<&str> = for_node["children"]
+        .as_array()
+        .unwrap()
+        .iter()
         .filter_map(|n| n["props"]["value"].as_str())
         .collect();
-    assert_eq!(values, vec!["a", "b", "c"]);
+    assert_eq!(values, vec!["{item}"]);
+}
+
+#[test]
+fn list_state_mutates_through_assign_append_and_remove_at() {
+    let ir = compile_ok(&fixture("list_mutate.opu"));
+    let nodes = nodes_of(&ir);
+    let events = |label: &str| -> Json {
+        nodes
+            .iter()
+            .find(|n| (**n)["props"]["label"].as_str() == Some(label))
+            .copied()
+            .expect("button node")
+            ["events"]["tap"]
+            .clone()
+    };
+    assert_eq!(
+        events("add"),
+        json!({"actions": [
+            {"op": "append", "target": "items", "value": "d"},
+            {"op": "append", "target": "items", "valueFrom": "tag"}
+        ]})
+    );
+    assert_eq!(
+        events("drop"),
+        json!({"actions": [
+            {"op": "removeAt", "target": "items", "value": 0},
+            {"op": "removeAt", "target": "items", "valueFrom": "index"}
+        ]})
+    );
+    assert_eq!(
+        events("reset"),
+        json!({"actions": [
+            {"op": "assign", "target": "items", "value": ["x", "y"]},
+            {"op": "assign", "target": "items", "valueFrom": "other"}
+        ]})
+    );
 }
 
 #[test]
@@ -3404,13 +3464,29 @@ fn language_diagnostics_are_friendly() {
         ),
         (
             "list_runtime_mutation.opu",
-            "list state 'items' is compile-time only",
+            "this mutation is not valid on list state 'items'",
         ),
         (
             "list_interpolation.opu",
-            "list state 'items' is compile-time only",
+            "list state 'items' is not allowed here",
         ),
-        ("list_bind.opu", "list state 'items' is compile-time only"),
+        ("list_bind.opu", "list state 'items' is not allowed here"),
+        (
+            "append_non_list.opu",
+            "'append()' requires a list state",
+        ),
+        (
+            "remove_at_non_list.opu",
+            "'removeAt()' requires a list state",
+        ),
+        (
+            "append_type_misuse.opu",
+            "'append()' requires a string element",
+        ),
+        (
+            "remove_at_type_misuse.opu",
+            "'removeAt()' requires an int index",
+        ),
         ("list_braces.opu", "list values may not contain braces"),
         ("for_non_list.opu", "'for' requires a list state"),
         (
@@ -3514,7 +3590,7 @@ fn language_diagnostics_are_friendly() {
 }
 "#
             .to_string(),
-            "list state 'items' is compile-time only",
+            "list state 'items' is not allowed in a computed expression",
         ),
         (
             "computed_bind".to_string(),
