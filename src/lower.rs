@@ -214,6 +214,8 @@ const GENERIC_PROPS: &[&str] = &[
     "columnSpan",
     "animClock",
     "animInterval",
+    "repaintBoundary",
+    "relayoutBoundary",
 ];
 
 /// Additive `Input` validator props; these are not accepted on other kinds.
@@ -1243,7 +1245,10 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         }
         return Ok(json!(s));
     }
-    if key == "glass" || key == "fillHeight" {
+    if matches!(
+        key,
+        "glass" | "fillHeight" | "repaintBoundary" | "relayoutBoundary"
+    ) {
         return match &arg.value {
             AstValue::Lit(Lit::Bool(b)) => Ok(json!(*b)),
             other => Err(ctx.err(

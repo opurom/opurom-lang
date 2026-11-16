@@ -1,0 +1,1 @@
+app B { Text("x", repaintBoundary: "yes") }
