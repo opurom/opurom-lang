@@ -209,10 +209,22 @@ fn duplicate_name(module_path: &str, name: &str, pos: Pos) -> Diagnostic {
     )
 }
 
+fn duplicate_component(module_path: &str, decl: &crate::parser::ComponentDecl) -> Diagnostic {
+    Diagnostic::new(
+        module_path,
+        decl.pos.line,
+        decl.pos.col,
+        format!("duplicate component '{}'", decl.name),
+        "declare every component once across the app and its imports",
+    )
+}
+
 struct Merge {
     states: Vec<StateDecl>,
     models: Vec<ModelDecl>,
     apis: Vec<ApiDecl>,
+    components: Vec<crate::parser::ComponentDecl>,
+    component_names: HashSet<String>,
     theme: Option<ThemeDecl>,
     theme_seen: bool,
     names: HashSet<String>,
@@ -235,10 +247,16 @@ impl Merge {
         for api in &main.apis {
             api_paths.insert(api.path.clone());
         }
+        // The main program's own components already live in `Program`; seed the
+        // name set so an imported module cannot redefine one of them.
+        let component_names: HashSet<String> =
+            main.components.iter().map(|c| c.name.clone()).collect();
         Self {
             states: Vec::new(),
             models: Vec::new(),
             apis: Vec::new(),
+            components: Vec::new(),
+            component_names,
             theme: None,
             theme_seen: main.theme.is_some(),
             names,
@@ -268,6 +286,12 @@ impl Merge {
             }
             self.apis.push(api);
         }
+        for component in module.components {
+            if !self.component_names.insert(component.name.clone()) {
+                return Err(duplicate_component(module_path, &component));
+            }
+            self.components.push(component);
+        }
         if let Some(theme) = module.theme {
             if self.theme_seen {
                 return Err(duplicate_name(module_path, "theme", theme.pos));
@@ -295,6 +319,9 @@ impl Merge {
         self.states.extend(states);
         self.models.extend(models);
         self.apis.extend(apis);
+        // Main components come first, then imported ones in merge order.
+        let mut components = components;
+        components.extend(self.components);
         Program {
             app,
             imports,

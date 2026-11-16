@@ -633,7 +633,13 @@ impl<'a> Parser<'a> {
                 "write 'component Card(title) { Text(\"{title}\") }'",
             ));
         }
+        // A component body always holds nodes, even when the component is
+        // declared inside an imported module (allow_nodes=false there), so the
+        // body parses with node collection enabled.
+        let was_allow_nodes = self.allow_nodes;
+        self.allow_nodes = true;
         let body = self.block(false)?;
+        self.allow_nodes = was_allow_nodes;
         if let Some(stmt) = body.stmts.first() {
             return Err(Diagnostic::new(
                 self.path,
@@ -1747,12 +1753,9 @@ fn parse_with_options(
             continue;
         }
         if p.word("component") {
-            if !p.allow_nodes {
-                return Err(p.err(
-                    "imported module may declare only state, model, api, theme and imports",
-                    "move component declarations into the importing app",
-                ));
-            }
+            // Component declarations are allowed in imported modules: a
+            // component is a declaration, not a UI node, so it expands at
+            // compile time in every importing app.
             let decl = p.component_decl()?;
             if component_names.contains(&decl.name) {
                 return Err(duplicate_component(path, &decl, &component_names));
@@ -1842,12 +1845,8 @@ fn parse_with_options(
             continue;
         }
         if p.word("component") {
-            if !p.allow_nodes {
-                return Err(p.err(
-                    "imported module may declare only state, model, api, theme and imports",
-                    "move component declarations into the importing app",
-                ));
-            }
+            // See the top-level loop: component declarations are declarations,
+            // so a module may carry them for every importing app to expand.
             let decl = p.component_decl()?;
             if component_names.contains(&decl.name) {
                 return Err(duplicate_component(path, &decl, &component_names));

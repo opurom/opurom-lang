@@ -7065,3 +7065,56 @@ fn only_referenced_package_icons_are_embedded_in_the_ir() {
         icons.len()
     );
 }
+
+#[test]
+fn imported_module_may_declare_and_expand_a_component() {
+    let dir = out_dir("mod-component");
+    fs::create_dir_all(dir.join("components")).unwrap();
+    fs::write(
+        dir.join("components/button.opu"),
+        "component ActionButton(label: string) {\n  Container(p: 12) { Text(\"{label}\", size: 16) }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("main.opu"),
+        "import \"components/button.opu\";\napp Demo {\n  Column(gap: 8) {\n    ActionButton(\"Save\")\n    ActionButton(\"Cancel\")\n  }\n}\n",
+    )
+    .unwrap();
+    let out = dir.join("out.opuir.json");
+    let r = compile(&dir.join("main.opu"), &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(ir["app"], "Demo");
+    // Two calls expand into two containers, each with its own substituted label.
+    let containers = nodes_of(&ir)
+        .into_iter()
+        .filter(|n| n["kind"] == "Container")
+        .count();
+    assert_eq!(containers, 2, "each use site expands its component body");
+    let labels: Vec<String> = nodes_of(&ir)
+        .into_iter()
+        .filter(|n| n["kind"] == "Text")
+        .filter_map(|n| n["props"]["value"].as_str().map(str::to_string))
+        .collect();
+    assert_eq!(labels, vec!["Save".to_string(), "Cancel".to_string()]);
+}
+
+#[test]
+fn imported_module_with_bare_ui_node_is_rejected() {
+    let dir = out_dir("mod-bare-node");
+    fs::create_dir_all(dir.join("components")).unwrap();
+    fs::write(dir.join("components/bad.opu"), "Text(\"bare node\")\n").unwrap();
+    fs::write(
+        dir.join("main.opu"),
+        "import \"components/bad.opu\";\napp X {\n  Column() { Text(\"hi\") }\n}\n",
+    )
+    .unwrap();
+    let out = dir.join("out.opuir.json");
+    let r = compile(&dir.join("main.opu"), &out);
+    assert!(!r.status.success(), "bare module node must be rejected");
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("may declare only state, model, api, theme and imports"),
+        "unexpected error: {stderr}"
+    );
+}
