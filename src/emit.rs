@@ -140,6 +140,8 @@ struct Platform {
     touch_end_attr: &'static str,
     state_set: &'static str,
     request_api: &'static str,
+    navigate_api: &'static str,
+    navigate_back_api: &'static str,
     title_key: &'static str,
     open: &'static str,
     close: &'static str,
@@ -158,6 +160,8 @@ const PLATFORMS: &[Platform] = &[
         touch_end_attr: "bindtouchend",
         state_set: "setData",
         request_api: "wx.request",
+        navigate_api: "wx.navigateTo",
+        navigate_back_api: "wx.navigateBack",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -174,6 +178,8 @@ const PLATFORMS: &[Platform] = &[
         touch_end_attr: "onTouchEnd",
         state_set: "setData",
         request_api: "my.request",
+        navigate_api: "my.navigateTo",
+        navigate_back_api: "my.navigateBack",
         title_key: "defaultTitle",
         open: "{{",
         close: "}}",
@@ -190,6 +196,8 @@ const PLATFORMS: &[Platform] = &[
         touch_end_attr: "bindtouchend",
         state_set: "setData",
         request_api: "qq.request",
+        navigate_api: "qq.navigateTo",
+        navigate_back_api: "qq.navigateBack",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -206,6 +214,8 @@ const PLATFORMS: &[Platform] = &[
         touch_end_attr: "bindtouchend",
         state_set: "setData",
         request_api: "tt.request",
+        navigate_api: "tt.navigateTo",
+        navigate_back_api: "tt.navigateBack",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -222,6 +232,8 @@ const PLATFORMS: &[Platform] = &[
         touch_end_attr: "bindtouchend",
         state_set: "setData",
         request_api: "swan.request",
+        navigate_api: "swan.navigateTo",
+        navigate_back_api: "swan.navigateBack",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -238,6 +250,8 @@ const PLATFORMS: &[Platform] = &[
         touch_end_attr: "bindtouchend",
         state_set: "setData",
         request_api: "ks.request",
+        navigate_api: "ks.navigateTo",
+        navigate_back_api: "ks.navigateBack",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -3733,21 +3747,17 @@ fn emit_mini(
 /// stack through setData; every other op reuses the single-page action emitter.
 fn mini_multipage_action_chain(event: &Json, p: &Platform, ir_path: &str) -> DResult<String> {
     let mut code = String::new();
-    let set = &p.state_set;
     for action in event_actions(event) {
         let op = action_str(action, "op", ir_path)?;
         match op {
             "push" => {
                 let target = action_str(action, "target", ir_path)?;
                 code.push_str(&format!(
-                    "this.{set}({{ routeStack: this.data.routeStack.concat([{}]), currentRoute: {} }}); ",
-                    js_lit(&Json::String(target.to_string())),
-                    js_lit(&Json::String(target.to_string()))
+                    "{}({{ url: \"pages/{}/index\" }}); ",
+                    p.navigate_api, target
                 ));
             }
-            "pop" => code.push_str(&format!(
-                "if (this.data.routeStack.length > 1) {{ const s = this.data.routeStack.slice(0, -1); this.{set}({{ routeStack: s, currentRoute: s[s.length - 1] }}); }} "
-            )),
+            "pop" => code.push_str(&format!("{}({{ delta: 1 }}); ", p.navigate_back_api)),
             _ => {
                 code.push_str(&mini_action(action, p, ir_path)?);
                 code.push(' ');
@@ -3756,12 +3766,12 @@ fn mini_multipage_action_chain(event: &Json, p: &Platform, ir_path: &str) -> DRe
     }
     Ok(code)
 }
-
-/// Emit a multi-page mini-program bundle. All routes live in one page file; each
-/// route is a conditional section (`cond_attr="{{currentRoute === 'Name'}}"`)
-/// so the platform's own conditional renderer swaps visibility, which works
-/// identically across wechat/alipay/qq/douyin/baidu/kuaishou. A `routeStack` in
-/// page data drives push/pop; the section carries its own markup and styles.
+/// Emit a true multi-page mini-program bundle (PLATFORM_DELIVERY.md §7). Each
+/// route gets its own page quad `pages/<route>/index.{markup,style,js}`; the
+/// launch page `pages/index` is a thin router that redirects to `initialRoute`.
+/// `push`/`pop` lower to the platform navigation API, `routeStack`/`currentRoute`
+/// disappear, and IR state lives in `App.globalData.states` with every page's
+/// `onShow` mirroring it into `setData`. Single-route programs keep `emit_mini`.
 fn emit_mini_multipage(
     target: &str,
     app: &str,
@@ -3777,57 +3787,43 @@ fn emit_mini_multipage(
         .find(|p| p.key == target)
         .ok_or_else(|| bad_ir(ir_path, format!("no platform table entry for '{target}'")))?;
 
+    let page_path = |route: &str| format!("pages/{route}/index");
+    let quad = |route: &str| {
+        let base = page_path(route);
+        vec![
+            format!("{base}.{}", p.markup_ext),
+            format!("{base}.{}", p.style_ext),
+            format!("{base}.js"),
+        ]
+    };
+
+    // app.json: the launch router is first, then one entry per route page.
+    let mut pages: Vec<String> = vec!["pages/index/index".to_string()];
+    for page in &routes.pages {
+        pages.push(page_path(&page.name));
+    }
     let mut window = JsonMap::new();
     window.insert(p.title_key.to_string(), json!(app));
     let mut app_obj = JsonMap::new();
-    app_obj.insert("pages".to_string(), json!(["pages/index/index"]));
+    app_obj.insert("pages".to_string(), json!(pages));
     app_obj.insert("window".to_string(), Json::Object(window));
-    let app_json = serde_json::to_string_pretty(&Json::Object(app_obj))
-        .map_err(|e| bad_ir(ir_path, format!("cannot serialize app.json: {e}")))?;
-    write(out, "app.json", &(app_json + "\n"), ir_path)?;
+
+    // app.js: global state lives in App.globalData.states, every page writes
+    // back through it and mirrors it into setData on onShow.
     let theme_js = carried_theme_js(ir);
-    let app_js = match theme_js {
-        Some(theme) => format!(
-            "// Generated by opuromc for {}; no IR interpreter.\nApp({{}});\nconst Opurom_THEME = {theme};\n",
-            p.key
-        ),
-        None => format!(
-            "// Generated by opuromc for {}; no IR interpreter.\nApp({{}});\n",
-            p.key
-        ),
-    };
-    write(out, "app.js", &app_js, ir_path)?;
+    let mut app_js = format!(
+        "// Generated by opuromc for {}; multi-page, no IR interpreter.\nApp({{\n  globalData: {{ states: {{}} }},\n  onLaunch: function () {{ this.globalData.states = {{}}; }}\n}});\n",
+        p.key
+    );
+    if let Some(theme) = theme_js {
+        app_js.push_str(&format!("const Opurom_THEME = {theme};\n"));
+    }
 
     let dark = ir
         .get("theme")
         .and_then(|t| t.get("mode"))
         .and_then(Json::as_str)
         == Some("dark");
-
-    let mut markup = String::new();
-    markup.push_str(&format!(
-        "<!-- Generated by opuromc for {}; multi-page sections, no IR interpreter. -->\n",
-        p.key
-    ));
-    for page in &routes.pages {
-        markup.push_str(&format!(
-            "<view class=\"route\" data-route=\"{}\" {}=\"{}currentRoute === '{}'{}\">\n",
-            html_attr(&page.name),
-            p.cond_attr,
-            p.open,
-            page.name,
-            p.close
-        ));
-        markup_node(&page.tree, p, 1, &mut markup, ir_path, dark)?;
-        markup.push_str("</view>\n");
-    }
-    write(
-        out,
-        &format!("pages/index/index.{}", p.markup_ext),
-        &markup,
-        ir_path,
-    )?;
-
     let tokens = ir.get("theme").and_then(|t| t.get("tokens"));
     let stage = tokens
         .and_then(|t| t.get("stage"))
@@ -3835,91 +3831,138 @@ fn emit_mini_multipage(
         .and_then(Json::as_str)
         .filter(|s| {
             let digits = s.strip_prefix('#').unwrap_or("");
-            (digits.len() == 6 || digits.len() == 8)
-                && digits.bytes().all(|b| b.is_ascii_hexdigit())
+            (digits.len() == 6 || digits.len() == 8) && digits.bytes().all(|b| b.is_ascii_hexdigit())
         })
         .unwrap_or("#ffffff");
-    let mut style = String::from(&format!(
-        "page {{ background-color: {stage}; }}\n.route {{ display: flex; flex-direction: column; }}\n.col {{ display: flex; flex-direction: column; }}\n.row {{ display: flex; flex-direction: row; }}\n.grid {{ display: flex; flex-direction: row; flex-wrap: wrap; }}\n@keyframes opurom-entry {{ from {{ transform: scale(0); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}\n.anim-entry {{ transform-origin: center; animation: opurom-entry 480ms ease-out both; }}\n.anim-spring {{ animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }}\n.anim-ease {{ animation-timing-function: ease-out; }}\n.anim-inertia {{ animation-timing-function: ease-in-out; }}\n.anim-collision {{ animation-timing-function: cubic-bezier(0.5, 1.6, 0.4, 1); }}\n",
-    ));
-    let mut all_nodes: Vec<&ENode> = Vec::new();
+    let base_style = format!(
+        "page {{ background-color: {stage}; }}\n.col {{ display: flex; flex-direction: column; }}\n.row {{ display: flex; flex-direction: row; }}\n.grid {{ display: flex; flex-direction: row; flex-wrap: wrap; }}\n@keyframes opurom-entry {{ from {{ transform: scale(0); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}\n.anim-entry {{ transform-origin: center; animation: opurom-entry 480ms ease-out both; }}\n.anim-spring {{ animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }}\n.anim-ease {{ animation-timing-function: ease-out; }}\n.anim-inertia {{ animation-timing-function: ease-in-out; }}\n.anim-collision {{ animation-timing-function: cubic-bezier(0.5, 1.6, 0.4, 1); }}\n"
+    );
+
     for page in &routes.pages {
-        collect(&page.tree, &mut all_nodes);
-    }
-    for n in &all_nodes {
-        let s = style_of(
-            &n.props,
-            n.kind == "Container",
-            is_text_kind(&n.kind),
-            dark,
-            is_elevated_glass_kind(&n.kind),
+        // Markup: only this route's subtree, rooted in one <view class="route">.
+        let mut markup = format!(
+            "<!-- Generated by opuromc for {}; route '{}', no IR interpreter. -->\n",
+            p.key, page.name
         );
-        if !s.is_empty() {
-            style.push_str(&format!(".n{} {{ {}; }}\n", n.id, s));
-        }
-        if n.kind == "Grid" {
-            let cols = n
-                .props
-                .get("compactColumns")
-                .or_else(|| n.props.get("columns"))
-                .and_then(Json::as_i64)
-                .unwrap_or(2)
-                .clamp(1, 16);
-            let pct = 100.0 / cols as f64;
-            for child in &n.children {
-                if child.props.contains_key("width") {
-                    continue;
+        markup.push_str("<view class=\"route\">\n");
+        markup_node(&page.tree, p, 1, &mut markup, ir_path, dark)?;
+        markup.push_str("</view>\n");
+
+        // Style: base rules plus this route's node classes.
+        let mut style = base_style.clone();
+        let mut nodes: Vec<&ENode> = Vec::new();
+        collect(&page.tree, &mut nodes);
+        for n in &nodes {
+            let s = style_of(
+                &n.props,
+                n.kind == "Container",
+                is_text_kind(&n.kind),
+                dark,
+                is_elevated_glass_kind(&n.kind),
+            );
+            if !s.is_empty() {
+                style.push_str(&format!(".n{} {{ {}; }}\n", n.id, s));
+            }
+            if n.kind == "Grid" {
+                let cols = n
+                    .props
+                    .get("compactColumns")
+                    .or_else(|| n.props.get("columns"))
+                    .and_then(Json::as_i64)
+                    .unwrap_or(2)
+                    .clamp(1, 16);
+                let pct = 100.0 / cols as f64;
+                for child in &n.children {
+                    if child.props.contains_key("width") {
+                        continue;
+                    }
+                    style.push_str(&format!(
+                        ".n{} {{ width: {pct:.4}%; box-sizing: border-box; }}\n",
+                        child.id
+                    ));
                 }
-                style.push_str(&format!(
-                    ".n{} {{ width: {pct:.4}%; box-sizing: border-box; }}\n",
-                    child.id
+            }
+        }
+
+        // Page JS: data seeded from global state, onShow mirrors globalData,
+        // tap handlers write back to globalData and setData.
+        let mut data = JsonMap::new();
+        for st in states {
+            data.insert(st.name.clone(), st.init.clone());
+        }
+        let data_js = js_lit(&Json::Object(data));
+        let computed_call = if computed.is_empty() {
+            ""
+        } else {
+            " this.applyComputed();"
+        };
+        let mut methods = String::new();
+        // The truth lives in App.globalData.states; this page mirrors it.
+        methods.push_str("  onShow: function () {\n    const g = getApp().globalData.states;\n    if (g) { this.setData(g); }\n  },\n");
+        // Every write-back updates globalData then setData so a pushed page reads it.
+        methods.push_str("  applyState: function (patch) {\n    const g = getApp().globalData.states = getApp().globalData.states || {};\n    Object.assign(g, patch);\n    this.setData(patch);\n  },\n");
+        methods.push_str(&mini_computed(p, states, computed, ir_path)?);
+        for n in &nodes {
+            if let Some(action) = n.events.get("tap") {
+                let effect_code = mini_effects(&event_effects(action, ir_path)?, p, ir_path)?
+                    .replace("page.setData(", "page.applyState(")
+                    .replace("this.setData(", "this.applyState(");
+                let code = mini_multipage_action_chain(action, p, ir_path)?
+                    .replace("this.setData(", "this.applyState(");
+                methods.push_str(&format!(
+                    "  onTap{}: async function () {{ {effect_code}{code}{computed_call} }},\n",
+                    n.id
+                ));
+            }
+            if let Some(action) = n.events.get("input") {
+                let target_name = action_str(action, "target", ir_path)?;
+                methods.push_str(&format!(
+                    "  onInput{}: function (e) {{ this.{}({{\"{}\": e.detail.value}});{} }},\n",
+                    n.id, "applyState", target_name, computed_call
                 ));
             }
         }
+        let prefix = format!(
+            "// Generated by opuromc for {}; route '{}', no IR interpreter.\n",
+            p.key, page.name
+        );
+        let page_js = format!(
+            "{prefix}Page({{\n  data: {},\n{}}});\n",
+            data_js, methods
+        );
+
+        write(out, &quad(&page.name)[0], &markup, ir_path)?;
+        write(out, &quad(&page.name)[1], &style, ir_path)?;
+        write(out, &quad(&page.name)[2], &page_js, ir_path)?;
     }
+
+    // Launch router page: redirects into the initial route once.
+    let initial_path = page_path(&routes.initial);
+    let router_js = format!(
+        "// Generated by opuromc for {}; launch router to '{}', no IR interpreter.\nPage({{ onLoad: function () {{ const nav = {}; if (nav && nav.redirectTo) nav.redirectTo({{ url: \"{initial_path}\" }}); }} }});\n",
+        p.key, routes.initial, p.navigate_api
+    );
+    let router_markup = format!(
+        "<!-- Generated by opuromc for {}; launch router. -->\n<view class=\"route\"></view>\n",
+        p.key
+    );
+    let router_style = base_style.clone();
+    write(
+        out,
+        &format!("pages/index/index.{}", p.markup_ext),
+        &router_markup,
+        ir_path,
+    )?;
     write(
         out,
         &format!("pages/index/index.{}", p.style_ext),
-        &style,
+        &router_style,
         ir_path,
     )?;
-
-    let mut data = JsonMap::new();
-    for st in states {
-        data.insert(st.name.clone(), st.init.clone());
-    }
-    data.insert("currentRoute".to_string(), json!(routes.initial));
-    data.insert("routeStack".to_string(), json!([routes.initial]));
-    let data_js = js_lit(&Json::Object(data));
-    let mut methods = mini_computed(p, states, computed, ir_path)?;
-    let computed_call = if computed.is_empty() {
-        ""
-    } else {
-        " this.applyComputed();"
-    };
-    for n in &all_nodes {
-        if let Some(action) = n.events.get("tap") {
-            let effect_code = mini_effects(&event_effects(action, ir_path)?, p, ir_path)?;
-            let code = mini_multipage_action_chain(action, p, ir_path)?;
-            methods.push_str(&format!(
-                "  onTap{}: async function () {{ {effect_code}{code}{computed_call} }},\n",
-                n.id
-            ));
-        }
-        if let Some(action) = n.events.get("input") {
-            let target_name = action_str(action, "target", ir_path)?;
-            methods.push_str(&format!(
-                "  onInput{}: function (e) {{ this.{}({{\"{}\": e.detail.value}});{} }},\n",
-                n.id, p.state_set, target_name, computed_call
-            ));
-        }
-    }
-    let prefix = format!(
-        "// Generated by opuromc for {}; multi-page, no IR interpreter.\n",
-        p.key
-    );
-    let index_js = format!("{prefix}Page({{\n  data: {},\n{}}});\n", data_js, methods);
-    write(out, "pages/index/index.js", &index_js, ir_path)
+    write(out, "pages/index/index.js", &router_js, ir_path)?;
+    write(out, "app.json", &(serde_json::to_string_pretty(&Json::Object(app_obj))
+        .map_err(|e| bad_ir(ir_path, format!("cannot serialize app.json: {e}")))? + "\n"), ir_path)?;
+    write(out, "app.js", &app_js, ir_path)
 }
 
 // ------------------------------------------------- native multi-page ----

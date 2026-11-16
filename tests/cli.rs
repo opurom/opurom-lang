@@ -6816,9 +6816,20 @@ fn two_route_ir(name: &str) -> PathBuf {
 }
 
 #[test]
-fn mini_emitters_render_one_section_per_route() {
+fn mini_emitters_emit_one_page_quad_per_route() {
+    // PLATFORM_DELIVERY.md §7: each route gets its own page quad, the launch
+    // page redirects to initialRoute, push/pop use the platform navigation API,
+    // and routeStack/currentRoute disappear. B-group motivation regression line.
     let ir = two_route_ir("emit-mp-mini");
-    for target in ["wechat", "alipay", "qq", "douyin", "baidu", "kuaishou"] {
+    let prefixes = [
+        ("wechat", "wx", "wxml"),
+        ("alipay", "my", "axml"),
+        ("qq", "qq", "qml"),
+        ("douyin", "tt", "ttml"),
+        ("baidu", "swan", "swan"),
+        ("kuaishou", "ks", "ksml"),
+    ];
+    for (target, nav, ext) in prefixes {
         let out = out_dir(&format!("emit-mp-{target}"));
         let r = emit(&ir, target, &out);
         assert!(
@@ -6826,39 +6837,65 @@ fn mini_emitters_render_one_section_per_route() {
             "{target}: {}",
             String::from_utf8_lossy(&r.stderr)
         );
-        // Both route sections are present with their own data-route marker.
-        let markup = fs::read_to_string(out.join("pages/index/index.wxml"))
-            .or_else(|_| fs::read_to_string(out.join("pages/index/index.axml")))
-            .or_else(|_| fs::read_to_string(out.join("pages/index/index.qml")))
-            .or_else(|_| fs::read_to_string(out.join("pages/index/index.ttml")))
-            .or_else(|_| fs::read_to_string(out.join("pages/index/index.swan")))
-            .or_else(|_| fs::read_to_string(out.join("pages/index/index.ksml")))
-            .unwrap();
+        // One page quad per route, no folded multi-section index page.
+        for route in ["Home", "Detail"] {
+            assert!(
+                out.join(format!("pages/{route}/index.{ext}")).exists(),
+                "{target} missing markup quad for {route}"
+            );
+            assert!(
+                out.join(format!("pages/{route}/index.js")).exists(),
+                "{target} missing js quad for {route}"
+            );
+        }
+        // app.json lists the router first, then every route page.
+        let app_json = fs::read_to_string(out.join("app.json")).unwrap();
+        let doc: Json = serde_json::from_str(&app_json).unwrap();
+        let pages: Vec<&str> = doc["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(pages[0], "pages/index/index", "{target} launch page first");
+        assert!(pages.contains(&"pages/Home/index"), "{target} Home page");
+        assert!(pages.contains(&"pages/Detail/index"), "{target} Detail page");
+
+        // Each page's own markup renders only its subtree.
+        let home = fs::read_to_string(out.join(format!("pages/Home/index.{ext}"))).unwrap();
+        assert!(home.contains("Welcome"), "{target} Home content");
+        assert!(!home.contains("Item"), "{target} Home must not carry Detail");
+        let detail = fs::read_to_string(out.join(format!("pages/Detail/index.{ext}"))).unwrap();
+        assert!(detail.contains("Item"), "{target} Detail content");
+
+        // B1: push lowers to the platform navigate API for pages/<target>/index.
+        let home_js = fs::read_to_string(out.join("pages/Home/index.js")).unwrap();
         assert!(
-            markup.contains("data-route=\"Home\""),
-            "{target} missing Home section"
+            home_js.contains(&format!("{nav}.navigateTo({{ url: \"pages/Detail/index\"")),
+            "{target} push navigate: {home_js}"
         );
+        // B3: pop lowers to navigateBack delta:1.
+        let detail_js = fs::read_to_string(out.join("pages/Detail/index.js")).unwrap();
         assert!(
-            markup.contains("data-route=\"Detail\""),
-            "{target} missing Detail section"
+            detail_js.contains(&format!("{nav}.navigateBack({{ delta: 1 }})")),
+            "{target} pop navigateBack: {detail_js}"
         );
-        assert!(
-            markup.contains("Welcome") && markup.contains("Item"),
-            "{target} content"
-        );
-        // The page data seeds the route stack at the initial route; push/pop update it.
-        let js = fs::read_to_string(out.join("pages/index/index.js")).unwrap();
-        assert!(
-            js.contains("\"currentRoute\":\"Home\"") && js.contains("\"routeStack\":[\"Home\"]"),
-            "{target} route data: {js}"
-        );
-        assert!(js.contains("routeStack"), "{target} push/pop runtime");
+        // B2: no routeStack/currentRoute simulation remains anywhere.
+        for js in [&home_js, &detail_js] {
+            assert!(!js.contains("routeStack"), "{target} no routeStack");
+            assert!(!js.contains("currentRoute"), "{target} no currentRoute");
+        }
+        // State truth lives in App.globalData.states; pages mirror on onShow.
+        let app_js = fs::read_to_string(out.join("app.js")).unwrap();
+        assert!(app_js.contains("globalData"), "{target} globalData");
+        assert!(home_js.contains("onShow"), "{target} onShow mirror");
+
         let check = Command::new("node")
             .arg("--check")
-            .arg(out.join("pages/index/index.js"))
+            .arg(out.join("pages/Home/index.js"))
             .output()
             .expect("run node --check");
-        assert!(check.status.success(), "{target} JS invalid");
+        assert!(check.status.success(), "{target} Home JS invalid");
     }
 }
 

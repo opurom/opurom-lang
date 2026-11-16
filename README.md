@@ -537,8 +537,14 @@ The compiler emits node ids pre-order from 0, keeps numeric props as JSON number
 | `harmony` | `oh-package.json5`, `build-profile.json5`, `hvigorfile.ts`, `AppScope/app.json5`, `AppScope/resources/base/element/string.json`, `src/main/module.json5`, `src/main/ets/entryability/EntryAbility.ets`, `src/main/ets/pages/Index.ets`, `src/main/ets/pages/Index.ir.json`, `src/main/resources/base/profile/main_pages.json` | a native HarmonyOS Stage-model HAP module with `@Entry @Component struct Index`; `Column`/`Row`/`Text`/`Button`/`Input` map to ArkUI `Column()`/`Row()`/`Text()`/`Button()`/`TextInput()`, actions become `onClick`/`onChange` methods, `push`/`pop`/`validate` become runtime signals, and state, theme tokens, design props and validators ride in typed ArkTS metadata plus the full `Index.ir.json` |
 
 The six mini-program targets share one lowering pass and one small per-platform table
-(extensions, loop/key directives, tap/input directives, state-set API, request API, window title
-key and binding delimiters). All emitters generate code, not an IR parser. They understand the
+(extensions, loop/key directives, tap/input directives, state-set API, request API, navigation
+API, window title key and binding delimiters). All emitters generate code, not an IR parser.
+Multi-route programs emit true multi-page packages (PLATFORM_DELIVERY.md §7): each route gets its
+own page quad `pages/<route>/index.{markup,style,js}`, `pages/index` is a launch router that
+redirects to `initialRoute`, `push`/`pop` lower to the platform navigation API
+(`navigateTo`/`navigateBack({delta:1})`), IR state lives in `App.globalData.states` with every
+page mirroring it in `onShow`, and the `routeStack`/`currentRoute` simulation is gone. Single-route
+programs keep the `emit_mini` output byte-identical. They understand the
 interactive UI and async IR plus `when`, `unless`, `computed`, `list` state entries, node-level
 `repeat`, `Input` validator props and `validate` actions.
 `Icon` nodes render the canonical 24x24 stroke path on every target: the `web` target strokes it
