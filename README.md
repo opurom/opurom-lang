@@ -60,6 +60,7 @@ node          = KIND [ "(" [ args ] ")" ] [ "async" ] [ ";" | "{" { node | state
               | "for" "(" IDENT "in" ( INT | IDENT ) ")" "{" { node } "}"
               | "for" IDENT "in" [ "state" "." ] IDENT "{" { node } "}" ;
 args          = ( IDENT ":" value | value ) { "," ... } [ "," ] ;
+grid_prop     = "fillHeight" ":" ( "true" | "false" ) ; (* Grid only; opt-in row-height fill *)
 value         = INT | FLOAT | STRING | BOOL | IDENT ;
 statement     = IDENT ( "+=" | "-=" | "=" ) expr [";"]
               | IDENT "." "toggle" "(" ")" [";"]
