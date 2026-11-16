@@ -2159,11 +2159,27 @@ fn contrast_fill(n: &ENode) -> Option<String> {
     bg.or(container_color).or(grad)
 }
 
+/// Resolve an icon's SVG path, preferring the IR `icons` table (package icons
+/// emitted by pkg_icons) over the built-in 31-name atlas. Returns the `d`
+/// string of the first path, matching the built-in single-path convention.
+fn ir_icon_path<'a>(icons: &'a [Json], name: &str) -> Option<&'a str> {
+    let entry = icons
+        .iter()
+        .find(|e| e.get("name").and_then(Json::as_str) == Some(name))?;
+    entry
+        .get("paths")
+        .and_then(Json::as_array)?
+        .first()?
+        .get("d")
+        .and_then(Json::as_str)
+}
+
 fn draw_node(
     n: &ENode,
     boxes: &HashMap<u64, Box2>,
     out: &mut String,
     ir_path: &str,
+    icons: &[Json],
 ) -> DResult<()> {
     if let Some(cond) = &n.when {
         out.push_str(&format!("  if (state.{cond}) {{\n"));
@@ -2249,7 +2265,8 @@ fn draw_node(
         "Icon" => {
             let color = js_lit(&Json::String(prop_str(&n.props, "color", "#334155")));
             let name = prop_str(&n.props, "name", "");
-            match icons::icon_svg_path(&name) {
+            let resolved = ir_icon_path(icons, &name).or_else(|| icons::icon_svg_path(&name));
+            match resolved {
                 // Draw the canonical 24x24 path centred on the node rect and
                 // scaled to its smaller side, in the node's colour.
                 Some(path) => {
@@ -2336,7 +2353,7 @@ fn draw_node(
         ));
     }
     for child in &n.children {
-        draw_node(child, boxes, out, ir_path)?;
+        draw_node(child, boxes, out, ir_path, icons)?;
     }
     if n.unless.is_some() {
         out.push_str("  }\n");
@@ -2526,8 +2543,9 @@ fn emit_web(
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
 
+    let icons = ir.get("icons").and_then(Json::as_array).map(|a| a.as_slice()).unwrap_or(&[]);
     let mut draw = String::new();
-    draw_node(tree, &boxes, &mut draw, ir_path)?;
+    draw_node(tree, &boxes, &mut draw, ir_path, icons)?;
 
     let mut tap_arms = String::new();
     let mut input_arms = String::new();
@@ -2734,6 +2752,7 @@ fn emit_web(
 fn web_route_draw(
     page: &EPage,
     ir_path: &str,
+    icons: &[Json],
 ) -> DResult<(String, Vec<(u64, String)>, Vec<(u64, String)>)> {
     let mut boxes = HashMap::new();
     layout(&page.tree, 16.0, 16.0, &mut boxes);
@@ -2741,7 +2760,7 @@ fn web_route_draw(
     collect(&page.tree, &mut nodes);
 
     let mut draw = String::new();
-    draw_node(&page.tree, &boxes, &mut draw, ir_path)?;
+    draw_node(&page.tree, &boxes, &mut draw, ir_path, icons)?;
 
     let mut input_arms = Vec::new();
     let mut taps = Vec::new();
@@ -2786,6 +2805,11 @@ fn emit_web_multipage(
         "applyComputed(); "
     };
 
+    let mp_icons: &[Json] = ir
+        .get("icons")
+        .and_then(Json::as_array)
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
     let mut draw_fns = String::new();
     let mut tap_arms = String::new();
     let mut all_taps: Vec<(String, Vec<(u64, String)>)> = Vec::new();
@@ -2795,7 +2819,7 @@ fn emit_web_multipage(
     let mut route_title_map = JsonMap::new();
     route_title_map.insert(routes.initial.clone(), json!(app));
     for page in &routes.pages {
-        let (draw, taps, in_arms) = web_route_draw(page, ir_path)?;
+        let (draw, taps, in_arms) = web_route_draw(page, ir_path, mp_icons)?;
         let fn_name = format!("draw_{}", page.name);
         draw_fns.push_str(&format!("function {fn_name}() {{\n  {draw}}}\n\n"));
         for (id, target) in in_arms {
@@ -3180,6 +3204,7 @@ fn markup_node(
     out: &mut String,
     ir_path: &str,
     dark: bool,
+    icons: &[Json],
 ) -> DResult<()> {
     let pad = "  ".repeat(depth);
     let id = n.id;
@@ -3304,7 +3329,8 @@ fn markup_node(
             } else {
                 String::new()
             };
-            match icons::icon_svg_path(&name) {
+            let resolved = ir_icon_path(icons, &name).or_else(|| icons::icon_svg_path(&name));
+            match resolved {
                 // A real icon element: an inline SVG data URI on an <image>, so
                 // no platform runtime is needed and every target draws the same
                 // canonical path the native renderer uses.
@@ -3390,7 +3416,7 @@ fn markup_node(
                     "{pad}<view class=\"opu-x opu-x-{slug} n{id}{anim}\"{data}{style_attr}{cond_attr}{a11y_attr}>\n"
                 ));
                 for child in &n.children {
-                    markup_node(child, p, depth + 1, out, ir_path, dark)?;
+                    markup_node(child, p, depth + 1, out, ir_path, dark, icons)?;
                 }
                 out.push_str(&format!("{pad}</view>\n"));
             }
@@ -3418,7 +3444,7 @@ fn markup_node(
 "
             ));
             for child in &n.children {
-                markup_node(child, p, depth + 1, out, ir_path, dark)?;
+                markup_node(child, p, depth + 1, out, ir_path, dark, icons)?;
             }
             out.push_str(&format!("{pad}</view>
 "));
@@ -3446,7 +3472,7 @@ fn markup_node(
                 }
             }
             for child in &n.children {
-                markup_node(child, p, depth + 1, out, ir_path, dark)?;
+                markup_node(child, p, depth + 1, out, ir_path, dark, icons)?;
             }
             out.push_str(&format!("{pad}</view>\n"));
         }
@@ -3688,7 +3714,8 @@ fn emit_mini(
         .and_then(|t| t.get("mode"))
         .and_then(Json::as_str)
         == Some("dark");
-    markup_node(tree, p, 0, &mut markup, ir_path, dark)?;
+    let icons = ir.get("icons").and_then(Json::as_array).map(|a| a.as_slice()).unwrap_or(&[]);
+    markup_node(tree, p, 0, &mut markup, ir_path, dark, icons)?;
     write(
         out,
         &format!("pages/index/index.{}", p.markup_ext),
@@ -3898,6 +3925,11 @@ fn emit_mini_multipage(
         .ok_or_else(|| bad_ir(ir_path, format!("no platform table entry for '{target}'")))?;
 
     let page_path = |route: &str| format!("pages/{route}/index");
+    let mp_icons: &[Json] = ir
+        .get("icons")
+        .and_then(Json::as_array)
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
 
     // app.json: the launch router plus every main-package route page; routes
     // with a subpackage go under subPackages (§7). The initialRoute must not be
@@ -3989,7 +4021,7 @@ fn emit_mini_multipage(
             p.key, page.name
         );
         markup.push_str("<view class=\"route\">\n");
-        markup_node(&page.tree, p, 1, &mut markup, ir_path, dark)?;
+        markup_node(&page.tree, p, 1, &mut markup, ir_path, dark, mp_icons)?;
         markup.push_str("</view>\n");
 
         // Style: base rules plus this route's node classes.

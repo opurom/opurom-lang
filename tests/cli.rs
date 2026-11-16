@@ -6901,6 +6901,61 @@ fn mini_pull_refresh_and_subpackage_follow_the_spec() {
 }
 
 #[test]
+fn package_icons_from_the_ir_table_paint_on_mini_and_web() {
+    // Icons emitted by pkg_icons into the IR `icons` table must paint a real
+    // path on the mini emitters and the web canvas, not the fallback text.
+    let dir = out_dir("pkg-icon");
+    let ir = dir.join("pkg.opuir.json");
+    let doc = json!({
+        "ir": "0.1.0", "app": "Pkg", "state": [],
+        "tree": {"id": 1, "kind": "Column", "props": {}, "events": {}, "children": [
+            {"id": 2, "kind": "Icon", "props": {"name": "rocket"}, "events": {}, "children": []}
+        ]},
+        "icons": [{"name": "rocket", "viewBox": "0 0 256 256", "paths": [{"d": "M20 20 L60 60"}]}],
+        "theme": {"mode": "light", "accent": "#097FEB", "radius": 12}
+    });
+    fs::write(&ir, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+
+    // mini: the IR path lands in the inline SVG data URI.
+    let wx = out_dir("pkg-icon-wx");
+    let r = emit(&ir, "wechat", &wx);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let markup = fs::read_to_string(wx.join("pages/index/index.wxml")).unwrap();
+    let b64 = markup
+        .split("base64,")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("svg data uri");
+    let svg = base64_decode(b64);
+    assert!(svg.contains("M20 20 L60 60"), "mini svg: {svg}");
+
+    // web canvas: the IR path is stroked.
+    let web = out_dir("pkg-icon-web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let app_js = fs::read_to_string(web.join("app.js")).unwrap();
+    assert!(app_js.contains("M20 20 L60 60"), "web canvas path: {app_js}");
+}
+
+/// Minimal base64 decode for the icon data-URI assertion.
+fn base64_decode(s: &str) -> String {
+    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::new();
+    let mut buf = 0u32;
+    let mut bits = 0u32;
+    for c in s.bytes() {
+        let Some(v) = T.iter().position(|&t| t == c) else { continue };
+        buf = (buf << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+#[test]
 fn mini_targets_render_list_for_as_native_loop() {
     // DYNAMIC_LISTS.md Phase B: a runtime For node maps to the platform loop
     // directive, with the item variable bound to the template placeholder.
