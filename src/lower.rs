@@ -1008,7 +1008,7 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             other => Err(ctx.err(
                 arg.pos,
                 format!("prop 'weight' expects 'normal' or 'bold', found {}", value_desc(other)),
-                "write weight: normal or weight: bold".to_string(),
+                "write weight: \"normal\" or weight: \"bold\"".to_string(),
             )),
         };
     }
