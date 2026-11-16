@@ -1,0 +1,1 @@
+app BadInt { Grid(columns: 2, fillHeight: 1) { Text("x") } }

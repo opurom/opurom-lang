@@ -605,7 +605,7 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             tap: false,
         },
         "Grid" => KindInfo {
-            props: &["columns", "compactColumns"],
+            props: &["columns", "compactColumns", "fillHeight"],
             required: &["columns"],
             numeric: &["columns", "compactColumns"],
             positional: None,
@@ -1120,7 +1120,10 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         }
         return Ok(json!(s));
     }
-    if matches!(key, "glass" | "repaintBoundary" | "relayoutBoundary") {
+    if matches!(
+        key,
+        "glass" | "repaintBoundary" | "relayoutBoundary" | "fillHeight"
+    ) {
         return match &arg.value {
             AstValue::Lit(Lit::Bool(b)) => Ok(json!(*b)),
             other => Err(ctx.err(

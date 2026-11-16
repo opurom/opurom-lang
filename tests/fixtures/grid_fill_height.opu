@@ -1,0 +1,8 @@
+app GridFill {
+  Grid(columns: 4, fillHeight: true) {
+    Text("1")
+  }
+  Grid(columns: 3) {
+    Text("plain")
+  }
+}

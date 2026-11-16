@@ -369,6 +369,19 @@ fn each_error_class_is_a_friendly_diagnostic() {
             "platform_bad_result_type.opu",
             "PlatformCall 'result' requires a bool state",
         ),
+        (
+            "grid_fill_string.opu",
+            "prop 'fillHeight' expects true or false",
+        ),
+        (
+            "grid_fill_int.opu",
+            "prop 'fillHeight' expects true or false",
+        ),
+        ("grid_fill_missing.opu", "expected a literal or identifier"),
+        (
+            "grid_fill_non_grid.opu",
+            "unknown prop 'fillHeight' on Column",
+        ),
     ];
     for &(file, message) in cases {
         let path = error_fixture(file);
@@ -1494,6 +1507,74 @@ fn boundary_props_lower_only_when_declared() {
             assert!(n["props"].get("repaintBoundary").is_none());
             assert!(n["props"].get("relayoutBoundary").is_none());
         }
+    }
+}
+
+#[test]
+fn grid_fill_height_is_additive_and_grid_only() {
+    let dir = out_dir("grid-fill");
+    let out = dir.join("fill.opuir.json");
+    let r = compile(&fixture("grid_fill_height.opu"), &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    let grids: Vec<&Json> = nodes_of(&ir)
+        .into_iter()
+        .filter(|n| n["kind"] == "Grid")
+        .collect();
+    assert_eq!(grids.len(), 2);
+    assert_eq!(grids[0]["props"]["fillHeight"], true);
+    assert!(grids[1]["props"].get("fillHeight").is_none());
+
+    let again = dir.join("fill-again.opuir.json");
+    let r = compile(&fixture("grid_fill_height.opu"), &again);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(fs::read(&out).unwrap(), fs::read(&again).unwrap());
+
+    fn has_fill(v: &Json) -> bool {
+        if v.get("props")
+            .and_then(Json::as_object)
+            .is_some_and(|p| p.contains_key("fillHeight"))
+        {
+            return true;
+        }
+        match v {
+            Json::Object(o) => o.values().any(has_fill),
+            Json::Array(a) => a.iter().any(has_fill),
+            _ => false,
+        }
+    }
+    let gold = out_dir("grid-fill-golden");
+    let examples = workspace().join("..").join("opurom-examples");
+    let cases = [
+        (
+            contract("counter.opu"),
+            Some(fixture("golden/counter.opuir.json")),
+        ),
+        (
+            fixture("golden/todo.opu"),
+            Some(fixture("golden/todo.opuir.json")),
+        ),
+        (examples.join("apps/forum/forum.opu"), None),
+        (examples.join("apps/teamhub/teamhub.opu"), None),
+        (examples.join("apps/uicatalog/main.opu"), None),
+    ];
+    for (src, golden) in cases {
+        if !src.is_file() {
+            continue;
+        }
+        let compiled = gold.join("out.opuir.json");
+        let r = compile(&src, &compiled);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        if let Some(golden) = golden {
+            assert_eq!(
+                fs::read(&compiled).unwrap(),
+                fs::read(&golden).unwrap(),
+                "{} changed its bytes",
+                golden.display()
+            );
+        }
+        let ir: Json = serde_json::from_slice(&fs::read(&compiled).unwrap()).unwrap();
+        assert!(!has_fill(&ir), "{} gained fillHeight", src.display());
     }
 }
 

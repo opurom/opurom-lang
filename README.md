@@ -90,6 +90,7 @@ node          = KIND [ "(" [ args ] ")" ] [ "async" ] [ ";" | "{" { node | state
               | "for" IDENT "in" [ "state" "." ] IDENT "{" { node } "}" ;
 args          = ( IDENT ":" value | value ) { "," ... } [ "," ] ;
 boundary_prop = ( "repaintBoundary" | "relayoutBoundary" ) ":" ( "true" | "false" ) ;
+grid_prop     = "fillHeight" ":" ( "true" | "false" ) ; (* Grid only; opt-in row-height fill *)
 platform_call = "PlatformCall" "{" { capability | request | result | error } "}" ;
 capability    = "capability" ":" ( "notification" | "camera" | "location" ) [ "," | ";" ] ;
 request       = "request" "{" { IDENT ":" literal } [ "," | ";" ] "}" ;
