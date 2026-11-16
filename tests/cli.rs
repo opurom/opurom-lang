@@ -6748,6 +6748,44 @@ fn icon_size_props_lower_as_numeric_and_opt_in() {
 }
 
 #[test]
+fn text_max_lines_lowers_as_a_numeric_opt_in() {
+    let dir = out_dir("text-max-lines");
+    let src = dir.join("text.opu");
+    fs::write(
+        &src,
+        "app T {\n  Text(\"a\\nb\", maxLines: 2)\n  Text(\"plain\")\n}\n",
+    )
+    .unwrap();
+    let doc = compile_ok(&src);
+    let texts: Vec<&Json> = nodes_of(&doc)
+        .into_iter()
+        .filter(|n| n["kind"] == "Text")
+        .collect();
+    assert_eq!(texts.len(), 2);
+    assert_eq!(texts[0]["props"]["maxLines"], 2);
+    assert!(texts[1]["props"].get("maxLines").is_none());
+
+    let out = dir.join("text.opuir.json");
+    let again = dir.join("text-again.opuir.json");
+    assert!(compile(&src, &out).status.success());
+    assert!(compile(&src, &again).status.success());
+    assert_eq!(fs::read(&out).unwrap(), fs::read(&again).unwrap());
+
+    for (label, text) in [
+        ("string", "app Bad { Text(\"x\", maxLines: \"two\") }\n"),
+        ("float", "app Bad { Text(\"x\", maxLines: 1.5) }\n"),
+    ] {
+        let bad = dir.join("bad.opu");
+        fs::write(&bad, text).unwrap();
+        let r = compile(&bad, &dir.join("bad.opuir.json"));
+        assert!(!r.status.success(), "{label}: a non-integer must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(err.contains("prop 'maxLines' expects an integer"), "{err}");
+        assert_diag(&err, &bad);
+    }
+}
+
+#[test]
 fn mini_program_grids_lower_column_counts_to_percentage_cells() {
     // WXSS/ACSS have no CSS Grid, so every mini-program target must emit a
     // wrapping flex row with equal-width cells. A phone-width page prefers a
