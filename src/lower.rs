@@ -3182,6 +3182,11 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
                 check_color(&ctx, t.pos, name, color)?;
                 tokens_json.insert(name.clone(), json!(color));
             }
+            // Imported md-* tokens are already validated and stringified by
+            // the compiler; they pass through as opaque strings.
+            for (name, value) in &t.imported_tokens {
+                tokens_json.insert(name.clone(), json!(value));
+            }
             if !tokens_json.is_empty() {
                 theme["tokens"] = json!(tokens_json);
             }

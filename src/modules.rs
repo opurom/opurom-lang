@@ -473,6 +473,181 @@ impl Resolver {
     }
 }
 
+/// Diagnostic at a token-import source position.
+fn token_err(
+    origin: &str,
+    pos: Pos,
+    msg: impl Into<String>,
+    help: impl Into<String>,
+) -> Diagnostic {
+    Diagnostic::new(origin, pos.line, pos.col, msg, help)
+}
+
+/// A JSON number as a plain decimal string, never in exponent notation.
+fn number_to_decimal(n: &serde_json::Number) -> String {
+    if let Some(i) = n.as_i64() {
+        return i.to_string();
+    }
+    if let Some(u) = n.as_u64() {
+        return u.to_string();
+    }
+    if let Some(f) = n.as_f64() {
+        return format!("{f}");
+    }
+    n.to_string()
+}
+
+/// Flatten a JSON token object into `(key, string value)` leaves. Keys join the
+/// full path with `-`, and `.` inside a segment is rewritten to `-`.
+fn flatten_token_object(
+    obj: &serde_json::Map<String, Json>,
+    prefix: &str,
+    out: &mut Vec<(String, String)>,
+    origin: &str,
+    pos: Pos,
+) -> DResult<()> {
+    for (key, value) in obj {
+        let segment = key.replace('.', "-");
+        let full = if prefix.is_empty() {
+            segment
+        } else {
+            format!("{prefix}-{segment}")
+        };
+        match value {
+            Json::Object(child) => flatten_token_object(child, &full, out, origin, pos)?,
+            Json::String(text) => out.push((full, text.clone())),
+            Json::Number(n) => out.push((full, number_to_decimal(n))),
+            _ => {
+                return Err(token_err(
+                    origin,
+                    pos,
+                    format!("token '{full}' must hold a string or number"),
+                    "write a string or number leaf in the token file",
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Expand opt-in JSON token imports into flattened `md-*` strings on the theme.
+fn expand_token_imports(
+    theme: &mut ThemeDecl,
+    origin: &Path,
+    root: &Path,
+    roots: &[PathBuf],
+) -> DResult<()> {
+    if theme.token_imports.is_empty() {
+        return Ok(());
+    }
+    let origin_text = origin.display().to_string();
+    let mut seen: HashSet<String> = theme.tokens.iter().map(|(k, _)| k.clone()).collect();
+    let mut flat: Vec<(String, String)> = Vec::new();
+    for (rel, pos) in &theme.token_imports {
+        if !rel.ends_with(".json") {
+            return Err(token_err(
+                &origin_text,
+                *pos,
+                format!("token import '{rel}' must end in '.json'"),
+                "write a relative path such as 'theme/tokens.json'",
+            ));
+        }
+        if Path::new(rel).is_absolute() || has_traversal(rel) {
+            return Err(token_err(
+                &origin_text,
+                *pos,
+                "token import may not be absolute or contain '..'",
+                "keep token files inside the project root",
+            ));
+        }
+        let relative = Path::new(rel);
+        let mut candidates = Vec::new();
+        if let Some(parent) = origin.parent() {
+            candidates.push(parent.join(relative));
+        }
+        for r in roots {
+            candidates.push(r.join(relative));
+        }
+        let found = candidates
+            .iter()
+            .find(|p| p.is_file())
+            .cloned()
+            .ok_or_else(|| {
+                token_err(
+                    &origin_text,
+                    *pos,
+                    format!("cannot read token import '{rel}': file not found"),
+                    "paths are relative to the source or one of the module roots",
+                )
+            })?;
+        let resolved = found.canonicalize().map_err(|e| {
+            token_err(
+                &origin_text,
+                *pos,
+                format!("cannot resolve token import '{rel}': {e}"),
+                "check the token file path",
+            )
+        })?;
+        if !resolved.starts_with(root) {
+            return Err(token_err(
+                &origin_text,
+                *pos,
+                format!("token import '{rel}' escapes the project root"),
+                "keep token files inside the project root",
+            ));
+        }
+        let text = fs::read_to_string(&found).map_err(|e| {
+            token_err(
+                &origin_text,
+                *pos,
+                format!("cannot read token import '{rel}': {e}"),
+                "check the file path and permissions",
+            )
+        })?;
+        let doc: Json = serde_json::from_str(&text).map_err(|e| {
+            token_err(
+                &origin_text,
+                *pos,
+                format!("invalid token import '{rel}': {e}"),
+                "write a JSON object of token names",
+            )
+        })?;
+        let obj = doc.as_object().ok_or_else(|| {
+            token_err(
+                &origin_text,
+                *pos,
+                format!("token import '{rel}' must hold a JSON object"),
+                "write an object of token names to values",
+            )
+        })?;
+        let mut entries = Vec::new();
+        flatten_token_object(obj, "", &mut entries, &origin_text, *pos)?;
+        for (name, value) in entries {
+            if !name.starts_with("md-") {
+                return Err(token_err(
+                    &origin_text,
+                    *pos,
+                    format!("imported token '{name}' must use the 'md-' namespace"),
+                    format!("rename '{name}' with an 'md-' prefix"),
+                ));
+            }
+            if seen.contains(&name) {
+                return Err(token_err(
+                    &origin_text,
+                    *pos,
+                    format!("duplicate token '{name}'"),
+                    "remove the duplicate token key",
+                ));
+            }
+            seen.insert(name.clone());
+            flat.push((name, value));
+        }
+    }
+    flat.sort_by(|a, b| a.0.cmp(&b.0));
+    theme.imported_tokens = flat;
+    Ok(())
+}
+
 /// Merge declarations from `.opu` imports into the main program before lowering.
 pub fn resolve_imports(main: Program, source_path: &str) -> DResult<Program> {
     let main_abs = absolute_path(Path::new(source_path));
@@ -491,5 +666,9 @@ pub fn resolve_imports(main: Program, source_path: &str) -> DResult<Program> {
     for import in &main.imports {
         resolver.resolve_import(import, &main_path)?;
     }
-    Ok(resolver.merge.finish(main))
+    let mut program = resolver.merge.finish(main);
+    if let Some(theme) = program.theme.as_mut() {
+        expand_token_imports(theme, &main_path, &resolver.root, &resolver.roots)?;
+    }
+    Ok(program)
 }

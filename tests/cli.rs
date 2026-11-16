@@ -8555,3 +8555,112 @@ fn imported_module_with_bare_ui_node_is_rejected() {
         "unexpected error: {stderr}"
     );
 }
+
+// ---- theme token import (M6) ----
+
+#[test]
+fn token_import_flattens_nested_and_dotted_keys() {
+    let dir = out_dir("token-import-flatten");
+    fs::create_dir_all(dir.join("theme")).unwrap();
+    fs::write(
+        dir.join("theme/nested.json"),
+        r##"{
+  "md": { "sys": { "color": { "primary": "#6750A4" } } },
+  "md.sys.typescale.display.large": { "size": 96, "weight": 400 }
+}"##,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("main.opu"),
+        "app M {\n  theme { tokens { import \"theme/nested.json\" } }\n  Container { Text(\"hi\") }\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&dir.join("main.opu"));
+    let tok = &ir["theme"]["tokens"];
+    assert_eq!(tok["md-sys-color-primary"], json!("#6750A4"));
+    assert_eq!(tok["md-sys-typescale-display-large-size"], json!("96"));
+    assert_eq!(tok["md-sys-typescale-display-large-weight"], json!("400"));
+    // Keys are emitted in sorted order.
+    let keys: Vec<&str> = tok
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let mut sorted = keys.clone();
+    sorted.sort_unstable();
+    assert_eq!(keys, sorted, "token keys must be sorted: {keys:?}");
+}
+
+#[test]
+fn token_import_keeps_golden_ir_unchanged_without_declaration() {
+    let golden = compile_ok(&contract("counter.opu"));
+    let expected: Json =
+        serde_json::from_slice(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap();
+    assert_eq!(
+        golden, expected,
+        "counter golden IR must stay byte-identical"
+    );
+}
+
+#[test]
+fn token_import_rejects_non_md_namespace_and_bad_leaf() {
+    let dir = out_dir("token-import-bad");
+    fs::write(dir.join("theme.json"), r##"{"success": "#FF0000"}"##).unwrap();
+    let src = dir.join("main.opu");
+    fs::write(
+        &src,
+        "app A { theme { tokens { import \"theme.json\" } } Container { Text(\"hi\") } }\n",
+    )
+    .unwrap();
+    let r = compile(&src, &dir.join("out.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(stderr.contains("must use the 'md-' namespace"), "{stderr}");
+
+    fs::write(dir.join("leaf.json"), r##"{"md": {"flag": true}}"##).unwrap();
+    let src2 = dir.join("leaf.opu");
+    fs::write(
+        &src2,
+        "app A { theme { tokens { import \"leaf.json\" } } Container { Text(\"hi\") } }\n",
+    )
+    .unwrap();
+    let r = compile(&src2, &dir.join("out2.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(stderr.contains("must hold a string or number"), "{stderr}");
+}
+
+#[test]
+fn token_import_rejects_duplicate_against_inline_and_across_files() {
+    let dir = out_dir("token-import-dup");
+    fs::write(dir.join("a.json"), r##"{"md-sys-color": "#6750A4"}"##).unwrap();
+    let inline = dir.join("inline.opu");
+    fs::write(
+        &inline,
+        "app A { theme { tokens { md-sys-color: \"#FF0000\", import \"a.json\" } } Container { Text(\"hi\") } }\n",
+    )
+    .unwrap();
+    let r = compile(&inline, &dir.join("i.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("duplicate token 'md-sys-color'"),
+        "{stderr}"
+    );
+
+    fs::write(dir.join("b.json"), r##"{"md-sys-color": "#000000"}"##).unwrap();
+    let two = dir.join("two.opu");
+    fs::write(
+        &two,
+        "app A { theme { tokens { import \"a.json\", import \"b.json\" } } Container { Text(\"hi\") } }\n",
+    )
+    .unwrap();
+    let r = compile(&two, &dir.join("t.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("duplicate token 'md-sys-color'"),
+        "{stderr}"
+    );
+}
