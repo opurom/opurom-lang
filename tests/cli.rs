@@ -6815,6 +6815,86 @@ fn two_route_ir(name: &str) -> PathBuf {
     ir
 }
 
+/// Two routes, Feed (pull-refresh) and Detail (subpackage d2), for §7 emission.
+fn pull_sub_route_ir(name: &str) -> PathBuf {
+    let dir = out_dir(name);
+    let ir = dir.join("pr.opuir.json");
+    let doc = json!({
+        "ir": "0.1.0",
+        "app": "PR",
+        "state": [{"name": "items", "type": "list", "init": []}],
+        "initialRoute": "Feed",
+        "routes": {
+            "Feed": {
+                "title": "Feed",
+                "tree": {"id": 1, "kind": "Column", "props": {}, "events": {}, "children": [
+                    {"id": 2, "kind": "Text", "props": {"value": "feed"}, "events": {}, "children": []}
+                ]},
+                "pullRefresh": {"effects": [{"kind": "fetch", "path": "/api/items", "into": "items"}]}
+            },
+            "Detail": {
+                "title": "Detail",
+                "tree": {"id": 3, "kind": "Column", "props": {}, "events": {}, "children": [
+                    {"id": 4, "kind": "Text", "props": {"value": "detail"}, "events": {}, "children": []}
+                ]},
+                "subpackage": "d2"
+            }
+        },
+        "theme": {"mode": "light", "accent": "#097FEB", "radius": 12}
+    });
+    fs::write(&ir, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+    ir
+}
+
+#[test]
+fn mini_pull_refresh_and_subpackage_follow_the_spec() {
+    let ir = pull_sub_route_ir("mini-pr-sub");
+    let out = out_dir("mini-pr-sub-out");
+    let r = emit(&ir, "wechat", &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    // Pull-refresh: onPullDownRefresh runs the effects then stops the animation;
+    // a failed fetch keeps the old value (no error-string writeback).
+    let feed = fs::read_to_string(out.join("pages/Feed/index.js")).unwrap();
+    assert!(feed.contains("onPullDownRefresh"), "{feed}");
+    assert!(feed.contains("stopPullDownRefresh"), "{feed}");
+    assert!(feed.contains("/api/items"), "{feed}");
+    assert!(feed.contains("fail: function () { resolve(); }"), "{feed}");
+    assert!(!feed.contains("error: request failed"), "{feed}");
+    // Subpackage: Detail lives under packages/d2 and app.json lists subPackages.
+    assert!(
+        out.join("packages/d2/pages/Detail/index.wxml").exists(),
+        "Detail must live under its subpackage root"
+    );
+    let app_json: Json =
+        serde_json::from_str(&fs::read_to_string(out.join("app.json")).unwrap()).unwrap();
+    let subs = app_json["subPackages"].as_array().expect("subPackages");
+    assert_eq!(subs.len(), 1);
+    assert_eq!(subs[0]["root"], "packages/d2");
+    let main_pages: Vec<&str> = app_json["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(main_pages.contains(&"pages/Feed/index"));
+    assert!(!main_pages.iter().any(|p| p.contains("Detail")));
+
+    // Validation: the initialRoute must not declare a subpackage.
+    let dir = out_dir("mini-pr-bad");
+    let bad = dir.join("bad.opuir.json");
+    let mut doc: Json =
+        serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap();
+    doc["routes"]["Feed"]["subpackage"] = json!("x");
+    fs::write(&bad, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+    let r = emit(&bad, "wechat", &dir.join("bad-out"));
+    assert!(!r.status.success());
+    assert!(
+        String::from_utf8_lossy(&r.stderr).contains("must not declare a subpackage"),
+        "{}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+}
+
 #[test]
 fn mini_targets_render_list_for_as_native_loop() {
     // DYNAMIC_LISTS.md Phase B: a runtime For node maps to the platform loop

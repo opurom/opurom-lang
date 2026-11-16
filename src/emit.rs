@@ -378,6 +378,11 @@ pub struct EPage {
     pub name: String,
     pub title: Option<String>,
     pub tree: ENode,
+    /// PLATFORM_DELIVERY.md §7: page-level pull-refresh effects, reusing the
+    /// fetch/delay shapes of an async handler.
+    pub pull_refresh: Option<Vec<Effect>>,
+    /// PLATFORM_DELIVERY.md §7: subpackage name this route belongs to.
+    pub subpackage: Option<String>,
 }
 
 /// The additive multi-page shape: an initial route plus an ordered route table.
@@ -426,10 +431,48 @@ fn read_routes(ir: &Json, ir_path: &str) -> DResult<Option<ERoutes>> {
             .ok_or_else(|| bad_ir(ir_path, format!("route '{name}' is missing 'tree'")))?;
         let tree = read_node(tree_value, ir_path)?;
         let title = obj.get("title").and_then(Json::as_str).map(str::to_string);
+        // pullRefresh mirrors event_effects: fetch/delay only, `into` a declared
+        // string|list state is checked by the caller against the state table.
+        let pull_refresh = match obj.get("pullRefresh") {
+            None => None,
+            Some(pr) => {
+                let inner = pr
+                    .as_object()
+                    .ok_or_else(|| bad_ir(ir_path, format!("route '{name}' pullRefresh must be an object")))?;
+                let raw = inner
+                    .get("effects")
+                    .ok_or_else(|| bad_ir(ir_path, format!("route '{name}' pullRefresh is missing 'effects'")))?;
+                let effects = parse_effect_list(raw, ir_path)?;
+                if effects.is_empty() {
+                    return Err(bad_ir(
+                        ir_path,
+                        format!("route '{name}' pullRefresh must declare at least one effect"),
+                    ));
+                }
+                Some(effects)
+            }
+        };
+        let subpackage = match obj.get("subpackage") {
+            None => None,
+            Some(v) => {
+                let s = v
+                    .as_str()
+                    .ok_or_else(|| bad_ir(ir_path, format!("route '{name}' subpackage must be a string")))?;
+                if !valid_route_name(s) {
+                    return Err(bad_ir(
+                        ir_path,
+                        format!("route '{name}' subpackage '{s}' must be an identifier"),
+                    ));
+                }
+                Some(s.to_string())
+            }
+        };
         pages.push(EPage {
             name: name.clone(),
             title,
             tree,
+            pull_refresh,
+            subpackage,
         });
     }
     // serde_json maps keep insertion order only with the preserve_order feature;
@@ -959,6 +1002,12 @@ pub fn event_effects(event: &Json, ir_path: &str) -> DResult<Vec<Effect>> {
             "IR event 'effects' requires \"async\": true",
         ));
     }
+    parse_effect_list(raw, ir_path)
+}
+
+/// Parse an `effects` array sharing the fetch/delay shapes. Also used by a
+/// route's `pullRefresh` (§7), which reuses these shapes without the async flag.
+fn parse_effect_list(raw: &Json, ir_path: &str) -> DResult<Vec<Effect>> {
     let list = raw
         .as_array()
         .ok_or_else(|| bad_ir(ir_path, "IR event 'effects' must be an array"))?;
@@ -3477,6 +3526,18 @@ fn mini_action_chain(event: &Json, p: &Platform, ir_path: &str) -> DResult<Strin
 }
 
 fn mini_effects(effects: &[Effect], p: &Platform, ir_path: &str) -> DResult<String> {
+    mini_effects_with(effects, p, ir_path, false)
+}
+
+/// `keep_old_on_fail` leaves state untouched when a fetch fails (a route's
+/// pull-refresh keeps previous values, PLATFORM_DELIVERY.md §7); an async
+/// handler keeps the historical `"error: request failed"` writeback.
+fn mini_effects_with(
+    effects: &[Effect],
+    p: &Platform,
+    ir_path: &str,
+    keep_old_on_fail: bool,
+) -> DResult<String> {
     let mut code = String::new();
     if effects
         .iter()
@@ -3508,10 +3569,15 @@ fn mini_effects(effects: &[Effect], p: &Platform, ir_path: &str) -> DResult<Stri
                     p.state_set
                 ));
                 code.push_str("}, fail: function () { ");
-                code.push_str(&format!(
-                    "page.{}({{{target}: \"error: request failed\"}}); resolve(); ",
-                    p.state_set
-                ));
+                if keep_old_on_fail {
+                    // Keep the previous value on failure (§7 pull-refresh).
+                    code.push_str("resolve(); ");
+                } else {
+                    code.push_str(&format!(
+                        "page.{}({{{target}: \"error: request failed\"}}); resolve(); ",
+                        p.state_set
+                    ));
+                }
                 code.push_str("}}); }); ");
             }
         }
@@ -3832,25 +3898,59 @@ fn emit_mini_multipage(
         .ok_or_else(|| bad_ir(ir_path, format!("no platform table entry for '{target}'")))?;
 
     let page_path = |route: &str| format!("pages/{route}/index");
-    let quad = |route: &str| {
-        let base = page_path(route);
-        vec![
-            format!("{base}.{}", p.markup_ext),
-            format!("{base}.{}", p.style_ext),
-            format!("{base}.js"),
-        ]
-    };
 
-    // app.json: the launch router is first, then one entry per route page.
+    // app.json: the launch router plus every main-package route page; routes
+    // with a subpackage go under subPackages (§7). The initialRoute must not be
+    // subpackaged (it must launch from the main package).
     let mut pages: Vec<String> = vec!["pages/index/index".to_string()];
+    // page_path for a route that may live in a subpackage.
+    let route_page_path = |page: &EPage| -> String {
+        match &page.subpackage {
+            Some(pack) => format!("packages/{pack}/pages/{}/index", page.name),
+            None => page_path(&page.name),
+        }
+    };
+    let mut sub_order: Vec<String> = Vec::new();
+    let mut sub_map: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     for page in &routes.pages {
-        pages.push(page_path(&page.name));
+        if let Some(pack) = &page.subpackage {
+            if page.name == routes.initial {
+                return Err(bad_ir(
+                    ir_path,
+                    format!("initialRoute '{}' must not declare a subpackage", page.name),
+                ));
+            }
+            if !sub_map.contains_key(pack) {
+                sub_order.push(pack.clone());
+            }
+            sub_map
+                .entry(pack.clone())
+                .or_default()
+                .push(route_page_path(page));
+        } else {
+            pages.push(route_page_path(page));
+        }
     }
     let mut window = JsonMap::new();
     window.insert(p.title_key.to_string(), json!(app));
     let mut app_obj = JsonMap::new();
     app_obj.insert("pages".to_string(), json!(pages));
     app_obj.insert("window".to_string(), Json::Object(window));
+    if !sub_order.is_empty() {
+        let subs: Vec<Json> = sub_order
+            .iter()
+            .map(|pack| {
+                json!({
+                    "root": format!("packages/{pack}"),
+                    "pages": sub_map[pack].iter().map(|p| {
+                        // app.json subpackage `pages` are relative to `root`.
+                        p.trim_start_matches(&format!("packages/{pack}/")).to_string()
+                    }).collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        app_obj.insert("subPackages".to_string(), Json::Array(subs));
+    }
 
     // app.js: global state lives in App.globalData.states, every page writes
     // back through it and mirrors it into setData on onShow.
@@ -3945,6 +4045,18 @@ fn emit_mini_multipage(
         methods.push_str("  onShow: function () {\n    const g = getApp().globalData.states;\n    if (g) { this.setData(g); }\n  },\n");
         // Every write-back updates globalData then setData so a pushed page reads it.
         methods.push_str("  applyState: function (patch) {\n    const g = getApp().globalData.states = getApp().globalData.states || {};\n    Object.assign(g, patch);\n    this.setData(patch);\n  },\n");
+        // Pull-refresh (§7): run the page's effects on pull-down, then stop the
+        // animation; a failed fetch keeps the old value (mini_effects resolves
+        // either way, so failure leaves state as it was).
+        if let Some(effects) = &page.pull_refresh {
+            let effect_code = mini_effects_with(effects, p, ir_path, true)?
+                .replace("page.setData(", "page.applyState(")
+                .replace("this.setData(", "this.applyState(");
+            methods.push_str(&format!(
+                "  onPullDownRefresh: async function () {{ {effect_code}this.{}({{}}); }},\n",
+                "stopPullDownRefresh".to_string()
+            ));
+        }
         methods.push_str(&mini_computed(p, states, computed, ir_path)?);
         for n in &nodes {
             if let Some(action) = n.events.get("tap") {
@@ -3975,9 +4087,10 @@ fn emit_mini_multipage(
             data_js, methods
         );
 
-        write(out, &quad(&page.name)[0], &markup, ir_path)?;
-        write(out, &quad(&page.name)[1], &style, ir_path)?;
-        write(out, &quad(&page.name)[2], &page_js, ir_path)?;
+        let base = route_page_path(page);
+        write(out, &format!("{base}.{}", p.markup_ext), &markup, ir_path)?;
+        write(out, &format!("{base}.{}", p.style_ext), &style, ir_path)?;
+        write(out, &format!("{base}.js"), &page_js, ir_path)?;
     }
 
     // Launch router page: redirects into the initial route once.
