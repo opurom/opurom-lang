@@ -461,7 +461,7 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             tap: false,
         },
         "Text" => KindInfo {
-            props: &["value", "size", "color"],
+            props: &["value", "size", "color", "weight", "letterSpacing", "fontPx"],
             required: &["value"],
             numeric: &["size"],
             positional: Some("value"),
@@ -1004,6 +1004,41 @@ fn validation_prop_value(ctx: &Ctx, key: &str, arg: &Arg) -> DResult<Json> {
 }
 
 fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> DResult<Json> {
+    if key == "weight" {
+        return match &arg.value {
+            AstValue::Lit(Lit::Str(s)) if s == "normal" || s == "bold" => Ok(json!(s)),
+            other => Err(ctx.err(
+                arg.pos,
+                format!("prop 'weight' expects 'normal' or 'bold', found {}", value_desc(other)),
+                "write weight: normal or weight: bold".to_string(),
+            )),
+        };
+    }
+    if key == "letterSpacing" {
+        return match &arg.value {
+            AstValue::Lit(Lit::Int(n)) => Ok(json!(n)),
+            other => Err(ctx.err(
+                arg.pos,
+                format!("prop 'letterSpacing' expects an integer, found {}", value_desc(other)),
+                "write letterSpacing: -2 on a Text node".to_string(),
+            )),
+        };
+    }
+    if key == "fontPx" {
+        return match &arg.value {
+            AstValue::Lit(Lit::Int(n)) if *n > 0 => Ok(json!(n)),
+            AstValue::Lit(Lit::Int(n)) => Err(ctx.err(
+                arg.pos,
+                format!("fontPx must be a positive integer, found {n}"),
+                "write fontPx: 34 or omit it to use the quantized size".to_string(),
+            )),
+            other => Err(ctx.err(
+                arg.pos,
+                format!("prop 'fontPx' expects an integer, found {}", value_desc(other)),
+                "write fontPx: 34 on a Text node".to_string(),
+            )),
+        };
+    }
     if key == "columnSpan" {
         return match &arg.value {
             AstValue::Lit(Lit::Int(n)) if *n >= 0 => Ok(json!(n)),

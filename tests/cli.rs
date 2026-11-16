@@ -1283,6 +1283,72 @@ fn collision_curve_compiles_and_emits_across_targets() {
 }
 
 #[test]
+fn text_typography_is_opt_in_and_validated() {
+    let dir = out_dir("text-typography");
+    let src = dir.join("typography.opu");
+    fs::write(
+        &src,
+        "app Typography { Column {\n  Text(\"Headline\", size: 24, weight: \"bold\", letterSpacing: -2, fontPx: 34)\n  Text(\"plain\")\n} }\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let nodes = nodes_of(&ir);
+    let headline = nodes
+        .iter()
+        .find(|n| n["kind"] == "Text" && n["props"]["value"] == "Headline")
+        .expect("headline Text node");
+    assert_eq!(headline["props"]["weight"], "bold");
+    assert_eq!(headline["props"]["letterSpacing"], -2);
+    assert_eq!(headline["props"]["fontPx"], 34);
+    let plain = nodes
+        .iter()
+        .find(|n| n["kind"] == "Text" && n["props"]["value"] == "plain")
+        .expect("plain Text node");
+    for key in ["weight", "letterSpacing", "fontPx"] {
+        assert!(plain["props"].get(key).is_none(), "{key} leaked to default text");
+    }
+
+    let golden = compile_ok(&contract("counter.opu"));
+    assert_eq!(
+        golden,
+        serde_json::from_slice::<Json>(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap()
+    );
+
+    for (body, diagnostic) in [
+        (
+            "app B { Text(\"x\", weight: \"heavy\") }",
+            "prop 'weight' expects 'normal' or 'bold'",
+        ),
+        (
+            "app B { Text(\"x\", fontPx: 0) }",
+            "fontPx must be a positive integer",
+        ),
+        (
+            "app B { Text(\"x\", fontPx: -3) }",
+            "fontPx must be a positive integer",
+        ),
+        (
+            "app B { Text(\"x\", letterSpacing: \"2\") }",
+            "prop 'letterSpacing' expects an integer",
+        ),
+        (
+            "app B { Column(weight: \"bold\") { } }",
+            "unknown prop 'weight' on Column",
+        ),
+    ] {
+        let bad = dir.join(format!("bad-{}.opu", diagnostic.split_whitespace().next().unwrap()));
+        fs::write(&bad, body).unwrap();
+        let r = compile(&bad, &dir.join("bad.opuir.json"));
+        assert!(!r.status.success(), "{body}");
+        assert!(
+            String::from_utf8_lossy(&r.stderr).contains(diagnostic),
+            "{body}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+    }
+}
+
+#[test]
 fn column_span_is_additive_and_grid_scoped() {
     let dir = out_dir("column-span");
     let src = dir.join("span.opu");
