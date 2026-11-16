@@ -799,14 +799,11 @@ impl<'a> Ctx<'a> {
     fn index_value(&self, index: &IndexExpr) -> Option<i64> {
         match index {
             IndexExpr::Int(n) => Some(*n),
-            IndexExpr::Var(name) => self
-                .loops
-                .iter()
-                .rev()
-                .find(|(v, _)| v == name)
-                .and_then(|(_, value)| match value {
+            IndexExpr::Var(name) => self.loops.iter().rev().find(|(v, _)| v == name).and_then(
+                |(_, value)| match value {
                     LoopValue::Int(n) => Some(*n),
-                }),
+                },
+            ),
         }
     }
 }
@@ -1386,20 +1383,26 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
                 "set"
             };
             match v {
-                AstValue::Lit(l) => Ok(json!({"op": op, "target": stmt.target, "value": json_lit(l)})),
+                AstValue::Lit(l) => {
+                    Ok(json!({"op": op, "target": stmt.target, "value": json_lit(l)}))
+                }
                 AstValue::Ident(name) => {
                     Ok(json!({"op": op, "target": stmt.target, "valueFrom": name}))
                 }
             }
         }
         StmtKind::Append(v, _p) => match v {
-            AstValue::Lit(l) => Ok(json!({"op": "append", "target": stmt.target, "value": json_lit(l)})),
+            AstValue::Lit(l) => {
+                Ok(json!({"op": "append", "target": stmt.target, "value": json_lit(l)}))
+            }
             AstValue::Ident(name) => {
                 Ok(json!({"op": "append", "target": stmt.target, "valueFrom": name}))
             }
         },
         StmtKind::RemoveAt(v, _p) => match v {
-            AstValue::Lit(l) => Ok(json!({"op": "removeAt", "target": stmt.target, "value": json_lit(l)})),
+            AstValue::Lit(l) => {
+                Ok(json!({"op": "removeAt", "target": stmt.target, "value": json_lit(l)}))
+            }
             AstValue::Ident(name) => {
                 Ok(json!({"op": "removeAt", "target": stmt.target, "valueFrom": name}))
             }
@@ -1988,8 +1991,7 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], cond: Cond) -> DResult<Vec<Jso
                         let mut node_json = JsonMap::new();
                         node_json.insert("id".to_string(), json!(id));
                         node_json.insert("kind".to_string(), json!("For"));
-                        node_json
-                            .insert("props".to_string(), json!({"source": name, "item": var}));
+                        node_json.insert("props".to_string(), json!({"source": name, "item": var}));
                         node_json.insert("children".to_string(), Json::Array(children));
                         node_json.insert("events".to_string(), Json::Object(JsonMap::new()));
                         if let Some(w) = cond.when {

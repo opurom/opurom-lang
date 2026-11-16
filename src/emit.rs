@@ -436,12 +436,18 @@ fn read_routes(ir: &Json, ir_path: &str) -> DResult<Option<ERoutes>> {
         let pull_refresh = match obj.get("pullRefresh") {
             None => None,
             Some(pr) => {
-                let inner = pr
-                    .as_object()
-                    .ok_or_else(|| bad_ir(ir_path, format!("route '{name}' pullRefresh must be an object")))?;
-                let raw = inner
-                    .get("effects")
-                    .ok_or_else(|| bad_ir(ir_path, format!("route '{name}' pullRefresh is missing 'effects'")))?;
+                let inner = pr.as_object().ok_or_else(|| {
+                    bad_ir(
+                        ir_path,
+                        format!("route '{name}' pullRefresh must be an object"),
+                    )
+                })?;
+                let raw = inner.get("effects").ok_or_else(|| {
+                    bad_ir(
+                        ir_path,
+                        format!("route '{name}' pullRefresh is missing 'effects'"),
+                    )
+                })?;
                 let effects = parse_effect_list(raw, ir_path)?;
                 if effects.is_empty() {
                     return Err(bad_ir(
@@ -455,9 +461,12 @@ fn read_routes(ir: &Json, ir_path: &str) -> DResult<Option<ERoutes>> {
         let subpackage = match obj.get("subpackage") {
             None => None,
             Some(v) => {
-                let s = v
-                    .as_str()
-                    .ok_or_else(|| bad_ir(ir_path, format!("route '{name}' subpackage must be a string")))?;
+                let s = v.as_str().ok_or_else(|| {
+                    bad_ir(
+                        ir_path,
+                        format!("route '{name}' subpackage must be a string"),
+                    )
+                })?;
                 if !valid_route_name(s) {
                     return Err(bad_ir(
                         ir_path,
@@ -2543,7 +2552,11 @@ fn emit_web(
     let mut nodes = Vec::new();
     collect(tree, &mut nodes);
 
-    let icons = ir.get("icons").and_then(Json::as_array).map(|a| a.as_slice()).unwrap_or(&[]);
+    let icons = ir
+        .get("icons")
+        .and_then(Json::as_array)
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
     let mut draw = String::new();
     draw_node(tree, &boxes, &mut draw, ir_path, icons)?;
 
@@ -3446,8 +3459,10 @@ fn markup_node(
             for child in &n.children {
                 markup_node(child, p, depth + 1, out, ir_path, dark, icons)?;
             }
-            out.push_str(&format!("{pad}</view>
-"));
+            out.push_str(&format!(
+                "{pad}</view>
+"
+            ));
         }
         kind => {
             // Documented fallback: an unknown kind renders as a Container
@@ -3526,14 +3541,21 @@ fn mini_action(action: &Json, p: &Platform, ir_path: &str) -> DResult<String> {
         "append" => {
             let elem = match action.get("valueFrom").and_then(Json::as_str) {
                 Some(from) => format!("this.data.{from}"),
-                None => { let v = action.get("value").cloned().unwrap_or(Json::Null); js_lit(&v) }
+                None => {
+                    let v = action.get("value").cloned().unwrap_or(Json::Null);
+                    js_lit(&v)
+                }
             };
             format!("this.{set}({{\"{target}\": this.data.{target}.concat([{elem}])}});")
         }
         "removeAt" => {
             let idx = match action.get("valueFrom").and_then(Json::as_str) {
                 Some(from) => format!("this.data.{from}"),
-                None => action.get("value").and_then(Json::as_i64).unwrap_or(0).to_string(),
+                None => action
+                    .get("value")
+                    .and_then(Json::as_i64)
+                    .unwrap_or(0)
+                    .to_string(),
             };
             format!("this.{set}({{\"{target}\": this.data.{target}.slice(0, {idx}).concat(this.data.{target}.slice({idx} + 1))}});")
         }
@@ -3714,7 +3736,11 @@ fn emit_mini(
         .and_then(|t| t.get("mode"))
         .and_then(Json::as_str)
         == Some("dark");
-    let icons = ir.get("icons").and_then(Json::as_array).map(|a| a.as_slice()).unwrap_or(&[]);
+    let icons = ir
+        .get("icons")
+        .and_then(Json::as_array)
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
     markup_node(tree, p, 0, &mut markup, ir_path, dark, icons)?;
     write(
         out,
@@ -4007,7 +4033,8 @@ fn emit_mini_multipage(
         .and_then(Json::as_str)
         .filter(|s| {
             let digits = s.strip_prefix('#').unwrap_or("");
-            (digits.len() == 6 || digits.len() == 8) && digits.bytes().all(|b| b.is_ascii_hexdigit())
+            (digits.len() == 6 || digits.len() == 8)
+                && digits.bytes().all(|b| b.is_ascii_hexdigit())
         })
         .unwrap_or("#ffffff");
     let base_style = format!(
@@ -4114,10 +4141,7 @@ fn emit_mini_multipage(
             "// Generated by opuromc for {}; route '{}', no IR interpreter.\n",
             p.key, page.name
         );
-        let page_js = format!(
-            "{prefix}Page({{\n  data: {},\n{}}});\n",
-            data_js, methods
-        );
+        let page_js = format!("{prefix}Page({{\n  data: {},\n{}}});\n", data_js, methods);
 
         let base = route_page_path(page);
         write(out, &format!("{base}.{}", p.markup_ext), &markup, ir_path)?;
@@ -4149,8 +4173,14 @@ fn emit_mini_multipage(
         ir_path,
     )?;
     write(out, "pages/index/index.js", &router_js, ir_path)?;
-    write(out, "app.json", &(serde_json::to_string_pretty(&Json::Object(app_obj))
-        .map_err(|e| bad_ir(ir_path, format!("cannot serialize app.json: {e}")))? + "\n"), ir_path)?;
+    write(
+        out,
+        "app.json",
+        &(serde_json::to_string_pretty(&Json::Object(app_obj))
+            .map_err(|e| bad_ir(ir_path, format!("cannot serialize app.json: {e}")))?
+            + "\n"),
+        ir_path,
+    )?;
     write(out, "app.js", &app_js, ir_path)?;
 
     // Size report (§7): main package bytes plus per-subpackage bytes. Wechat's
@@ -4182,12 +4212,7 @@ fn dir_bytes(root: &Path) -> std::io::Result<usize> {
 /// subpackage, and fail with a diagnostic when the wechat limits are exceeded
 /// (2 MB per single package, 20 MB total). Other mini platforms share wechat's
 /// limits as a conservative bound.
-fn write_size_report(
-    out: &Path,
-    routes: &ERoutes,
-    p: &Platform,
-    ir_path: &str,
-) -> DResult<()> {
+fn write_size_report(out: &Path, routes: &ERoutes, p: &Platform, ir_path: &str) -> DResult<()> {
     const LIMIT_PACKAGE: usize = 2 * 1024 * 1024;
     const LIMIT_TOTAL: usize = 20 * 1024 * 1024;
     let total = dir_bytes(out).unwrap_or(0);

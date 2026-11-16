@@ -642,7 +642,12 @@ impl<'a> Checker<'a> {
     fn effect(&self, effect: &Effect) -> DResult<()> {
         if let Effect::Fetch { into, pos, .. } = effect {
             let ty = self.state_of(into).ok_or_else(|| {
-                self.unknown_state(into, "in fetch target", *pos, "a declared string or list state")
+                self.unknown_state(
+                    into,
+                    "in fetch target",
+                    *pos,
+                    "a declared string or list state",
+                )
             })?;
             if self.env.computed.contains(into) {
                 return Err(self.readonly(into, ty, *pos));

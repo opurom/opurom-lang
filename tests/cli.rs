@@ -317,10 +317,7 @@ fn each_error_class_is_a_friendly_diagnostic() {
             "duration_out_of_range.opu",
             "duration must be between 0 and 10000",
         ),
-        (
-            "delay_type_misuse.opu",
-            "prop 'delay' expects an integer",
-        ),
+        ("delay_type_misuse.opu", "prop 'delay' expects an integer"),
         (
             "value_from_type_mismatch.opu",
             "cannot assign string to int state",
@@ -1928,10 +1925,7 @@ fn native_emitter_reloads_ir_from_stdin_and_env() {
     let alt_path = alt.to_string_lossy().to_string();
 
     // A missing file keeps the embedded tree and reports the failure.
-    let (ran, stdout) = run_native(
-        &exe,
-        "reload /nonexistent/opuir.json\nstate\nquit\n",
-    );
+    let (ran, stdout) = run_native(&exe, "reload /nonexistent/opuir.json\nstate\nquit\n");
     assert!(ran, "native binary exited nonzero");
     assert!(stdout.contains("error: cannot reload from"), "{stdout}");
     assert!(
@@ -2915,7 +2909,10 @@ fn async_diagnostics_are_friendly() {
             "delay must be between 0 and 60000 ms",
         ),
         ("delay_negative.opu", "delay must be between 0 and 60000 ms"),
-        ("fetch_non_string.opu", "'fetch' requires a string or list state"),
+        (
+            "fetch_non_string.opu",
+            "'fetch' requires a string or list state",
+        ),
         (
             "fetch_unknown_state.opu",
             "unknown state 'payload' in fetch target",
@@ -3362,8 +3359,7 @@ fn list_state_mutates_through_assign_append_and_remove_at() {
             .iter()
             .find(|n| (**n)["props"]["label"].as_str() == Some(label))
             .copied()
-            .expect("button node")
-            ["events"]["tap"]
+            .expect("button node")["events"]["tap"]
             .clone()
     };
     assert_eq!(
@@ -3482,10 +3478,7 @@ fn language_diagnostics_are_friendly() {
             "list state 'items' is not allowed here",
         ),
         ("list_bind.opu", "list state 'items' is not allowed here"),
-        (
-            "append_non_list.opu",
-            "'append()' requires a list state",
-        ),
+        ("append_non_list.opu", "'append()' requires a list state"),
         (
             "remove_at_non_list.opu",
             "'removeAt()' requires a list state",
@@ -6887,8 +6880,7 @@ fn mini_pull_refresh_and_subpackage_follow_the_spec() {
     // Validation: the initialRoute must not declare a subpackage.
     let dir = out_dir("mini-pr-bad");
     let bad = dir.join("bad.opuir.json");
-    let mut doc: Json =
-        serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap();
+    let mut doc: Json = serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap();
     doc["routes"]["Feed"]["subpackage"] = json!("x");
     fs::write(&bad, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
     let r = emit(&bad, "wechat", &dir.join("bad-out"));
@@ -6934,7 +6926,10 @@ fn package_icons_from_the_ir_table_paint_on_mini_and_web() {
     let r = emit(&ir, "web", &web);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let app_js = fs::read_to_string(web.join("app.js")).unwrap();
-    assert!(app_js.contains("M20 20 L60 60"), "web canvas path: {app_js}");
+    assert!(
+        app_js.contains("M20 20 L60 60"),
+        "web canvas path: {app_js}"
+    );
 }
 
 /// Minimal base64 decode for the icon data-URI assertion.
@@ -6944,7 +6939,9 @@ fn base64_decode(s: &str) -> String {
     let mut buf = 0u32;
     let mut bits = 0u32;
     for c in s.bytes() {
-        let Some(v) = T.iter().position(|&t| t == c) else { continue };
+        let Some(v) = T.iter().position(|&t| t == c) else {
+            continue;
+        };
         buf = (buf << 6) | v as u32;
         bits += 6;
         if bits >= 8 {
@@ -6979,13 +6976,20 @@ fn mini_targets_render_list_for_as_native_loop() {
     ] {
         let out = out_dir(&format!("mini-wx-for-{target}"));
         let r = emit(&ir, target, &out);
-        assert!(r.status.success(), "{target}: {}", String::from_utf8_lossy(&r.stderr));
+        assert!(
+            r.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
         let markup = fs::read_to_string(out.join(format!("pages/index/index.{ext}"))).unwrap();
         assert!(
             markup.contains(&format!("{ns}:for=\"{{{{items}}}}\"")),
             "{target} loop directive: {markup}"
         );
-        assert!(markup.contains(&format!("{ns}:for-item=\"item\"")), "{target} item var");
+        assert!(
+            markup.contains(&format!("{ns}:for-item=\"item\"")),
+            "{target} item var"
+        );
         assert!(markup.contains("{{item}}"), "{target} template placeholder");
     }
 }
@@ -7034,12 +7038,18 @@ fn mini_emitters_emit_one_page_quad_per_route() {
             .collect();
         assert_eq!(pages[0], "pages/index/index", "{target} launch page first");
         assert!(pages.contains(&"pages/Home/index"), "{target} Home page");
-        assert!(pages.contains(&"pages/Detail/index"), "{target} Detail page");
+        assert!(
+            pages.contains(&"pages/Detail/index"),
+            "{target} Detail page"
+        );
 
         // Each page's own markup renders only its subtree.
         let home = fs::read_to_string(out.join(format!("pages/Home/index.{ext}"))).unwrap();
         assert!(home.contains("Welcome"), "{target} Home content");
-        assert!(!home.contains("Item"), "{target} Home must not carry Detail");
+        assert!(
+            !home.contains("Item"),
+            "{target} Home must not carry Detail"
+        );
         let detail = fs::read_to_string(out.join(format!("pages/Detail/index.{ext}"))).unwrap();
         assert!(detail.contains("Item"), "{target} Detail content");
 
