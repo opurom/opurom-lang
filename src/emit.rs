@@ -865,7 +865,7 @@ fn validate_actions(
                 if matches!(
                     action.get("op").and_then(Json::as_str),
                     Some("push" | "validate")
-               ) || action.get("target").and_then(Json::as_str) == Some("@locale")
+                ) || action.get("target").and_then(Json::as_str) == Some("@locale")
                 {
                     continue;
                 }
@@ -3627,9 +3627,7 @@ fn mini_effects_for(
                         format!("IR fetch target '{into}' is not a valid state field"),
                     ));
                 }
-                let is_list = states
-                    .iter()
-                    .any(|st| st.name == *into && st.ty == "list");
+                let is_list = states.iter().any(|st| st.name == *into && st.ty == "list");
                 let path = js_lit(&Json::String(path.clone()));
                 let target = js_lit(&Json::String(into.clone()));
                 code.push_str("await new Promise(function (resolve) { ");
@@ -3994,7 +3992,10 @@ fn emit_mini_multipage(
         if lower_seen.contains(&lower) {
             return Err(bad_ir(
                 ir_path,
-                format!("routes '{}' and '{}' lower to the same page path", page.name, lower),
+                format!(
+                    "routes '{}' and '{}' lower to the same page path",
+                    page.name, lower
+                ),
             ));
         }
         lower_seen.push(lower);
@@ -4022,11 +4023,19 @@ fn emit_mini_multipage(
         .pages
         .iter()
         .find(|p| p.name == routes.initial)
-        .ok_or_else(|| bad_ir(ir_path, format!("initialRoute '{}' is not a declared route", routes.initial)))?;
+        .ok_or_else(|| {
+            bad_ir(
+                ir_path,
+                format!("initialRoute '{}' is not a declared route", routes.initial),
+            )
+        })?;
     if initial.subpackage.is_some() {
         return Err(bad_ir(
             ir_path,
-            format!("initialRoute '{}' must not declare a subpackage", routes.initial),
+            format!(
+                "initialRoute '{}' must not declare a subpackage",
+                routes.initial
+            ),
         ));
     }
     pages.push(route_page_path(initial));
@@ -4183,9 +4192,10 @@ fn emit_mini_multipage(
         methods.push_str(&computed_methods);
         for n in &nodes {
             if let Some(action) = n.events.get("tap") {
-                let effect_code = mini_effects_for(&event_effects(action, ir_path)?, p, ir_path, false, states)?
-                    .replace("page.setData(", "page.applyState(")
-                    .replace("this.setData(", "this.applyState(");
+                let effect_code =
+                    mini_effects_for(&event_effects(action, ir_path)?, p, ir_path, false, states)?
+                        .replace("page.setData(", "page.applyState(")
+                        .replace("this.setData(", "this.applyState(");
                 let code = mini_multipage_action_chain(action, p, ir_path)?
                     .replace("this.setData(", "this.applyState(");
                 methods.push_str(&format!(
@@ -4223,7 +4233,12 @@ fn emit_mini_multipage(
         }
         let page_cfg_json = serde_json::to_string_pretty(&Json::Object(page_cfg))
             .map_err(|e| bad_ir(ir_path, format!("cannot serialize page config: {e}")))?;
-        write(out, &format!("{base}.json"), &(page_cfg_json + "\n"), ir_path)?;
+        write(
+            out,
+            &format!("{base}.json"),
+            &(page_cfg_json + "\n"),
+            ir_path,
+        )?;
     }
 
     write(

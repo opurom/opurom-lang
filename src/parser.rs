@@ -375,14 +375,11 @@ struct Parser<'a> {
 fn tag_valid(tag: &str) -> bool {
     let mut parts = tag.split('-');
     let primary = parts.next().unwrap_or("");
-    let primary_ok = primary.len() >= 2
-        && primary.len() <= 3
-        && primary.bytes().all(|b| b.is_ascii_lowercase());
+    let primary_ok =
+        primary.len() >= 2 && primary.len() <= 3 && primary.bytes().all(|b| b.is_ascii_lowercase());
     primary_ok
         && parts.all(|sub| {
-            !sub.is_empty()
-                && sub.len() <= 8
-                && sub.bytes().all(|b| b.is_ascii_alphanumeric())
+            !sub.is_empty() && sub.len() <= 8 && sub.bytes().all(|b| b.is_ascii_alphanumeric())
         })
 }
 
@@ -391,18 +388,38 @@ impl<'a> Parser<'a> {
         let tok = self.peek().clone();
         let quoted = matches!(tok.tok, Tok::Str(_));
         let (mut tag, pos) = match tok.tok {
-            Tok::Str(v) => { self.bump(); (v, Pos { line: tok.line, col: tok.col }) }
+            Tok::Str(v) => {
+                self.bump();
+                (
+                    v,
+                    Pos {
+                        line: tok.line,
+                        col: tok.col,
+                    },
+                )
+            }
             Tok::Ident(_) => self.expect_ident("a locale tag such as 'en' or 'zh-CN'")?,
-            _ => return Err(Diagnostic::new(self.path, tok.line, tok.col,
-                "expected a locale tag", "write 'en', 'zh-CN' or a quoted tag")),
+            _ => {
+                return Err(Diagnostic::new(
+                    self.path,
+                    tok.line,
+                    tok.col,
+                    "expected a locale tag",
+                    "write 'en', 'zh-CN' or a quoted tag",
+                ))
+            }
         };
         if tag.contains('-') || tag.chars().all(|c| c.is_ascii_alphanumeric()) {
             // A quoted tag is complete; an ident may be followed by `-subtag`.
             if quoted {
                 if !tag_valid(&tag) {
-                    return Err(Diagnostic::new(self.path, tok.line, tok.col,
+                    return Err(Diagnostic::new(
+                        self.path,
+                        tok.line,
+                        tok.col,
                         format!("invalid locale tag '{tag}'"),
-                        "use ^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$"));
+                        "use ^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$",
+                    ));
                 }
                 return Ok((tag, pos));
             }
@@ -821,7 +838,11 @@ impl<'a> Parser<'a> {
             self.bump(); // :
             let (tag, tp) = self.locale_tag()?;
             self.eat_sym(";");
-            return Ok(Stmt { target: "@locale".to_string(), pos: sp, kind: StmtKind::SetLocale(tag, tp) });
+            return Ok(Stmt {
+                target: "@locale".to_string(),
+                pos: sp,
+                kind: StmtKind::SetLocale(tag, tp),
+            });
         }
         // `push: PageName` is a navigation action; the page name is the target.
         let colon_next = matches!(
@@ -1445,16 +1466,30 @@ impl<'a> Parser<'a> {
                 "active" => {
                     let tok = self.peek().clone();
                     let tag = match tok.tok {
-                        Tok::Str(v) => { self.bump(); v }
-                        _ => return Err(self.err("'active' expects a string tag", "write active with a string tag" )),
+                        Tok::Str(v) => {
+                            self.bump();
+                            v
+                        }
+                        _ => {
+                            return Err(self.err(
+                                "'active' expects a string tag",
+                                "write active with a string tag",
+                            ))
+                        }
                     };
                     if !tag_valid(&tag) {
-                        return Err(Diagnostic::new(self.path, tok.line, tok.col,
+                        return Err(Diagnostic::new(
+                            self.path,
+                            tok.line,
+                            tok.col,
                             format!("invalid locale tag '{tag}'"),
-                            "use ^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$"));
+                            "use ^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$",
+                        ));
                     }
                     if active.is_some() {
-                        return Err(self.err("duplicate 'active' in locale", "declare 'active' once"));
+                        return Err(
+                            self.err("duplicate 'active' in locale", "declare 'active' once")
+                        );
                     }
                     active = Some(tag);
                 }
@@ -1464,20 +1499,37 @@ impl<'a> Parser<'a> {
                         loop {
                             let tok = self.peek().clone();
                             let tag = match tok.tok {
-                                Tok::Str(v) => { self.bump(); v }
-                                _ => return Err(self.err("'supported' accepts string tags only", "write a list of string locale tags")),
+                                Tok::Str(v) => {
+                                    self.bump();
+                                    v
+                                }
+                                _ => {
+                                    return Err(self.err(
+                                        "'supported' accepts string tags only",
+                                        "write a list of string locale tags",
+                                    ))
+                                }
                             };
                             if !tag_valid(&tag) {
-                                return Err(Diagnostic::new(self.path, tok.line, tok.col,
+                                return Err(Diagnostic::new(
+                                    self.path,
+                                    tok.line,
+                                    tok.col,
                                     format!("invalid locale tag '{tag}'"),
-                                    "use ^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$"));
+                                    "use ^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$",
+                                ));
                             }
                             if supported.contains(&tag) {
-                                return Err(self.err(format!("duplicate supported locale '{tag}'"), "list each locale once"));
+                                return Err(self.err(
+                                    format!("duplicate supported locale '{tag}'"),
+                                    "list each locale once",
+                                ));
                             }
                             supported.push(tag);
                             if self.eat_sym(",") {
-                                if self.sym("]") { break; }
+                                if self.sym("]") {
+                                    break;
+                                }
                                 continue;
                             }
                             break;
@@ -1485,12 +1537,25 @@ impl<'a> Parser<'a> {
                     }
                     self.expect_sym("]", "close 'supported' with ']'")?;
                 }
-                other => return Err(self.err(format!("unknown locale key '{other}'"), "use 'active' or 'supported'")),
+                other => {
+                    return Err(self.err(
+                        format!("unknown locale key '{other}'"),
+                        "use 'active' or 'supported'",
+                    ))
+                }
             }
         }
-        let active = active.ok_or_else(|| self.err("'locale' requires 'active'", "write a locale block with active and supported"))?;
+        let active = active.ok_or_else(|| {
+            self.err(
+                "'locale' requires 'active'",
+                "write a locale block with active and supported",
+            )
+        })?;
         if supported.is_empty() {
-            return Err(self.err("'supported' must not be empty", "list 'active' in 'supported'"));
+            return Err(self.err(
+                "'supported' must not be empty",
+                "list 'active' in 'supported'",
+            ));
         }
         if !supported.contains(&active) {
             return Err(self.err(
@@ -1498,7 +1563,11 @@ impl<'a> Parser<'a> {
                 format!("add '{active}' to the supported list"),
             ));
         }
-        Ok(LocaleDecl { active, supported, pos: start })
+        Ok(LocaleDecl {
+            active,
+            supported,
+            pos: start,
+        })
     }
 
     fn directionality_decl(&mut self) -> DResult<DirectionalityDecl> {
@@ -1507,8 +1576,13 @@ impl<'a> Parser<'a> {
         self.expect_sym(":", "write 'directionality: rtl' with a colon")?;
         let (value, _) = self.expect_ident("'ltr' or 'rtl'")?;
         if value != "ltr" && value != "rtl" {
-            return Err(Diagnostic::new(self.path, start.line, start.col,
-                format!("invalid directionality '{value}'"), "write 'ltr' or 'rtl'"));
+            return Err(Diagnostic::new(
+                self.path,
+                start.line,
+                start.col,
+                format!("invalid directionality '{value}'"),
+                "write 'ltr' or 'rtl'",
+            ));
         }
         self.eat_sym(";");
         Ok(DirectionalityDecl { value, pos: start })
@@ -1522,24 +1596,46 @@ impl<'a> Parser<'a> {
         let mut entries: Vec<(String, String)> = Vec::new();
         loop {
             self.eat_sym(";") || self.eat_sym(",");
-            if self.eat_sym("}") { break; }
+            if self.eat_sym("}") {
+                break;
+            }
             if matches!(self.peek().tok, Tok::Eof) {
-                return Err(self.err("unexpected end of file, expected '}'", "close the catalog block with '}'"));
+                return Err(self.err(
+                    "unexpected end of file, expected '}'",
+                    "close the catalog block with '}'",
+                ));
             }
             let (key, kp) = self.expect_ident("a message key")?;
             self.expect_sym(":", "write a message key and a string value")?;
             let tok = self.peek().clone();
             let text = match tok.tok {
-                Tok::Str(v) => { self.bump(); v }
-                _ => return Err(self.err("a message value must be a string", "write a string value for the message")),
+                Tok::Str(v) => {
+                    self.bump();
+                    v
+                }
+                _ => {
+                    return Err(self.err(
+                        "a message value must be a string",
+                        "write a string value for the message",
+                    ))
+                }
             };
             if entries.iter().any(|(k, _)| *k == key) {
-                return Err(Diagnostic::new(self.path, kp.line, kp.col,
-                    format!("duplicate catalog key '{key}' in '{locale}'"), "write each key once per locale"));
+                return Err(Diagnostic::new(
+                    self.path,
+                    kp.line,
+                    kp.col,
+                    format!("duplicate catalog key '{key}' in '{locale}'"),
+                    "write each key once per locale",
+                ));
             }
             entries.push((key, text));
         }
-        Ok(CatalogDecl { locale, entries, pos: start })
+        Ok(CatalogDecl {
+            locale,
+            entries,
+            pos: start,
+        })
     }
 
     /// `quality { msaa: 4, gradientBits: 16, curve: bezier, ... }`: per-field
@@ -1576,19 +1672,31 @@ impl<'a> Parser<'a> {
                     let n = match tok.tok {
                         Tok::Int(n) => n,
                         _ => {
-                            return Err(Diagnostic::new(self.path, tok.line, tok.col,
+                            return Err(Diagnostic::new(
+                                self.path,
+                                tok.line,
+                                tok.col,
                                 format!("quality field '{key}' expects an integer"),
-                                format!("write '{key}: {}'", if key == "msaa" { 4 } else { 16 })));
+                                format!("write '{key}: {}'", if key == "msaa" { 4 } else { 16 }),
+                            ));
                         }
                     };
                     self.bump();
                     let only = if key == "msaa" { 4 } else { 16 };
                     if n != only {
-                        return Err(Diagnostic::new(self.path, tok.line, tok.col,
+                        return Err(Diagnostic::new(
+                            self.path,
+                            tok.line,
+                            tok.col,
                             format!("unsupported {key} value {n}"),
-                            format!("write '{key}: {only}'")));
+                            format!("write '{key}: {only}'"),
+                        ));
                     }
-                    if key == "msaa" { decl.msaa = Some(n); } else { decl.gradient_bits = Some(n); }
+                    if key == "msaa" {
+                        decl.msaa = Some(n);
+                    } else {
+                        decl.gradient_bits = Some(n);
+                    }
                 }
                 "curve" | "stroke" | "textBaseline" => {
                     let (value, vp) = self.expect_ident("a quality mode keyword")?;
@@ -1598,9 +1706,13 @@ impl<'a> Parser<'a> {
                         _ => &["grid", "band"],
                     };
                     if !allowed.contains(&value.as_str()) {
-                        return Err(Diagnostic::new(self.path, vp.line, vp.col,
+                        return Err(Diagnostic::new(
+                            self.path,
+                            vp.line,
+                            vp.col,
                             format!("unknown {key} mode '{value}'"),
-                            format!("use one of: {}", allowed.join(", "))));
+                            format!("use one of: {}", allowed.join(", ")),
+                        ));
                     }
                     match key.as_str() {
                         "curve" => decl.curve = Some(value),
@@ -1608,15 +1720,27 @@ impl<'a> Parser<'a> {
                         _ => decl.text_baseline = Some(value),
                     }
                 }
-                other => return Err(Diagnostic::new(self.path, kp.line, kp.col,
-                    format!("unknown quality field '{other}'"),
-                    "use msaa, gradientBits, curve, stroke or textBaseline")),
+                other => {
+                    return Err(Diagnostic::new(
+                        self.path,
+                        kp.line,
+                        kp.col,
+                        format!("unknown quality field '{other}'"),
+                        "use msaa, gradientBits, curve, stroke or textBaseline",
+                    ))
+                }
             }
         }
-        if decl.msaa.is_none() && decl.gradient_bits.is_none()
-            && decl.curve.is_none() && decl.stroke.is_none() && decl.text_baseline.is_none()
+        if decl.msaa.is_none()
+            && decl.gradient_bits.is_none()
+            && decl.curve.is_none()
+            && decl.stroke.is_none()
+            && decl.text_baseline.is_none()
         {
-            return Err(self.err("'quality' declares no fields", "write a field such as 'msaa: 4'"));
+            return Err(self.err(
+                "'quality' declares no fields",
+                "write a field such as 'msaa: 4'",
+            ));
         }
         Ok(decl)
     }
@@ -2205,31 +2329,47 @@ fn parse_with_options(
         }
         if p.word("locale") {
             if locale.is_some() {
-                return Err(p.err("duplicate 'locale' declaration", "declare locale once per app"));
+                return Err(p.err(
+                    "duplicate 'locale' declaration",
+                    "declare locale once per app",
+                ));
             }
             locale = Some(p.locale_decl()?);
             continue;
         }
         if p.word("directionality") {
             if directionality.is_some() {
-                return Err(p.err("duplicate 'directionality' declaration", "declare directionality once per app"));
+                return Err(p.err(
+                    "duplicate 'directionality' declaration",
+                    "declare directionality once per app",
+                ));
             }
             directionality = Some(p.directionality_decl()?);
             continue;
         }
         if p.word("catalog") {
             let decl = p.catalog_decl()?;
-            if catalogs.iter().any(|c: &CatalogDecl| c.locale == decl.locale) {
-                return Err(Diagnostic::new(p.path, decl.pos.line, decl.pos.col,
+            if catalogs
+                .iter()
+                .any(|c: &CatalogDecl| c.locale == decl.locale)
+            {
+                return Err(Diagnostic::new(
+                    p.path,
+                    decl.pos.line,
+                    decl.pos.col,
                     format!("duplicate catalog for locale '{}'", decl.locale),
-                    "merge all keys of a locale into one catalog block"));
+                    "merge all keys of a locale into one catalog block",
+                ));
             }
             catalogs.push(decl);
             continue;
         }
         if p.word("quality") {
             if quality.is_some() {
-                return Err(p.err("duplicate 'quality' declaration", "declare quality once per app"));
+                return Err(p.err(
+                    "duplicate 'quality' declaration",
+                    "declare quality once per app",
+                ));
             }
             quality = Some(p.quality_decl()?);
             continue;

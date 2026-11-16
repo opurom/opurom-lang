@@ -2768,9 +2768,13 @@ fn validate_locale_switches(program: &Program, path: &str, supported: &[String])
         for stmt in &block.stmts {
             if let StmtKind::SetLocale(tag, pos) = &stmt.kind {
                 if !supported.iter().any(|s| s == tag) {
-                    return Err(Diagnostic::new(path, pos.line, pos.col,
+                    return Err(Diagnostic::new(
+                        path,
+                        pos.line,
+                        pos.col,
                         format!("set locale target '{tag}' is not supported"),
-                        format!("declare '{tag}' in the locale supported list")));
+                        format!("declare '{tag}' in the locale supported list"),
+                    ));
                 }
             }
         }
@@ -2782,7 +2786,11 @@ fn validate_locale_switches(program: &Program, path: &str, supported: &[String])
             if let Some(block) = &node.block {
                 walk_block(block, path, supported)?;
             }
-            if let NodeKind::If { else_block: Some(b), .. } = &node.kind {
+            if let NodeKind::If {
+                else_block: Some(b),
+                ..
+            } = &node.kind
+            {
                 walk_block(b, path, supported)?;
             }
         }
@@ -2805,10 +2813,20 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
     for catalog in &program.catalogs {
         for (key, text) in &catalog.entries {
             let by_locale = messages.entry(key.clone()).or_default();
-            if by_locale.insert(catalog.locale.clone(), text.clone()).is_some() {
-                return Err(Diagnostic::new(path, catalog.pos.line, catalog.pos.col,
-                    format!("duplicate catalog key '{key}' for locale '{}'", catalog.locale),
-                    "write each key once per locale"));
+            if by_locale
+                .insert(catalog.locale.clone(), text.clone())
+                .is_some()
+            {
+                return Err(Diagnostic::new(
+                    path,
+                    catalog.pos.line,
+                    catalog.pos.col,
+                    format!(
+                        "duplicate catalog key '{key}' for locale '{}'",
+                        catalog.locale
+                    ),
+                    "write each key once per locale",
+                ));
             }
         }
     }

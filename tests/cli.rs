@@ -339,9 +339,15 @@ fn each_error_class_is_a_friendly_diagnostic() {
         ("i18n_dup_key.opu", "duplicate catalog key 'hi'"),
         ("i18n_dup_locale.opu", "duplicate catalog for locale 'en'"),
         ("quality_bad_msaa.opu", "unsupported msaa value 2"),
-        ("quality_bad_gradient.opu", "unsupported gradientBits value 8"),
+        (
+            "quality_bad_gradient.opu",
+            "unsupported gradientBits value 8",
+        ),
         ("quality_bad_curve.opu", "unknown curve mode 'polygon'"),
-        ("quality_unknown_field.opu", "unknown quality field 'shadow'"),
+        (
+            "quality_unknown_field.opu",
+            "unknown quality field 'shadow'",
+        ),
     ];
     for &(file, message) in cases {
         let path = error_fixture(file);
@@ -1245,7 +1251,10 @@ fn collision_curve_compiles_and_emits_across_targets() {
 #[test]
 fn i18n_fields_are_additive_and_absent_without_declarations() {
     let ir = compile_ok(&fixture("features_additive.opu"));
-    assert!(ir.get("locale").is_none(), "no locale field without a declaration");
+    assert!(
+        ir.get("locale").is_none(),
+        "no locale field without a declaration"
+    );
     assert!(ir.get("directionality").is_none());
     assert!(ir.get("messages").is_none());
     // The counter golden (byte contract) still compiles deep-equal.
@@ -1271,12 +1280,15 @@ fn i18n_ir_emits_across_ten_targets_with_locale_patch() {
     let mut native_out = None;
     let mut harmony_out = None;
     for target in [
-        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
-        "harmony",
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm", "harmony",
     ] {
         let out = out_dir(&format!("i18n-emit-{target}"));
         let r = emit(&compiled, target, &out);
-        assert!(r.status.success(), "{target}: {}", String::from_utf8_lossy(&r.stderr));
+        assert!(
+            r.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
         if target == "native" {
             native_out = Some(out);
         } else if target == "harmony" {
@@ -1286,11 +1298,12 @@ fn i18n_ir_emits_across_ten_targets_with_locale_patch() {
     // Native and harmony carry the locale switch as a reserved signal.
     let native = fs::read_to_string(native_out.unwrap().join("src/main.rs")).unwrap();
     assert!(native.contains("@locale"), "{native}");
-    let harmony = fs::read_to_string(
-        harmony_out.unwrap().join("src/main/ets/pages/Index.ets"),
-    )
-    .unwrap();
-    assert!(harmony.contains("@locale") || harmony.contains("setLocale"), "{harmony}");
+    let harmony =
+        fs::read_to_string(harmony_out.unwrap().join("src/main/ets/pages/Index.ets")).unwrap();
+    assert!(
+        harmony.contains("@locale") || harmony.contains("setLocale"),
+        "{harmony}"
+    );
 }
 
 #[test]
@@ -7112,7 +7125,10 @@ detail.onPullDownRefresh.call(detail).then(() => {
         .arg(prefix)
         .output()
         .expect("run node harness");
-    (r.status.success(), String::from_utf8_lossy(&r.stderr).to_string())
+    (
+        r.status.success(),
+        String::from_utf8_lossy(&r.stderr).to_string(),
+    )
 }
 
 /// C4/D3 behavioral gates over the generated wechat bundle.
@@ -7179,10 +7195,9 @@ fn mini_pull_refresh_and_subpackage_follow_the_spec() {
     assert!(feed.contains("fail: function () { resolve(); }"), "{feed}");
     assert!(!feed.contains("error: request failed"), "{feed}");
     // D1: only the declaring page enables pull-down in its page config.
-    let feed_cfg: Json = serde_json::from_str(
-        &fs::read_to_string(out.join("pages/feed/index.json")).unwrap(),
-    )
-    .unwrap();
+    let feed_cfg: Json =
+        serde_json::from_str(&fs::read_to_string(out.join("pages/feed/index.json")).unwrap())
+            .unwrap();
     assert_eq!(feed_cfg["enablePullDownRefresh"], true);
     let detail_cfg: Json = serde_json::from_str(
         &fs::read_to_string(out.join("packages/d2/pages/detail/index.json")).unwrap(),
@@ -7190,8 +7205,7 @@ fn mini_pull_refresh_and_subpackage_follow_the_spec() {
     .unwrap();
     assert!(detail_cfg.get("enablePullDownRefresh").is_none());
     // D4: no onPullDownRefresh on undeclared pages.
-    let detail_js =
-        fs::read_to_string(out.join("packages/d2/pages/detail/index.js")).unwrap();
+    let detail_js = fs::read_to_string(out.join("packages/d2/pages/detail/index.js")).unwrap();
     assert!(!detail_js.contains("onPullDownRefresh"), "{detail_js}");
     // E2/E1: Detail lives under packages/d2; app.json maps root/pages 1:1.
     assert!(
@@ -7325,10 +7339,9 @@ fn mini_emitters_emit_one_page_quad_per_route() {
                 "{target} missing page config for {route}"
             );
         }
-        let home_cfg: Json = serde_json::from_str(
-            &fs::read_to_string(out.join("pages/home/index.json")).unwrap(),
-        )
-        .unwrap();
+        let home_cfg: Json =
+            serde_json::from_str(&fs::read_to_string(out.join("pages/home/index.json")).unwrap())
+                .unwrap();
         assert_eq!(home_cfg[title_key], "Home Screen");
         assert!(
             home_cfg.get("enablePullDownRefresh").is_none(),
@@ -7342,8 +7355,7 @@ fn mini_emitters_emit_one_page_quad_per_route() {
             !home.contains("Item") && !home.contains("n5") && !home.contains("n6"),
             "{target} Home must not carry Detail nodes"
         );
-        let detail =
-            fs::read_to_string(out.join(format!("pages/detail/index.{ext}"))).unwrap();
+        let detail = fs::read_to_string(out.join(format!("pages/detail/index.{ext}"))).unwrap();
         assert!(detail.contains("Item"), "{target} Detail content");
         assert!(
             !detail.contains("n2") && !detail.contains("n3"),
@@ -7353,7 +7365,9 @@ fn mini_emitters_emit_one_page_quad_per_route() {
         // B1: push lowers to the platform navigate API, lowercase target path.
         let home_js = fs::read_to_string(out.join("pages/home/index.js")).unwrap();
         assert!(
-            home_js.contains(&format!("{nav}.navigateTo({{url: \"pages/detail/index\"}})")),
+            home_js.contains(&format!(
+                "{nav}.navigateTo({{url: \"pages/detail/index\"}})"
+            )),
             "{target} push navigate: {home_js}"
         );
         // B3: pop lowers to navigateBack({delta: 1}).
