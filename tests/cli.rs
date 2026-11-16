@@ -1283,6 +1283,56 @@ fn collision_curve_compiles_and_emits_across_targets() {
 }
 
 #[test]
+fn column_span_is_additive_and_grid_scoped() {
+    let dir = out_dir("column-span");
+    let src = dir.join("span.opu");
+    fs::write(
+        &src,
+        "app Span { Grid(columns: 4) {\n  Container(columnSpan: 2) { }\n  Container() { }\n  Container(columnSpan: 0) { }\n} }\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let grid = ir["tree"].clone();
+    let children = grid["children"].as_array().expect("grid children");
+    assert_eq!(children[0]["props"]["columnSpan"], 2);
+    assert!(children[1]["props"].get("columnSpan").is_none());
+    assert_eq!(children[2]["props"]["columnSpan"], 0);
+
+    // The golden path stays byte-identical: no declaration, no prop.
+    let plain = compile_ok(&contract("counter.opu"));
+    assert_eq!(plain, serde_json::from_slice::<Json>(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap());
+
+    for (body, diagnostic) in [
+        (
+            "app B { Column { Container(columnSpan: 2) { } } }",
+            "columnSpan requires a Grid parent",
+        ),
+        (
+            "app B { Grid(columns: 4) { Container(columnSpan: -1) { } } }",
+            "columnSpan must be non-negative",
+        ),
+        (
+            "app B { state n: int = 1; Grid(columns: 4) { Container(columnSpan: n) { } } }",
+            "columnSpan expects a non-negative integer",
+        ),
+        (
+            "app B { Grid(columns: 4) { Container(columnSpan: \"two\") { } } }",
+            "columnSpan expects a non-negative integer",
+        ),
+    ] {
+        let bad = dir.join(format!("bad-{}.opu", diagnostic.split_whitespace().next().unwrap()));
+        fs::write(&bad, body).unwrap();
+        let r = compile(&bad, &dir.join("bad.opuir.json"));
+        assert!(!r.status.success(), "{body}");
+        assert!(
+            String::from_utf8_lossy(&r.stderr).contains(diagnostic),
+            "{body}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+    }
+}
+
+#[test]
 fn motion_tokens_emit_across_targets_without_touching_defaults() {
     let dir = out_dir("motion-tokens");
     let src = dir.join("tokens.opu");

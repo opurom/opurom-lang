@@ -213,6 +213,7 @@ const GENERIC_PROPS: &[&str] = &[
     "delay",
     "repaintBoundary",
     "relayoutBoundary",
+    "columnSpan",
 ];
 
 /// Additive `Input` validator props; these are not accepted on other kinds.
@@ -752,6 +753,8 @@ struct Ctx<'a> {
     lists: HashMap<String, Vec<String>>,
     /// Loop variables of enclosing `for` blocks, innermost last.
     loops: Vec<(String, LoopValue)>,
+    /// Whether the node being lowered is inside a Grid, for `columnSpan`.
+    in_grid: bool,
     /// Page names declared by `page Name;`, used to validate `push:` targets.
     pages: HashSet<String>,
     /// Route names declared by `route Name { ... }`, in source order. When this
@@ -1001,6 +1004,21 @@ fn validation_prop_value(ctx: &Ctx, key: &str, arg: &Arg) -> DResult<Json> {
 }
 
 fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> DResult<Json> {
+    if key == "columnSpan" {
+        return match &arg.value {
+            AstValue::Lit(Lit::Int(n)) if *n >= 0 => Ok(json!(n)),
+            AstValue::Lit(Lit::Int(n)) => Err(ctx.err(
+                arg.pos,
+                format!("columnSpan must be non-negative, found {n}"),
+                "write columnSpan: 0 or a positive integer".to_string(),
+            )),
+            other => Err(ctx.err(
+                arg.pos,
+                format!("columnSpan expects a non-negative integer, found {}", value_desc(other)),
+                "write columnSpan: 2 on a direct Grid child".to_string(),
+            )),
+        };
+    }
     if key == "name" && kind == "Icon" {
         // The name must be a built-in icon. A literal is checked now; a name
         // that still interpolates state is resolved at view time and cannot be
@@ -1604,6 +1622,13 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
                 ),
             ));
         }
+        if key == "columnSpan" && !ctx.in_grid {
+            return Err(ctx.err(
+                arg.pos,
+                "columnSpan requires a Grid parent".to_string(),
+                "declare the node directly inside a Grid block".to_string(),
+            ));
+        }
         if !seen.insert(key.clone()) {
             return Err(ctx.err(
                 arg.pos,
@@ -1733,7 +1758,10 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
                     "put effects inside an async tap-handler block".to_string(),
                 ));
             }
+            let outer_grid = ctx.in_grid;
+            ctx.in_grid = kind == "Grid";
             children = lower_node_list(ctx, &block.nodes, cond)?;
+            ctx.in_grid = outer_grid;
         } else {
             return Err(ctx.err(
                 block.pos,
@@ -2882,6 +2910,7 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         inits: HashMap::new(),
         lists: HashMap::new(),
         loops: Vec::new(),
+        in_grid: false,
         pages: program.pages.iter().map(|p| p.name.clone()).collect(),
         route_names: program.routes.iter().map(|r| r.name.clone()).collect(),
         icons: crate::pkg_icons::resolve(&crate::pkg_icons::project_root(path)),
