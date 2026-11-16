@@ -1,0 +1,4 @@
+app Bad {
+  quality { msaa: 2 }
+  Text("x")
+}

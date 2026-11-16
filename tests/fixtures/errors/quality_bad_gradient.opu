@@ -1,0 +1,4 @@
+app Bad {
+  quality { gradientBits: 8 }
+  Text("x")
+}

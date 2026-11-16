@@ -318,6 +318,7 @@ impl Merge {
             locale,
             directionality,
             catalogs,
+            quality,
         } = main;
         self.states.extend(states);
         self.models.extend(models);
@@ -340,6 +341,7 @@ impl Merge {
             locale,
             directionality,
             catalogs,
+            quality,
         }
     }
 }

@@ -1,0 +1,4 @@
+app Bad {
+  quality { shadow: 2 }
+  Text("x")
+}

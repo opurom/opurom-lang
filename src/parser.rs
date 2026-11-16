@@ -287,6 +287,17 @@ pub struct CatalogDecl {
     pub pos: Pos,
 }
 
+/// Root-level opt-in kernel visual-quality signals (DEFAULT_UI_GLASS_REFINEMENT 12.1).
+#[derive(Clone, Debug)]
+pub struct QualityDecl {
+    pub msaa: Option<i64>,
+    pub gradient_bits: Option<i64>,
+    pub curve: Option<String>,
+    pub stroke: Option<String>,
+    pub text_baseline: Option<String>,
+    pub pos: Pos,
+}
+
 #[derive(Clone, Debug)]
 pub struct Program {
     pub app: String,
@@ -303,6 +314,7 @@ pub struct Program {
     pub locale: Option<LocaleDecl>,
     pub directionality: Option<DirectionalityDecl>,
     pub catalogs: Vec<CatalogDecl>,
+    pub quality: Option<QualityDecl>,
 }
 
 fn is_kind(t: &Token) -> bool {
@@ -1530,6 +1542,85 @@ impl<'a> Parser<'a> {
         Ok(CatalogDecl { locale, entries, pos: start })
     }
 
+    /// `quality { msaa: 4, gradientBits: 16, curve: bezier, ... }`: per-field
+    /// opt-in kernel quality. Values are validated at the source position so
+    /// an unsupported mode never reaches the renderer (spec section 12.1).
+    fn quality_decl(&mut self) -> DResult<QualityDecl> {
+        let start = self.pos();
+        self.bump(); // quality
+        self.expect_sym("{", "'quality' needs a '{'")?;
+        let mut decl = QualityDecl {
+            msaa: None,
+            gradient_bits: None,
+            curve: None,
+            stroke: None,
+            text_baseline: None,
+            pos: start,
+        };
+        loop {
+            self.eat_sym(";") || self.eat_sym(",");
+            if self.eat_sym("}") {
+                break;
+            }
+            if matches!(self.peek().tok, Tok::Eof) {
+                return Err(self.err(
+                    "unexpected end of file, expected '}'",
+                    "close the quality block with a matching '}'",
+                ));
+            }
+            let (key, kp) = self.expect_ident("a quality field name")?;
+            self.expect_sym(":", "write 'msaa: 4' with a colon")?;
+            match key.as_str() {
+                "msaa" | "gradientBits" => {
+                    let tok = self.peek().clone();
+                    let n = match tok.tok {
+                        Tok::Int(n) => n,
+                        _ => {
+                            return Err(Diagnostic::new(self.path, tok.line, tok.col,
+                                format!("quality field '{key}' expects an integer"),
+                                format!("write '{key}: {}'", if key == "msaa" { 4 } else { 16 })));
+                        }
+                    };
+                    self.bump();
+                    let only = if key == "msaa" { 4 } else { 16 };
+                    if n != only {
+                        return Err(Diagnostic::new(self.path, tok.line, tok.col,
+                            format!("unsupported {key} value {n}"),
+                            format!("write '{key}: {only}'")));
+                    }
+                    if key == "msaa" { decl.msaa = Some(n); } else { decl.gradient_bits = Some(n); }
+                }
+                "curve" | "stroke" | "textBaseline" => {
+                    let (value, vp) = self.expect_ident("a quality mode keyword")?;
+                    let allowed: &[&str] = match key.as_str() {
+                        "curve" => &["bezier", "none"],
+                        "stroke" => &["physical", "logical"],
+                        _ => &["grid", "band"],
+                    };
+                    if !allowed.contains(&value.as_str()) {
+                        return Err(Diagnostic::new(self.path, vp.line, vp.col,
+                            format!("unknown {key} mode '{value}'"),
+                            format!("use one of: {}", allowed.join(", "))));
+                    }
+                    match key.as_str() {
+                        "curve" => decl.curve = Some(value),
+                        "stroke" => decl.stroke = Some(value),
+                        _ => decl.text_baseline = Some(value),
+                    }
+                }
+                other => return Err(Diagnostic::new(self.path, kp.line, kp.col,
+                    format!("unknown quality field '{other}'"),
+                    "use msaa, gradientBits, curve, stroke or textBaseline")),
+            }
+        }
+        if decl.msaa.is_none() && decl.gradient_bits.is_none()
+            && decl.curve.is_none() && decl.stroke.is_none() && decl.text_baseline.is_none()
+        {
+            return Err(self.err("'quality' declares no fields", "write a field such as 'msaa: 4'"));
+        }
+        Ok(decl)
+    }
+
     fn theme_decl(&mut self) -> DResult<ThemeDecl> {
         let start = self.pos();
         self.bump();
@@ -2063,6 +2154,7 @@ fn parse_with_options(
     let mut locale = None;
     let mut directionality = None;
     let mut catalogs = Vec::new();
+    let mut quality = None;
     loop {
         p.eat_sym(";");
         if p.eat_sym("}") {
@@ -2133,6 +2225,13 @@ fn parse_with_options(
                     "merge all keys of a locale into one catalog block"));
             }
             catalogs.push(decl);
+            continue;
+        }
+        if p.word("quality") {
+            if quality.is_some() {
+                return Err(p.err("duplicate 'quality' declaration", "declare quality once per app"));
+            }
+            quality = Some(p.quality_decl()?);
             continue;
         }
         if p.word("theme") {
@@ -2276,6 +2375,7 @@ fn parse_with_options(
         locale,
         directionality,
         catalogs,
+        quality,
     })
 }
 

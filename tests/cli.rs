@@ -338,6 +338,10 @@ fn each_error_class_is_a_friendly_diagnostic() {
         ),
         ("i18n_dup_key.opu", "duplicate catalog key 'hi'"),
         ("i18n_dup_locale.opu", "duplicate catalog for locale 'en'"),
+        ("quality_bad_msaa.opu", "unsupported msaa value 2"),
+        ("quality_bad_gradient.opu", "unsupported gradientBits value 8"),
+        ("quality_bad_curve.opu", "unknown curve mode 'polygon'"),
+        ("quality_unknown_field.opu", "unknown quality field 'shadow'"),
     ];
     for &(file, message) in cases {
         let path = error_fixture(file);
@@ -1287,6 +1291,33 @@ fn i18n_ir_emits_across_ten_targets_with_locale_patch() {
     )
     .unwrap();
     assert!(harmony.contains("@locale") || harmony.contains("setLocale"), "{harmony}");
+}
+
+#[test]
+fn quality_decl_lowers_to_root_render_quality() {
+    let ir = compile_ok(&fixture("quality.opu"));
+    assert_eq!(
+        ir["renderQuality"],
+        json!({
+            "msaa": 4,
+            "gradientBits": 16,
+            "curve": "bezier",
+            "stroke": "physical",
+            "textBaseline": "grid"
+        })
+    );
+    // Additive: a program without `quality` emits no renderQuality field, and
+    // the checked-in counter/todo goldens keep their exact bytes.
+    let plain = compile_ok(&fixture("features_additive.opu"));
+    assert!(plain.get("renderQuality").is_none());
+    let dir = out_dir("quality-golden");
+    let counter = dir.join("counter.opuir.json");
+    let r = compile(&example("counter.opu"), &counter);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(
+        serde_json::from_slice::<Json>(&fs::read(&counter).unwrap()).unwrap(),
+        serde_json::from_slice::<Json>(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap()
+    );
 }
 
 #[test]

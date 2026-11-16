@@ -22,10 +22,18 @@ and `{{` is a literal brace. `set locale: "fr"` lowers to a reserved `@locale` p
 value must be in `supported` (a compile error otherwise). Declaring none of `locale`,
 `directionality` or `messages` leaves IR byte-identical to earlier releases.
 
+## Kernel visual quality
+
+`quality { msaa: 4, gradientBits: 16, curve: bezier, stroke: physical, textBaseline: grid }` is an
+app-level opt-in for the kernel visual-quality contract (DEFAULT_UI_GLASS_REFINEMENT section 12).
+Every field is independent and validated at its source position; absent fields keep the pinned
+default render path. The declaration lowers to a root `renderQuality` object; a program without
+it emits byte-identical IR. Renderers consume the object as a contract, not CSS.
+
 ## Grammar summary (IR 0.1.0 and the additive layers)
 
 ```ebnf
-program       = { import_decl | component_decl } "app" IDENT "{" { state_decl | computed_decl | component_decl | model_decl | api_decl | theme_decl | page_decl | locale_decl | directionality_decl | catalog_decl | node } "}" ;
+program       = { import_decl | component_decl } "app" IDENT "{" { state_decl | computed_decl | component_decl | model_decl | api_decl | theme_decl | page_decl | locale_decl | directionality_decl | catalog_decl | quality_decl | node } "}" ;
 component_decl = "component" IDENT "(" [ params ] ")" "{" { node } "}" ;
 params        = param { "," param } [ "," ] ;
 param         = IDENT [ ":" ( "int" | "bool" | "string" ) ] ;
@@ -43,6 +51,10 @@ tag           = STRING ; (* BCP-47: ^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$ *)
 tag_list      = "[" tag { "," tag } [ "," ] "]" ;
 directionality_decl = "directionality" ":" ( "ltr" | "rtl" ) [";"] ;
 catalog_decl  = "catalog" tag "{" { IDENT ":" STRING } [ "," | ";" ] "}" ;
+quality_decl  = "quality" "{" { quality_prop } [ "," | ";" ] "}" ;
+quality_prop  = "msaa" ":" "4" | "gradientBits" ":" "16"
+              | "curve" ":" ("bezier"|"none") | "stroke" ":" ("physical"|"logical")
+              | "textBaseline" ":" ("grid"|"band") ;
 node          = KIND [ "(" [ args ] ")" ] [ "async" ] [ ";" | "{" { node | statement | effect } "}" ]
               | "if" "(" IDENT ")" "{" { node } "}" [ "else" "{" { node } "}" ]
               | "for" "(" IDENT "in" ( INT | IDENT ) ")" "{" { node } "}"

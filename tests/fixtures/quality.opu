@@ -1,0 +1,4 @@
+app QualityDemo {
+  quality { msaa: 4, gradientBits: 16, curve: bezier, stroke: physical, textBaseline: grid }
+  Column { Text("hi") }
+}

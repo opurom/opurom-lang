@@ -1,0 +1,4 @@
+app Bad {
+  quality { curve: polygon }
+  Text("x")
+}

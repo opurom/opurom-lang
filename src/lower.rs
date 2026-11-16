@@ -3012,6 +3012,25 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         }
         out.insert("messages".to_string(), Json::Object(msgs));
     }
+    if let Some(q) = &program.quality {
+        let mut rqi = JsonMap::new();
+        if let Some(n) = q.msaa {
+            rqi.insert("msaa".to_string(), json!(n));
+        }
+        if let Some(n) = q.gradient_bits {
+            rqi.insert("gradientBits".to_string(), json!(n));
+        }
+        if let Some(v) = &q.curve {
+            rqi.insert("curve".to_string(), json!(v));
+        }
+        if let Some(v) = &q.stroke {
+            rqi.insert("stroke".to_string(), json!(v));
+        }
+        if let Some(v) = &q.text_baseline {
+            rqi.insert("textBaseline".to_string(), json!(v));
+        }
+        out.insert("renderQuality".to_string(), Json::Object(rqi));
+    }
     out.insert("state".to_string(), Json::Array(state_json));
     match &tree {
         Some(t) => {
