@@ -1283,6 +1283,66 @@ fn collision_curve_compiles_and_emits_across_targets() {
 }
 
 #[test]
+fn motion_tokens_emit_across_targets_without_touching_defaults() {
+    let dir = out_dir("motion-tokens");
+    let src = dir.join("tokens.opu");
+    fs::write(
+        &src,
+        "app MT {\n  Column(gap: 4) {\n    Container(bg: \"#112233\", animate: fast) { }\n    Container(animate: medium) { }\n    Container(animate: large) { }\n    Container(animate: color) { }\n  }\n}\n",
+    )
+    .unwrap();
+    let ir = dir.join("tokens.opuir.json");
+    let r = compile(&src, &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let lowered = fs::read_to_string(&ir).unwrap();
+    for token in ["fast", "medium", "large", "color"] {
+        assert!(lowered.contains(&format!("\"{token}\"")), "{lowered}");
+    }
+
+    let mini = dir.join("wechat");
+    let r = emit(&ir, "wechat", &mini);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let wxss = fs::read_to_string(mini.join("pages/index/index.wxss")).unwrap();
+    for rule in [
+        "120ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "220ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+        "280ms cubic-bezier(0.22, 1, 0.36, 1)",
+        "180ms ease",
+    ] {
+        assert!(wxss.contains(rule), "{wxss}");
+    }
+
+    let web = dir.join("web");
+    let r = emit(&ir, "web", &web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let html = fs::read_to_string(web.join("index.html")).unwrap();
+    assert!(
+        html.contains("120ms cubic-bezier(0.4, 0, 0.2, 1)"),
+        "{html}"
+    );
+
+    // No token: the emitted animation CSS stays byte-identical to the default.
+    let plain = dir.join("plain");
+    let r = emit(&contract("counter.opuir.json"), "wechat", &plain);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let plain_css = fs::read_to_string(plain.join("pages/index/index.wxss")).unwrap();
+    assert!(!plain_css.contains("anim-fast"), "{plain_css}");
+    let plain_web = dir.join("plain-web");
+    let r = emit(&contract("counter.opuir.json"), "web", &plain_web);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let plain_html = fs::read_to_string(plain_web.join("index.html")).unwrap();
+    assert!(!plain_html.contains("opu-anim"), "{plain_html}");
+    assert!(!plain_html.contains("anim-fast"), "{plain_html}");
+
+    // A near miss stays a readable diagnostic.
+    let bad = dir.join("bad.opu");
+    fs::write(&bad, "app B { Container(animate: fastest) { } }\n").unwrap();
+    let r = compile(&bad, &dir.join("bad.opuir.json"));
+    assert!(!r.status.success());
+    assert!(String::from_utf8_lossy(&r.stderr).contains("unknown animate value"));
+}
+
+#[test]
 fn i18n_fields_are_additive_and_absent_without_declarations() {
     let ir = compile_ok(&fixture("features_additive.opu"));
     assert!(

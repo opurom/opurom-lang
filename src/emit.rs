@@ -2737,9 +2737,10 @@ fn emit_web(
     // fades/scales in once on load, mirroring the native per-node entry.
     let web_anim = nodes.iter().any(|n| !anim_class(&n.props).is_empty());
     let anim_css = if web_anim {
-        "@keyframes opurom-entry { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } } canvas.opu-anim { transform-origin: center; animation: opurom-entry 480ms ease-out both; }"
+        let timing = motion_timing(nodes.iter().find_map(|n| motion_token(&n.props)));
+        format!("@keyframes opurom-entry {{ from {{ transform: scale(0); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }} canvas.opu-anim {{ transform-origin: center; animation: opurom-entry {timing} both; }}")
     } else {
-        ""
+        String::new()
     };
     let canvas_cls = if web_anim { " class=\"opu-anim\"" } else { "" };
     // Canvas 2D has no DOM semantics, so every node carrying an explicit role
@@ -3177,7 +3178,7 @@ fn style_of(
 /// native renderer and the web-dom emitter: spring/ease/inertia/collision
 /// animate in from the centre, `none`/absent is static. The curve is mapped to
 /// a CSS timing function (spring and collision are documented cubic-bezier
-/// approximations).
+/// approximations). The four motion tokens carry their own section 7 durations.
 fn anim_class(props: &JsonMap<String, Json>) -> String {
     let Some(Json::String(curve)) = props.get("animate") else {
         return String::new();
@@ -3187,7 +3188,34 @@ fn anim_class(props: &JsonMap<String, Json>) -> String {
         "ease" => " anim-entry anim-ease".to_string(),
         "inertia" => " anim-entry anim-inertia".to_string(),
         "collision" => " anim-entry anim-collision".to_string(),
+        "fast" => " anim-entry anim-fast".to_string(),
+        "medium" => " anim-entry anim-medium".to_string(),
+        "large" => " anim-entry anim-large".to_string(),
+        "color" => " anim-entry anim-color".to_string(),
         _ => String::new(),
+    }
+}
+
+/// An explicitly declared motion token, if any, on a node.
+fn motion_token(props: &JsonMap<String, Json>) -> Option<&'static str> {
+    match props.get("animate")?.as_str()? {
+        "fast" => Some("fast"),
+        "medium" => Some("medium"),
+        "large" => Some("large"),
+        "color" => Some("color"),
+        _ => None,
+    }
+}
+
+const MOTION_TOKEN_CSS: &str = ".anim-fast { animation: opurom-entry 120ms cubic-bezier(0.4, 0, 0.2, 1) both; }\n.anim-medium { animation: opurom-entry 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }\n.anim-large { animation: opurom-entry 280ms cubic-bezier(0.22, 1, 0.36, 1) both; }\n.anim-color { animation: opurom-entry 180ms ease both; }\n";
+
+fn motion_timing(curve: Option<&str>) -> &'static str {
+    match curve {
+        Some("fast") => "120ms cubic-bezier(0.4, 0, 0.2, 1)",
+        Some("medium") => "220ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+        Some("large") => "280ms cubic-bezier(0.22, 1, 0.36, 1)",
+        Some("color") => "180ms ease",
+        _ => "480ms ease-out",
     }
 }
 
@@ -3801,6 +3829,9 @@ fn emit_mini(
     let mut style = String::from(&format!(
         "page {{ background-color: {stage}; }}\n.col {{ display: flex; flex-direction: column; }}\n.row {{ display: flex; flex-direction: row; }}\n.grid {{ display: flex; flex-direction: row; flex-wrap: wrap; }}\n@keyframes opurom-entry {{ from {{ transform: scale(0); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}\n.anim-entry {{ transform-origin: center; animation: opurom-entry 480ms ease-out both; }}\n.anim-spring {{ animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }}\n.anim-ease {{ animation-timing-function: ease-out; }}\n.anim-inertia {{ animation-timing-function: ease-in-out; }}\n.anim-collision {{ animation-timing-function: cubic-bezier(0.5, 1.6, 0.4, 1); }}\n",
     ));
+    if nodes.iter().any(|n| motion_token(&n.props).is_some()) {
+        style.push_str(MOTION_TOKEN_CSS);
+    }
     for n in &nodes {
         let s = style_of(
             &n.props,
@@ -4111,6 +4142,15 @@ fn emit_mini_multipage(
     let base_style = format!(
         "page {{ background-color: {stage}; }}\n.col {{ display: flex; flex-direction: column; }}\n.row {{ display: flex; flex-direction: row; }}\n.grid {{ display: flex; flex-direction: row; flex-wrap: wrap; }}\n@keyframes opurom-entry {{ from {{ transform: scale(0); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}\n.anim-entry {{ transform-origin: center; animation: opurom-entry 480ms ease-out both; }}\n.anim-spring {{ animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }}\n.anim-ease {{ animation-timing-function: ease-out; }}\n.anim-inertia {{ animation-timing-function: ease-in-out; }}\n.anim-collision {{ animation-timing-function: cubic-bezier(0.5, 1.6, 0.4, 1); }}\n"
     );
+    let mut mp_nodes = Vec::new();
+    for page in &routes.pages {
+        collect(&page.tree, &mut mp_nodes);
+    }
+    let base_style = if mp_nodes.iter().any(|n| motion_token(&n.props).is_some()) {
+        format!("{base_style}{MOTION_TOKEN_CSS}")
+    } else {
+        base_style
+    };
 
     for page in &routes.pages {
         // Markup: only this route's subtree, rooted in one <view class="route">.
