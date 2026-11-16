@@ -860,12 +860,13 @@ fn validate_actions(
                 }
             }
             for action in event_actions(event) {
-                // A push is a navigation signal and validate is a built-in form
-                // signal; neither target is a mutable state.
+                // push/validate are reserved signals; a write to @locale is
+                // the reserved patch target (IR_ADDITIONS 15.4), not a state.
                 if matches!(
                     action.get("op").and_then(Json::as_str),
                     Some("push" | "validate")
-                ) {
+               ) || action.get("target").and_then(Json::as_str) == Some("@locale")
+                {
                     continue;
                 }
                 if let Some(target) = action.get("target").and_then(Json::as_str) {
@@ -2075,6 +2076,7 @@ fn js_interp(s: &str, ir_path: &str) -> DResult<String> {
     for part in parts {
         match part {
             Part::Lit(t) => exprs.push(js_lit(&Json::String(t))),
+            Part::Catalog(key, _) => exprs.push(js_lit(&Json::String(key))),
             Part::Var(name, _) => exprs.push(format!("String(state.{name})")),
             Part::Index { off, .. } => {
                 return Err(interp_error(
@@ -3195,6 +3197,7 @@ fn markup_interp(s: &str, p: &Platform, ir_path: &str) -> DResult<String> {
     for part in parts {
         match part {
             Part::Lit(t) => out.push_str(&markup_text(&t)),
+            Part::Catalog(key, _) => out.push_str(&markup_text(&key)),
             Part::Var(name, _) => {
                 out.push_str(p.open);
                 out.push_str(&name);
@@ -4485,6 +4488,7 @@ fn harmony_interp(
     for part in parts {
         match part {
             Part::Lit(text) => exprs.push(arkts_str(&text)),
+            Part::Catalog(key, _) => exprs.push(arkts_str(&key)),
             Part::Var(name, _) => match aliases.get(&name) {
                 Some(index) => exprs.push(format!("this.repeatValue({index})")),
                 None => exprs.push(format!(
@@ -4718,6 +4722,13 @@ fn harmony_action(action: &Json, states: &[EState], ir_path: &str) -> DResult<St
     Ok(match op {
         "push" => format!("this.push({}); ", arkts_str(target)),
         "validate" => format!("this.validateForm({}); ", arkts_str(target)),
+        "set" if target == "@locale" => {
+            let tag = match action.get("value").and_then(Json::as_str) {
+                Some(tag) => tag.to_string(),
+                None => return Err(bad_ir(ir_path, "a set on @locale needs a string tag")),
+            };
+            format!("this.setLocale({}); ", arkts_str(&tag))
+        }
         "set" => {
             let index = harmony_state_index(states, target, ir_path)?;
             let rhs = match action.get("valueFrom").and_then(Json::as_str) {
@@ -5133,6 +5144,7 @@ fn harmony_source(
     ));
     code.push_str("const Opurom_NAV_SIGNAL: string = '@nav';\n");
     code.push_str("const Opurom_VALIDATE_SIGNAL: string = '@validate';\n");
+    code.push_str("const Opurom_LOCALE_SIGNAL: string = '@locale';\n");
     code.push_str("const Opurom_BASE_URL: string = '';\n");
     code.push_str(&format!(
         "const Opurom_THEME_MODE: string = {};\n",
@@ -5379,6 +5391,10 @@ fn harmony_source(
       this.currentRoute = this.routeStack[this.routeStack.length - 1];
     }
     this.lastSignal = Opurom_NAV_SIGNAL + ':@pop';
+  }
+
+  private setLocale(tag: string): void {
+    this.lastSignal = Opurom_LOCALE_SIGNAL + ':' + tag;
   }
 
   private matchesPattern(value: string, pattern: string): boolean {

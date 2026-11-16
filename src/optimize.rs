@@ -246,7 +246,7 @@ fn collect_refs(v: &Json, states: &[String], refs: &mut HashSet<String>) {
                         Part::Index { list, .. } => {
                             refs.insert(list);
                         }
-                        Part::Lit(_) => {}
+                        Part::Lit(_) | Part::Catalog(_, _) => {}
                     }
                 }
             }

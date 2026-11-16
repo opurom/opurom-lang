@@ -315,6 +315,9 @@ impl Merge {
             apis,
             pages,
             routes,
+            locale,
+            directionality,
+            catalogs,
         } = main;
         self.states.extend(states);
         self.models.extend(models);
@@ -334,6 +337,9 @@ impl Merge {
             apis: self.apis,
             pages,
             routes,
+            locale,
+            directionality,
+            catalogs,
         }
     }
 }

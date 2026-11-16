@@ -1,0 +1,5 @@
+app Bad {
+  locale { active: "en", supported: ["en"] }
+  catalog en { hi: "Hi" }
+  Button("go") { set locale: "fr" }
+}

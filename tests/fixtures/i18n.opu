@@ -1,0 +1,14 @@
+app I18nDemo {
+  locale { active: "en", supported: ["en", "fr", "zh-CN"] }
+  directionality: rtl
+  catalog en { greet: "Hello", bye: "Goodbye" }
+  catalog fr { greet: "Bonjour" }
+  catalog zh-CN { greet: "你好" }
+  state name = "Ada"
+  Column {
+    Text("{@greet}, {name}")
+    Text("{@missing}")
+    Text("{{@greet}}")
+    Button("Next") { set locale: "fr" }
+  }
+}

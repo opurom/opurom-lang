@@ -474,6 +474,11 @@ impl<'a> Checker<'a> {
         ) {
             return Ok(());
         }
+        // `@locale` is a reserved patch target; supported-tag membership is
+        // checked at lowering where the locale declaration is available.
+        if matches!(stmt.kind, StmtKind::SetLocale(..)) {
+            return Ok(());
+        }
         let target = self
             .state_of(&stmt.target)
             .ok_or_else(|| self.unknown_event_state(&stmt.target, stmt.pos))?;
@@ -528,6 +533,7 @@ impl<'a> Checker<'a> {
             return Ok(());
         }
         match &stmt.kind {
+            StmtKind::SetLocale(..) => {} // handled before state resolution
             StmtKind::Add(value, pos) | StmtKind::Sub(value, pos) => {
                 if target != ValueTy::Int {
                     return Err(self.err(
@@ -753,7 +759,7 @@ impl<'a> Checker<'a> {
                     let pos = offset_pos(base, text, off);
                     self.list_index(&list, &index, pos)?;
                 }
-                Part::Lit(_) => {}
+                Part::Lit(_) | Part::Catalog(_, _) => {}
             }
         }
         Ok(())

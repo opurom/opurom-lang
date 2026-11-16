@@ -331,6 +331,13 @@ fn each_error_class_is_a_friendly_diagnostic() {
             "unknown animate value 'bounce'",
         ),
         ("unknown_kind_suggestion.opu", "unknown node kind 'Fancy'"),
+        ("i18n_bad_tag.opu", "invalid locale tag 'EN_us'"),
+        (
+            "i18n_unsupported_set.opu",
+            "set locale target 'fr' is not supported",
+        ),
+        ("i18n_dup_key.opu", "duplicate catalog key 'hi'"),
+        ("i18n_dup_locale.opu", "duplicate catalog for locale 'en'"),
     ];
     for &(file, message) in cases {
         let path = error_fixture(file);
@@ -1229,6 +1236,114 @@ fn collision_curve_compiles_and_emits_across_targets() {
     let r = compile(&bad, &dir.join("bad.opuir.json"));
     assert!(!r.status.success());
     assert!(String::from_utf8_lossy(&r.stderr).contains("unknown animate value"));
+}
+
+#[test]
+fn i18n_fields_are_additive_and_absent_without_declarations() {
+    let ir = compile_ok(&fixture("features_additive.opu"));
+    assert!(ir.get("locale").is_none(), "no locale field without a declaration");
+    assert!(ir.get("directionality").is_none());
+    assert!(ir.get("messages").is_none());
+    // The counter golden (byte contract) still compiles deep-equal.
+    let out = out_dir("i18n-golden");
+    let golden = contract("counter.opuir.json");
+    let compiled = out.join("counter.opuir.json");
+    let r = compile(&example("counter.opu"), &compiled);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(
+        serde_json::from_slice::<Json>(&fs::read(&compiled).unwrap()).unwrap(),
+        serde_json::from_slice::<Json>(&fs::read(golden).unwrap()).unwrap()
+    );
+}
+
+#[test]
+fn i18n_ir_emits_across_ten_targets_with_locale_patch() {
+    let ir = fixture("i18n.opu");
+    let compiled = out_dir("i18n-emit").join("i18n.opuir.json");
+    let r = compile(&ir, &compiled);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    // web-dom's independent validator lives in opurom-web and is out of this
+    // crate's scope; every emitter owned here accepts the reserved target.
+    let mut native_out = None;
+    let mut harmony_out = None;
+    for target in [
+        "native", "web", "wechat", "alipay", "qq", "douyin", "baidu", "kuaishou", "wasm",
+        "harmony",
+    ] {
+        let out = out_dir(&format!("i18n-emit-{target}"));
+        let r = emit(&compiled, target, &out);
+        assert!(r.status.success(), "{target}: {}", String::from_utf8_lossy(&r.stderr));
+        if target == "native" {
+            native_out = Some(out);
+        } else if target == "harmony" {
+            harmony_out = Some(out);
+        }
+    }
+    // Native and harmony carry the locale switch as a reserved signal.
+    let native = fs::read_to_string(native_out.unwrap().join("src/main.rs")).unwrap();
+    assert!(native.contains("@locale"), "{native}");
+    let harmony = fs::read_to_string(
+        harmony_out.unwrap().join("src/main/ets/pages/Index.ets"),
+    )
+    .unwrap();
+    assert!(harmony.contains("@locale") || harmony.contains("setLocale"), "{harmony}");
+}
+
+#[test]
+fn i18n_v1_lowers_root_fields_catalogs_and_locale_patch() {
+    let ir = compile_ok(&fixture("i18n.opu"));
+    assert_eq!(
+        ir["locale"],
+        json!({"active": "en", "supported": ["en", "fr", "zh-CN"]})
+    );
+    assert_eq!(ir["directionality"], "rtl");
+    assert_eq!(
+        ir["messages"],
+        json!({
+            "bye": {"en": "Goodbye"},
+            "greet": {"en": "Hello", "fr": "Bonjour", "zh-CN": "你好"}
+        })
+    );
+    let values: Vec<&str> = nodes_of(&ir)
+        .into_iter()
+        .filter_map(|n| {
+            if n["kind"] == "Text" {
+                n["props"]["value"].as_str()
+            } else {
+                None
+            }
+        })
+        .collect();
+    // {@key} resolves by active locale; a missing key renders its literal key;
+    // {{ is a literal brace.
+    assert_eq!(values[0], "Hello, {name}");
+    assert_eq!(values[1], "missing");
+    assert_eq!(values[2], "{@greet}");
+    let button = nodes_of(&ir)
+        .into_iter()
+        .find(|n| n["kind"] == "Button")
+        .expect("button");
+    assert_eq!(
+        button["events"]["tap"],
+        json!({"op": "set", "target": "@locale", "value": "fr"})
+    );
+}
+
+/// Fallback to the first supported locale when active has no translation.
+#[test]
+fn i18n_catalog_falls_back_to_first_supported() {
+    let dir = out_dir("i18n-fallback");
+    let src = dir.join("fallback.opu");
+    fs::write(
+        &src,
+        "app F {\n  locale { active: \"fr\", supported: [\"fr\", \"en\"] }\n  catalog fr { hi: \"Salut\" }\n  catalog en { hi: \"Hi\", bye: \"Bye\" }\n  Column { Text(\"{@hi}|{@bye}\") }\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let text = nodes_of(&ir)[1]["props"]["value"].as_str().unwrap();
+    // Active and the fallback (first supported) are both fr: `hi` resolves
+    // there, `bye` is missing in fr and falls back to the literal key.
+    assert_eq!(text, "Salut|bye");
 }
 
 #[test]

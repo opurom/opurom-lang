@@ -9,10 +9,23 @@ produces byte-identical IR, and `counter.opu`, `profile.opu` and `todo.opu` keep
 byte-identical IR at every stage. Custom components are expanded at compile time, so a program
 without them produces byte-identical IR and gains no new IR fields.
 
+## Internationalization v1
+
+`locale { active: "en", supported: ["en", "fr"] }` declares the active tag and the supported
+set (BCP-47 primary subtag pattern `^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$`); `active` must be in
+`supported`. `directionality: rtl` is authored independently of the locale (default `ltr`, no
+derivation from locale tags). `catalog <tag> { key: "text", ... }` blocks compile into a root
+`messages` map `{key: {locale: text}}`. Text-valued props accept `{@key}` alongside `{state}`:
+`{@` starts a catalog reference resolved at compile time against the active locale, then the
+first supported locale, then the literal key; `{` followed by anything else is a state reference,
+and `{{` is a literal brace. `set locale: "fr"` lowers to a reserved `@locale` patch target whose
+value must be in `supported` (a compile error otherwise). Declaring none of `locale`,
+`directionality` or `messages` leaves IR byte-identical to earlier releases.
+
 ## Grammar summary (IR 0.1.0 and the additive layers)
 
 ```ebnf
-program       = { import_decl | component_decl } "app" IDENT "{" { state_decl | computed_decl | component_decl | model_decl | api_decl | theme_decl | page_decl | node } "}" ;
+program       = { import_decl | component_decl } "app" IDENT "{" { state_decl | computed_decl | component_decl | model_decl | api_decl | theme_decl | page_decl | locale_decl | directionality_decl | catalog_decl | node } "}" ;
 component_decl = "component" IDENT "(" [ params ] ")" "{" { node } "}" ;
 params        = param { "," param } [ "," ] ;
 param         = IDENT [ ":" ( "int" | "bool" | "string" ) ] ;
@@ -25,6 +38,11 @@ api_decl      = "api" STRING "{" { handler_decl } "}" ;
 handler_decl  = ( "list" | "get" | "create" | "update" | "delete" ) IDENT [";"] ;
 theme_decl    = "theme" "{" ( "mode" | "accent" | "radius" ) ":" value { "," } "}" ;
 page_decl     = "page" IDENT [";"] ;
+locale_decl   = "locale" "{" "active" ":" tag "," "supported" ":" tag_list [ "," ] "}" ;
+tag           = STRING ; (* BCP-47: ^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$ *)
+tag_list      = "[" tag { "," tag } [ "," ] "]" ;
+directionality_decl = "directionality" ":" ( "ltr" | "rtl" ) [";"] ;
+catalog_decl  = "catalog" tag "{" { IDENT ":" STRING } [ "," | ";" ] "}" ;
 node          = KIND [ "(" [ args ] ")" ] [ "async" ] [ ";" | "{" { node | statement | effect } "}" ]
               | "if" "(" IDENT ")" "{" { node } "}" [ "else" "{" { node } "}" ]
               | "for" "(" IDENT "in" ( INT | IDENT ) ")" "{" { node } "}"
@@ -34,7 +52,8 @@ value         = INT | FLOAT | STRING | BOOL | IDENT ;
 statement     = IDENT ( "+=" | "-=" | "=" ) expr [";"]
               | IDENT "." "toggle" "(" ")" [";"]
               | "form" "." "validate" "(" ")" [";"]
-              | "push" ":" IDENT [";"] ;
+              | "push" ":" IDENT [";"]
+              | "set" "locale" ":" tag [";"] ;
 effect        = "await" "delay" "(" INT ")" [";"]
               | "await" "fetch" "(" STRING "," IDENT ")" [";"] ;
 expr          = literal | IDENT ;

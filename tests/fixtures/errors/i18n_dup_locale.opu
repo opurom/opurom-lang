@@ -1,0 +1,5 @@
+app Bad {
+  catalog en { hi: "Hi" }
+  catalog en { bye: "Bye" }
+  Text("x")
+}

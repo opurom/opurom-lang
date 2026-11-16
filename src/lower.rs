@@ -282,6 +282,9 @@ impl Ty {
 #[derive(Clone, Debug)]
 pub enum Part {
     Lit(String),
+    /// A catalog reference `{@key}`, resolved by the compiler against the
+    /// active locale (or its fallback) before any emitter sees the text.
+    Catalog(String, usize),
     Var(String, usize),
     /// A list state read by position: `{name[index]}`. The index is an integer
     /// literal or a loop variable that resolves to an integer.
@@ -330,6 +333,16 @@ pub fn interp_parts(s: &str) -> Result<Vec<Part>, (usize, String)> {
                 return Err((i, "unterminated '{name}' interpolation".to_string()));
             }
             let name: String = cs[i + 1..j].iter().collect();
+            if let Some(key) = name.strip_prefix('@') {
+                if !key.is_empty() {
+                    if !lit.is_empty() {
+                        parts.push(Part::Lit(std::mem::take(&mut lit)));
+                    }
+                    parts.push(Part::Catalog(key.to_string(), i));
+                    i = j + 1;
+                    continue;
+                }
+            }
             // `{items[i]}` reads a list state; the subscript is an int literal or
             // a declared name, resolved by the caller against its scope.
             if let Some(open) = name.find('[') {
@@ -743,6 +756,10 @@ struct Ctx<'a> {
     /// Package icon table: name -> {viewBox, paths}, from locked icon packages.
     /// Empty unless the program actually references a package icon name.
     icons: JsonMap<String, Json>,
+    /// Active locale and the message catalog: key -> {locale -> text}.
+    locale_active: Option<String>,
+    locale_supported: Vec<String>,
+    messages: HashMap<String, HashMap<String, String>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -832,7 +849,7 @@ fn value_desc(v: &AstValue) -> &'static str {
 /// Replace `{i}` and `{items[i]}` with their compile-time values. List reads are
 /// resolved here so the IR only ever carries literal text.
 fn substitute_loops(ctx: &Ctx, pos: Pos, s: &str) -> DResult<String> {
-    if ctx.loops.is_empty() && !s.contains('[') {
+    if ctx.loops.is_empty() && !s.contains('[') && !s.contains("{@") {
         return Ok(s.to_string());
     }
     let parts = interp_parts(s).map_err(|(off, msg)| {
@@ -846,6 +863,22 @@ fn substitute_loops(ctx: &Ctx, pos: Pos, s: &str) -> DResult<String> {
     let mut out = String::new();
     for part in parts {
         match part {
+            Part::Catalog(key, _) => {
+                // Resolve against active locale, then the first supported
+                // locale, then the literal key (IR_ADDITIONS 15.3).
+                let active = ctx.locale_active.as_deref();
+                let mut chosen = active
+                    .and_then(|a| ctx.messages.get(&key).and_then(|m| m.get(a)))
+                    .cloned();
+                if chosen.is_none() {
+                    chosen = ctx
+                        .locale_supported
+                        .first()
+                        .and_then(|first| ctx.messages.get(&key).and_then(|m| m.get(first)))
+                        .cloned();
+                }
+                out.push_str(&chosen.unwrap_or_else(|| key.clone()));
+            }
             Part::Lit(t) => out.push_str(&t),
             Part::Var(name, _) => match ctx.loop_value(&name) {
                 Some(v) => out.push_str(&v),
@@ -1338,6 +1371,11 @@ fn particles_value(ctx: &Ctx, arg: &Arg) -> DResult<Json> {
 /// by the shared type checker, so this pass only builds the IR.
 fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
     match &stmt.kind {
+        // A locale switch is a reserved patch target (IR_ADDITIONS 15.4): the
+        // kernel turns a write to @locale into a patch, not a state change.
+        StmtKind::SetLocale(tag, _) => Ok(json!({
+            "op": "set", "target": "@locale", "value": tag
+        })),
         StmtKind::Add(v, p) | StmtKind::Sub(v, p) => {
             let value = match v {
                 AstValue::Lit(Lit::Int(n)) => {
@@ -1610,7 +1648,7 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
     if let (Some(Json::String(s)), Some(base)) = (props.get("value"), value_pos) {
         // The interpolation shape is checked here; the referenced states are
         // checked by the shared type checker.
-        interp_parts(s).map_err(|(off, msg)| {
+        let parts = interp_parts(s).map_err(|(off, msg)| {
             let p = offset_pos(base, s, off);
             ctx.err(
                 p,
@@ -1618,6 +1656,16 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
                 "close it with '}' or write '{{' for a literal '{'".to_string(),
             )
         })?;
+        // A catalog key must exist in at least one catalog or fall back to
+        // its literal key text; never fail rendering on a missing key.
+        for part in &parts {
+            if let Part::Catalog(key, off) = part {
+                if !ctx.messages.contains_key(key) {
+                    // Missing keys are allowed: the literal key is rendered.
+                    let _ = off;
+                }
+            }
+        }
     }
 
     let mut events = JsonMap::new();
@@ -2207,6 +2255,7 @@ fn substitute_stmt(path: &str, stmt: &Stmt, bindings: &HashMap<String, Lit>) -> 
         StmtKind::Push => StmtKind::Push,
         StmtKind::Pop => StmtKind::Pop,
         StmtKind::Validate => StmtKind::Validate,
+        StmtKind::SetLocale(tag, p) => StmtKind::SetLocale(tag.clone(), *p),
     };
     Ok(Stmt {
         target: stmt.target.clone(),
@@ -2713,7 +2762,64 @@ fn collect_icon_names(node: &Json, out: &mut std::collections::BTreeSet<String>)
     }
 }
 
+/// Every `set locale: <tag>` target must be in the declared supported list.
+fn validate_locale_switches(program: &Program, path: &str, supported: &[String]) -> DResult<()> {
+    fn walk_block(block: &parser::Block, path: &str, supported: &[String]) -> DResult<()> {
+        for stmt in &block.stmts {
+            if let StmtKind::SetLocale(tag, pos) = &stmt.kind {
+                if !supported.iter().any(|s| s == tag) {
+                    return Err(Diagnostic::new(path, pos.line, pos.col,
+                        format!("set locale target '{tag}' is not supported"),
+                        format!("declare '{tag}' in the locale supported list")));
+                }
+            }
+        }
+        walk(&block.nodes, path, supported)?;
+        Ok(())
+    }
+    fn walk(nodes: &[Node], path: &str, supported: &[String]) -> DResult<()> {
+        for node in nodes {
+            if let Some(block) = &node.block {
+                walk_block(block, path, supported)?;
+            }
+            if let NodeKind::If { else_block: Some(b), .. } = &node.kind {
+                walk_block(b, path, supported)?;
+            }
+        }
+        Ok(())
+    }
+    walk(&program.nodes, path, supported)?;
+    for route in &program.routes {
+        walk(&route.nodes, path, supported)?;
+    }
+    for component in &program.components {
+        walk(&component.body, path, supported)?;
+    }
+    Ok(())
+}
+
 fn lower(program: &Program, path: &str) -> DResult<Json> {
+    // i18n v1 (IR_ADDITIONS 15): build the message table and validate every
+    // set-locale target against the supported list before any IR is emitted.
+    let mut messages: HashMap<String, HashMap<String, String>> = HashMap::new();
+    for catalog in &program.catalogs {
+        for (key, text) in &catalog.entries {
+            let by_locale = messages.entry(key.clone()).or_default();
+            if by_locale.insert(catalog.locale.clone(), text.clone()).is_some() {
+                return Err(Diagnostic::new(path, catalog.pos.line, catalog.pos.col,
+                    format!("duplicate catalog key '{key}' for locale '{}'", catalog.locale),
+                    "write each key once per locale"));
+            }
+        }
+    }
+    let locale_active = program.locale.as_ref().map(|l| l.active.clone());
+    let locale_supported = program
+        .locale
+        .as_ref()
+        .map(|l| l.supported.clone())
+        .unwrap_or_default();
+    validate_locale_switches(program, path, &locale_supported)?;
+
     let mut ctx = Ctx {
         path,
         types: HashMap::new(),
@@ -2726,6 +2832,9 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         pages: program.pages.iter().map(|p| p.name.clone()).collect(),
         route_names: program.routes.iter().map(|r| r.name.clone()).collect(),
         icons: crate::pkg_icons::resolve(&crate::pkg_icons::project_root(path)),
+        locale_active,
+        locale_supported,
+        messages,
     };
     let mut state_json = Vec::new();
     let (state_types, state_inits) = typecheck::infer_states(program, path)?;
@@ -2873,6 +2982,36 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
     let mut out = JsonMap::new();
     out.insert("ir".to_string(), json!("0.1.0"));
     out.insert("app".to_string(), json!(program.app));
+    // Additive i18n root fields (IR_ADDITIONS 15): absent programs stay
+    // byte-identical, so the counter/todo goldens keep their digests.
+    if let Some(loc) = &program.locale {
+        let mut loc_json = JsonMap::new();
+        loc_json.insert("active".to_string(), json!(loc.active));
+        loc_json.insert(
+            "supported".to_string(),
+            Json::Array(loc.supported.iter().map(|s| json!(s)).collect()),
+        );
+        out.insert("locale".to_string(), Json::Object(loc_json));
+    }
+    if let Some(dir) = &program.directionality {
+        out.insert("directionality".to_string(), json!(dir.value));
+    }
+    if !ctx.messages.is_empty() {
+        let mut msgs = JsonMap::new();
+        let mut keys: Vec<_> = ctx.messages.keys().collect();
+        keys.sort();
+        for key in keys {
+            let by_locale = &ctx.messages[key];
+            let mut locales = JsonMap::new();
+            let mut names: Vec<_> = by_locale.keys().collect();
+            names.sort();
+            for name in names {
+                locales.insert(name.clone(), json!(by_locale[name]));
+            }
+            msgs.insert(key.clone(), Json::Object(locales));
+        }
+        out.insert("messages".to_string(), Json::Object(msgs));
+    }
     out.insert("state".to_string(), Json::Array(state_json));
     match &tree {
         Some(t) => {

@@ -74,6 +74,8 @@ pub enum StmtKind {
     Append(Value, Pos),
     /// `items.removeAt(index)` removes one element of a list state by position.
     RemoveAt(Value, Pos),
+    /// `set locale: <tag>` switches the active locale through a reserved patch.
+    SetLocale(String, Pos),
 }
 
 #[derive(Clone, Debug)]
@@ -263,6 +265,28 @@ pub struct ApiDecl {
     pub pos: Pos,
 }
 
+/// Root-level i18n declarations (LANG_SPEC grammar, IR_ADDITIONS section 15).
+#[derive(Clone, Debug)]
+pub struct LocaleDecl {
+    pub active: String,
+    pub supported: Vec<String>,
+    pub pos: Pos,
+}
+
+#[derive(Clone, Debug)]
+pub struct DirectionalityDecl {
+    pub value: String,
+    pub pos: Pos,
+}
+
+#[derive(Clone, Debug)]
+pub struct CatalogDecl {
+    pub locale: String,
+    /// `(key, text)` pairs in source order; duplicates are a compile error.
+    pub entries: Vec<(String, String)>,
+    pub pos: Pos,
+}
+
 #[derive(Clone, Debug)]
 pub struct Program {
     pub app: String,
@@ -276,6 +300,9 @@ pub struct Program {
     pub apis: Vec<ApiDecl>,
     pub pages: Vec<PageDecl>,
     pub routes: Vec<RouteDecl>,
+    pub locale: Option<LocaleDecl>,
+    pub directionality: Option<DirectionalityDecl>,
+    pub catalogs: Vec<CatalogDecl>,
 }
 
 fn is_kind(t: &Token) -> bool {
@@ -329,6 +356,62 @@ struct Parser<'a> {
     path: &'a str,
     allow_nodes: bool,
     allow_imports_in_body: bool,
+}
+
+/// Parse a BCP-47-style tag: a lowercase primary subtag followed by zero or
+/// more `-subtag` groups. The lexer splits `-` into a symbol, so join them.
+fn tag_valid(tag: &str) -> bool {
+    let mut parts = tag.split('-');
+    let primary = parts.next().unwrap_or("");
+    let primary_ok = primary.len() >= 2
+        && primary.len() <= 3
+        && primary.bytes().all(|b| b.is_ascii_lowercase());
+    primary_ok
+        && parts.all(|sub| {
+            !sub.is_empty()
+                && sub.len() <= 8
+                && sub.bytes().all(|b| b.is_ascii_alphanumeric())
+        })
+}
+
+impl<'a> Parser<'a> {
+    fn locale_tag(&mut self) -> DResult<(String, Pos)> {
+        let tok = self.peek().clone();
+        let quoted = matches!(tok.tok, Tok::Str(_));
+        let (mut tag, pos) = match tok.tok {
+            Tok::Str(v) => { self.bump(); (v, Pos { line: tok.line, col: tok.col }) }
+            Tok::Ident(_) => self.expect_ident("a locale tag such as 'en' or 'zh-CN'")?,
+            _ => return Err(Diagnostic::new(self.path, tok.line, tok.col,
+                "expected a locale tag", "write 'en', 'zh-CN' or a quoted tag")),
+        };
+        if tag.contains('-') || tag.chars().all(|c| c.is_ascii_alphanumeric()) {
+            // A quoted tag is complete; an ident may be followed by `-subtag`.
+            if quoted {
+                if !tag_valid(&tag) {
+                    return Err(Diagnostic::new(self.path, tok.line, tok.col,
+                        format!("invalid locale tag '{tag}'"),
+                        "use ^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$"));
+                }
+                return Ok((tag, pos));
+            }
+        }
+        while self.sym("-") {
+            self.bump();
+            let (sub, _) = self.expect_ident("a subtag after '-'")?;
+            tag.push('-');
+            tag.push_str(&sub);
+        }
+        if !tag_valid(&tag) {
+            return Err(Diagnostic::new(
+                self.path,
+                pos.line,
+                pos.col,
+                format!("invalid locale tag '{tag}'"),
+                "use a BCP-47 primary subtag: ^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$",
+            ));
+        }
+        Ok((tag, pos))
+    }
 }
 
 impl<'a> Parser<'a> {
@@ -715,6 +798,19 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self) -> DResult<Stmt> {
+        // `set locale: <tag>` switches the active locale via a reserved patch.
+        if self.word("set")
+            && matches!(self.toks.get(self.i + 1).map(|t| &t.tok), Some(Tok::Ident(w)) if w == "locale")
+            && matches!(self.toks.get(self.i + 2).map(|t| &t.tok), Some(Tok::Sym(s)) if s == ":")
+        {
+            let sp = self.pos();
+            self.bump(); // set
+            self.bump(); // locale
+            self.bump(); // :
+            let (tag, tp) = self.locale_tag()?;
+            self.eat_sym(";");
+            return Ok(Stmt { target: "@locale".to_string(), pos: sp, kind: StmtKind::SetLocale(tag, tp) });
+        }
         // `push: PageName` is a navigation action; the page name is the target.
         let colon_next = matches!(
             self.toks.get(self.i + 1).map(|t| &t.tok),
@@ -1314,6 +1410,126 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn locale_decl(&mut self) -> DResult<LocaleDecl> {
+        let start = self.pos();
+        self.bump(); // locale
+        self.expect_sym("{", "'locale' needs a '{'")?;
+        let mut active: Option<String> = None;
+        let mut supported: Vec<String> = Vec::new();
+        loop {
+            self.eat_sym(";") || self.eat_sym(",");
+            if self.eat_sym("}") {
+                break;
+            }
+            if matches!(self.peek().tok, Tok::Eof) {
+                return Err(self.err(
+                    "unexpected end of file, expected '}'",
+                    "close the locale block with a matching '}'",
+                ));
+            }
+            let (key, _) = self.expect_ident("'active' or 'supported'")?;
+            self.expect_sym(":", "write active with a string tag such as en")?;
+            match key.as_str() {
+                "active" => {
+                    let tok = self.peek().clone();
+                    let tag = match tok.tok {
+                        Tok::Str(v) => { self.bump(); v }
+                        _ => return Err(self.err("'active' expects a string tag", "write active with a string tag" )),
+                    };
+                    if !tag_valid(&tag) {
+                        return Err(Diagnostic::new(self.path, tok.line, tok.col,
+                            format!("invalid locale tag '{tag}'"),
+                            "use ^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$"));
+                    }
+                    if active.is_some() {
+                        return Err(self.err("duplicate 'active' in locale", "declare 'active' once"));
+                    }
+                    active = Some(tag);
+                }
+                "supported" => {
+                    self.expect_sym("[", "supported needs a list of string tags")?;
+                    if !self.sym("]") {
+                        loop {
+                            let tok = self.peek().clone();
+                            let tag = match tok.tok {
+                                Tok::Str(v) => { self.bump(); v }
+                                _ => return Err(self.err("'supported' accepts string tags only", "write a list of string locale tags")),
+                            };
+                            if !tag_valid(&tag) {
+                                return Err(Diagnostic::new(self.path, tok.line, tok.col,
+                                    format!("invalid locale tag '{tag}'"),
+                                    "use ^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$"));
+                            }
+                            if supported.contains(&tag) {
+                                return Err(self.err(format!("duplicate supported locale '{tag}'"), "list each locale once"));
+                            }
+                            supported.push(tag);
+                            if self.eat_sym(",") {
+                                if self.sym("]") { break; }
+                                continue;
+                            }
+                            break;
+                        }
+                    }
+                    self.expect_sym("]", "close 'supported' with ']'")?;
+                }
+                other => return Err(self.err(format!("unknown locale key '{other}'"), "use 'active' or 'supported'")),
+            }
+        }
+        let active = active.ok_or_else(|| self.err("'locale' requires 'active'", "write a locale block with active and supported"))?;
+        if supported.is_empty() {
+            return Err(self.err("'supported' must not be empty", "list 'active' in 'supported'"));
+        }
+        if !supported.contains(&active) {
+            return Err(self.err(
+                format!("active locale '{active}' is not in 'supported'"),
+                format!("add '{active}' to the supported list"),
+            ));
+        }
+        Ok(LocaleDecl { active, supported, pos: start })
+    }
+
+    fn directionality_decl(&mut self) -> DResult<DirectionalityDecl> {
+        let start = self.pos();
+        self.bump(); // directionality
+        self.expect_sym(":", "write 'directionality: rtl' with a colon")?;
+        let (value, _) = self.expect_ident("'ltr' or 'rtl'")?;
+        if value != "ltr" && value != "rtl" {
+            return Err(Diagnostic::new(self.path, start.line, start.col,
+                format!("invalid directionality '{value}'"), "write 'ltr' or 'rtl'"));
+        }
+        self.eat_sym(";");
+        Ok(DirectionalityDecl { value, pos: start })
+    }
+
+    fn catalog_decl(&mut self) -> DResult<CatalogDecl> {
+        let start = self.pos();
+        self.bump(); // catalog
+        let (locale, _) = self.locale_tag()?;
+        self.expect_sym("{", "'catalog' needs a '{'")?;
+        let mut entries: Vec<(String, String)> = Vec::new();
+        loop {
+            self.eat_sym(";") || self.eat_sym(",");
+            if self.eat_sym("}") { break; }
+            if matches!(self.peek().tok, Tok::Eof) {
+                return Err(self.err("unexpected end of file, expected '}'", "close the catalog block with '}'"));
+            }
+            let (key, kp) = self.expect_ident("a message key")?;
+            self.expect_sym(":", "write a message key and a string value")?;
+            let tok = self.peek().clone();
+            let text = match tok.tok {
+                Tok::Str(v) => { self.bump(); v }
+                _ => return Err(self.err("a message value must be a string", "write a string value for the message")),
+            };
+            if entries.iter().any(|(k, _)| *k == key) {
+                return Err(Diagnostic::new(self.path, kp.line, kp.col,
+                    format!("duplicate catalog key '{key}' in '{locale}'"), "write each key once per locale"));
+            }
+            entries.push((key, text));
+        }
+        Ok(CatalogDecl { locale, entries, pos: start })
+    }
+
     fn theme_decl(&mut self) -> DResult<ThemeDecl> {
         let start = self.pos();
         self.bump();
@@ -1844,6 +2060,9 @@ fn parse_with_options(
     let mut apis = Vec::new();
     let mut pages = Vec::new();
     let mut routes = Vec::new();
+    let mut locale = None;
+    let mut directionality = None;
+    let mut catalogs = Vec::new();
     loop {
         p.eat_sym(";");
         if p.eat_sym("}") {
@@ -1891,6 +2110,30 @@ fn parse_with_options(
                 "'else' must follow an 'if' block",
                 "write 'if (dark) { ... } else { ... }'",
             ));
+        }
+        if p.word("locale") {
+            if locale.is_some() {
+                return Err(p.err("duplicate 'locale' declaration", "declare locale once per app"));
+            }
+            locale = Some(p.locale_decl()?);
+            continue;
+        }
+        if p.word("directionality") {
+            if directionality.is_some() {
+                return Err(p.err("duplicate 'directionality' declaration", "declare directionality once per app"));
+            }
+            directionality = Some(p.directionality_decl()?);
+            continue;
+        }
+        if p.word("catalog") {
+            let decl = p.catalog_decl()?;
+            if catalogs.iter().any(|c: &CatalogDecl| c.locale == decl.locale) {
+                return Err(Diagnostic::new(p.path, decl.pos.line, decl.pos.col,
+                    format!("duplicate catalog for locale '{}'", decl.locale),
+                    "merge all keys of a locale into one catalog block"));
+            }
+            catalogs.push(decl);
+            continue;
         }
         if p.word("theme") {
             if theme.is_some() {
@@ -2030,6 +2273,9 @@ fn parse_with_options(
         apis,
         pages,
         routes,
+        locale,
+        directionality,
+        catalogs,
     })
 }
 

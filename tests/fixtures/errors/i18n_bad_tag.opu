@@ -1,0 +1,4 @@
+app Bad {
+  locale { active: "EN_us", supported: ["EN_us"] }
+  Text("x")
+}
