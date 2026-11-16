@@ -357,6 +357,18 @@ fn each_error_class_is_a_friendly_diagnostic() {
             "prop 'relayoutBoundary' expects true or false",
         ),
         ("boundary_missing.opu", "expected a literal or identifier"),
+        (
+            "platform_unknown_capability.opu",
+            "unknown platform capability 'bluetooth'",
+        ),
+        (
+            "platform_bad_field_type.opu",
+            "request field 'id' expects int",
+        ),
+        (
+            "platform_bad_result_type.opu",
+            "PlatformCall 'result' requires a bool state",
+        ),
     ];
     for &(file, message) in cases {
         let path = error_fixture(file);
@@ -1482,6 +1494,106 @@ fn boundary_props_lower_only_when_declared() {
             assert!(n["props"].get("repaintBoundary").is_none());
             assert!(n["props"].get("relayoutBoundary").is_none());
         }
+    }
+}
+
+#[test]
+fn platform_calls_lower_typed_capability_nodes() {
+    let dir = out_dir("platform-calls");
+    let out = dir.join("calls.opuir.json");
+    let r = compile(&fixture("platform_calls.opu"), &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    let calls: Vec<&Json> = nodes_of(&ir)
+        .into_iter()
+        .filter(|n| n["kind"] == "PlatformCall")
+        .collect();
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[0]["props"]["capability"], "notification");
+    assert_eq!(
+        calls[0]["props"]["request"],
+        json!({"id": 1, "channel": "updates", "title": "Hi", "body": "text"})
+    );
+    assert_eq!(calls[0]["props"]["result"], "notified");
+    assert_eq!(calls[0]["props"]["error"], "err");
+    assert_eq!(calls[1]["props"]["capability"], "camera");
+    assert_eq!(
+        calls[1]["props"]["request"],
+        json!({"facing": "back", "flash": false})
+    );
+    assert_eq!(calls[1]["props"]["result"], "photo");
+    assert_eq!(calls[2]["props"]["capability"], "location");
+    assert_eq!(
+        calls[2]["props"]["request"],
+        json!({"accuracy": "fine", "timeout": 5000})
+    );
+    assert_eq!(calls[2]["props"]["result"], "place");
+    for call in &calls {
+        assert_eq!(call["props"]["error"], "err");
+        assert_eq!(call["children"], json!([]));
+        assert_eq!(call["events"], json!({}));
+    }
+
+    let again = dir.join("calls-again.opuir.json");
+    let r = compile(&fixture("platform_calls.opu"), &again);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(fs::read(&out).unwrap(), fs::read(&again).unwrap());
+
+    // Optimizer must not prune the states bound as result/error targets.
+    let opt = dir.join("calls.opt.json");
+    let r = optimize(&out, &opt);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let optimized: Json = serde_json::from_slice(&fs::read(&opt).unwrap()).unwrap();
+    assert_eq!(
+        state_names(&optimized),
+        vec!["notified", "photo", "place", "err"]
+    );
+}
+
+#[test]
+fn platform_calls_absent_keeps_golden_ir_byte_identical() {
+    let dir = out_dir("platform-golden");
+    let examples = workspace().join("..").join("opurom-examples");
+    let cases = [
+        (
+            contract("counter.opu"),
+            Some(fixture("golden/counter.opuir.json")),
+        ),
+        (
+            fixture("golden/todo.opu"),
+            Some(fixture("golden/todo.opuir.json")),
+        ),
+        (examples.join("apps/forum/forum.opu"), None),
+        (examples.join("apps/teamhub/teamhub.opu"), None),
+        (examples.join("apps/uicatalog/main.opu"), None),
+    ];
+    for (src, golden) in cases {
+        if !src.is_file() {
+            continue;
+        }
+        let out = dir.join("out.opuir.json");
+        let r = compile(&src, &out);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        if let Some(golden) = golden {
+            assert_eq!(
+                fs::read(&out).unwrap(),
+                fs::read(&golden).unwrap(),
+                "{} changed its bytes",
+                golden.display()
+            );
+        }
+        let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+        fn has_call(v: &Json) -> bool {
+            if v["kind"] == "PlatformCall" {
+                return true;
+            }
+            match v {
+                Json::Object(o) => o.values().any(has_call),
+                Json::Array(a) => a.iter().any(has_call),
+                _ => false,
+            }
+        }
+        assert!(!has_call(&ir), "{} gained a PlatformCall", src.display());
     }
 }
 

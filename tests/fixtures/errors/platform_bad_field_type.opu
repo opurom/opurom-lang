@@ -1,0 +1,10 @@
+app BadField {
+  state a = false
+  state e = ""
+  PlatformCall {
+    capability: notification
+    request { id: "1", channel: "c", title: "t", body: "" }
+    result: a
+    error: e
+  }
+}

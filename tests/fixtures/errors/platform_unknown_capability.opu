@@ -1,0 +1,8 @@
+app BadCap {
+  PlatformCall {
+    capability: bluetooth
+    request { id: 1 }
+    result: a
+    error: e
+  }
+}

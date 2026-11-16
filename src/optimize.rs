@@ -268,7 +268,15 @@ fn collect_refs(v: &Json, states: &[String], refs: &mut HashSet<String>) {
             for (key, value) in o {
                 if matches!(
                     key.as_str(),
-                    "bind" | "when" | "unless" | "target" | "valueFrom" | "into" | "list"
+                    "bind"
+                        | "when"
+                        | "unless"
+                        | "target"
+                        | "valueFrom"
+                        | "into"
+                        | "list"
+                        | "result"
+                        | "error"
                 ) {
                     if let Some(name) = value.as_str() {
                         refs.insert(name.to_string());

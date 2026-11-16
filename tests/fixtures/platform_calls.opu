@@ -1,0 +1,26 @@
+app PlatformCalls {
+  state notified = false
+  state photo = ""
+  state place = ""
+  state err = ""
+  Column {
+    PlatformCall {
+      capability: notification
+      request { id: 1, channel: "updates", title: "Hi", body: "text" }
+      result: notified
+      error: err
+    }
+    PlatformCall {
+      capability: camera
+      request { facing: "back", flash: false }
+      result: photo
+      error: err
+    }
+    PlatformCall {
+      capability: location
+      request { accuracy: "fine", timeout: 5000 }
+      result: place
+      error: err
+    }
+  }
+}
