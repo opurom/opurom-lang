@@ -4119,7 +4119,97 @@ fn emit_mini_multipage(
     write(out, "pages/index/index.js", &router_js, ir_path)?;
     write(out, "app.json", &(serde_json::to_string_pretty(&Json::Object(app_obj))
         .map_err(|e| bad_ir(ir_path, format!("cannot serialize app.json: {e}")))? + "\n"), ir_path)?;
-    write(out, "app.js", &app_js, ir_path)
+    write(out, "app.js", &app_js, ir_path)?;
+
+    // Size report (§7): main package bytes plus per-subpackage bytes. Wechat's
+    // 2 MB single-package / 20 MB total limits are warning/error thresholds.
+    // Only emitted for multi-route bundles; a single-route program keeps the
+    // byte-identical emit_mini output.
+    write_size_report(out, &routes, p, ir_path)
+}
+
+/// Sum every regular file's byte length under `root`.
+fn dir_bytes(root: &Path) -> std::io::Result<usize> {
+    let mut total = 0;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let meta = entry.metadata()?;
+            if meta.is_dir() {
+                stack.push(entry.path());
+            } else if meta.is_file() {
+                total += meta.len() as usize;
+            }
+        }
+    }
+    Ok(total)
+}
+
+/// Write a `size-report.txt` accounting for the main package and each
+/// subpackage, and fail with a diagnostic when the wechat limits are exceeded
+/// (2 MB per single package, 20 MB total). Other mini platforms share wechat's
+/// limits as a conservative bound.
+fn write_size_report(
+    out: &Path,
+    routes: &ERoutes,
+    p: &Platform,
+    ir_path: &str,
+) -> DResult<()> {
+    const LIMIT_PACKAGE: usize = 2 * 1024 * 1024;
+    const LIMIT_TOTAL: usize = 20 * 1024 * 1024;
+    let total = dir_bytes(out).unwrap_or(0);
+    // Subpackage bytes are the files under packages/<name>/.
+    let mut sub_packs: Vec<(String, usize)> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for page in &routes.pages {
+        if let Some(pack) = &page.subpackage {
+            if seen.contains(pack) {
+                continue;
+            }
+            seen.push(pack.clone());
+            let bytes = dir_bytes(&out.join("packages").join(pack)).unwrap_or(0);
+            sub_packs.push((pack.clone(), bytes));
+        }
+    }
+    let sub_total: usize = sub_packs.iter().map(|(_, b)| *b).sum();
+    let main_bytes = total.saturating_sub(sub_total);
+    let mut report = String::new();
+    report.push_str(&format!("mini size report ({})\n", p.key));
+    report.push_str(&format!("main package: {main_bytes} bytes\n"));
+    for (pack, bytes) in &sub_packs {
+        report.push_str(&format!("subpackage '{pack}': {bytes} bytes\n"));
+    }
+    report.push_str(&format!("total: {total} bytes\n"));
+    // warning/error thresholds
+    let mut error: Option<String> = None;
+    if main_bytes > LIMIT_PACKAGE {
+        error = Some(format!(
+            "main package {main_bytes} bytes exceeds the 2 MB single-package limit"
+        ));
+    }
+    for (pack, bytes) in &sub_packs {
+        if *bytes > LIMIT_PACKAGE {
+            error = Some(format!(
+                "subpackage '{pack}' {bytes} bytes exceeds the 2 MB single-package limit"
+            ));
+        }
+    }
+    if total > LIMIT_TOTAL {
+        error = Some(format!(
+            "total package {total} bytes exceeds the 20 MB total limit"
+        ));
+    }
+    match error {
+        Some(msg) => Err(bad_ir(
+            ir_path,
+            format!("{msg}; reduce assets or split into more subpackages"),
+        )),
+        None => {
+            write(out, "size-report.txt", &report, ir_path)?;
+            Ok(())
+        }
+    }
 }
 
 // ------------------------------------------------- native multi-page ----

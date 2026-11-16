@@ -6878,6 +6878,11 @@ fn mini_pull_refresh_and_subpackage_follow_the_spec() {
         .collect();
     assert!(main_pages.contains(&"pages/Feed/index"));
     assert!(!main_pages.iter().any(|p| p.contains("Detail")));
+    // Size report: main + per-subpackage bytes, no threshold breach here.
+    let report = fs::read_to_string(out.join("size-report.txt")).expect("size report");
+    assert!(report.contains("main package:"), "{report}");
+    assert!(report.contains("subpackage 'd2':"), "{report}");
+    assert!(report.contains("total:"), "{report}");
 
     // Validation: the initialRoute must not declare a subpackage.
     let dir = out_dir("mini-pr-bad");
