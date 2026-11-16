@@ -358,6 +358,21 @@ fn each_error_class_is_a_friendly_diagnostic() {
 }
 
 #[test]
+fn unknown_prop_help_names_the_accepted_set() {
+    // Container kinds take no kind-specific props; the help must still name
+    // the generic set instead of an empty list.
+    let dir = out_dir("unknown-prop-help");
+    let src = dir.join("help.opu");
+    fs::write(&src, "app B { Card(bogus: 1) { Text(\"x\") } }\n").unwrap();
+    let r = compile(&src, &dir.join("out.opuir.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(stderr.contains("unknown prop 'bogus' on Card"), "{stderr}");
+    assert!(stderr.contains("Card accepts: padding"), "{stderr}");
+    assert!(!stderr.contains("accepts: ;"), "empty help list: {stderr}");
+}
+
+#[test]
 fn unknown_kind_lists_all_valid_kinds() {
     let path = error_fixture("unknown_kind_suggestion.opu");
     let r = bin().arg("check").arg(&path).output().expect("run check");

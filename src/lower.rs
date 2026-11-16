@@ -1516,12 +1516,25 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
             && !GENERIC_PROPS.contains(&key.as_str())
             && design_allowed(&key).is_none()
         {
+            // Name every prop the kind truly accepts: kind-specific first,
+            // then the generic and design-system sets, so kinds whose props
+            // are all generic still get a non-empty expected alternative.
+            let mut accepted: Vec<&str> = info.props.to_vec();
+            for name in GENERIC_PROPS
+                .iter()
+                .copied()
+                .chain(DESIGN_PROPS.iter().map(|(k, _)| *k))
+            {
+                if !accepted.contains(&name) {
+                    accepted.push(name);
+                }
+            }
             return Err(ctx.err(
                 arg.pos,
                 format!("unknown prop '{raw_key}' on {source_kind}"),
                 format!(
                     "{source_kind} accepts: {}; remove '{raw_key}'",
-                    info.props.join(", ")
+                    accepted.join(", ")
                 ),
             ));
         }
