@@ -204,6 +204,10 @@ pub struct ThemeDecl {
     pub font_metrics: Option<String>,
     /// Semantic design tokens as `(name, color)` pairs, in source order.
     pub tokens: Vec<(String, String)>,
+    /// Opt-in JSON token imports as `(path, position)` pairs, in source order.
+    pub token_imports: Vec<(String, Pos)>,
+    /// Flattened `md-*` token strings produced at compile time.
+    pub imported_tokens: Vec<(String, String)>,
     pub pos: Pos,
 }
 
@@ -2092,6 +2096,8 @@ impl<'a> Parser<'a> {
             transition: None,
             font_metrics: None,
             tokens: Vec::new(),
+            token_imports: Vec::new(),
+            imported_tokens: Vec::new(),
             pos: start,
         };
         loop {
@@ -2291,7 +2297,37 @@ impl<'a> Parser<'a> {
                                 "close the tokens block with a matching '}'",
                             ));
                         }
-                        let (name, np) = self.expect_ident("a token name")?;
+                        if self.word("import") {
+                            let ip = self.pos();
+                            self.bump();
+                            let t = self.peek().clone();
+                            let path = match t.tok {
+                                Tok::Str(s) => {
+                                    self.bump();
+                                    s
+                                }
+                                _ => {
+                                    return Err(Diagnostic::new(
+                                        self.path,
+                                        t.line,
+                                        t.col,
+                                        "a token import expects a path string",
+                                        "write import \"theme/tokens.json\"",
+                                    ))
+                                }
+                            };
+                            decl.token_imports.push((path, ip));
+                            self.eat_sym(",");
+                            self.eat_sym(";");
+                            continue;
+                        }
+                        let (mut name, np) = self.expect_ident("a token name")?;
+                        while self.sym("-") {
+                            self.bump();
+                            let (sub, _) = self.expect_ident("a subtag after '-'")?;
+                            name.push('-');
+                            name.push_str(&sub);
+                        }
                         self.expect_sym(":", "write 'success: \"#1FB14C\"' with a colon")?;
                         let (v, vp) = self.value()?;
                         let color = match v {
@@ -2306,7 +2342,7 @@ impl<'a> Parser<'a> {
                                 ))
                             }
                         };
-                        if !THEME_TOKEN_NAMES.contains(&name.as_str()) {
+                        if !THEME_TOKEN_NAMES.contains(&name.as_str()) && !name.starts_with("md-") {
                             return Err(Diagnostic::new(
                                 self.path,
                                 np.line,
