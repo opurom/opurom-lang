@@ -142,6 +142,7 @@ struct Platform {
     request_api: &'static str,
     navigate_api: &'static str,
     navigate_back_api: &'static str,
+    stop_refresh_api: &'static str,
     title_key: &'static str,
     open: &'static str,
     close: &'static str,
@@ -162,6 +163,7 @@ const PLATFORMS: &[Platform] = &[
         request_api: "wx.request",
         navigate_api: "wx.navigateTo",
         navigate_back_api: "wx.navigateBack",
+        stop_refresh_api: "wx.stopPullDownRefresh",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -180,6 +182,7 @@ const PLATFORMS: &[Platform] = &[
         request_api: "my.request",
         navigate_api: "my.navigateTo",
         navigate_back_api: "my.navigateBack",
+        stop_refresh_api: "my.stopPullDownRefresh",
         title_key: "defaultTitle",
         open: "{{",
         close: "}}",
@@ -198,6 +201,7 @@ const PLATFORMS: &[Platform] = &[
         request_api: "qq.request",
         navigate_api: "qq.navigateTo",
         navigate_back_api: "qq.navigateBack",
+        stop_refresh_api: "qq.stopPullDownRefresh",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -216,6 +220,7 @@ const PLATFORMS: &[Platform] = &[
         request_api: "tt.request",
         navigate_api: "tt.navigateTo",
         navigate_back_api: "tt.navigateBack",
+        stop_refresh_api: "tt.stopPullDownRefresh",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -234,6 +239,7 @@ const PLATFORMS: &[Platform] = &[
         request_api: "swan.request",
         navigate_api: "swan.navigateTo",
         navigate_back_api: "swan.navigateBack",
+        stop_refresh_api: "swan.stopPullDownRefresh",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -252,6 +258,7 @@ const PLATFORMS: &[Platform] = &[
         request_api: "ks.request",
         navigate_api: "ks.navigateTo",
         navigate_back_api: "ks.navigateBack",
+        stop_refresh_api: "ks.stopPullDownRefresh",
         title_key: "navigationBarTitleText",
         open: "{{",
         close: "}}",
@@ -3586,6 +3593,18 @@ fn mini_effects_with(
     ir_path: &str,
     keep_old_on_fail: bool,
 ) -> DResult<String> {
+    mini_effects_for(effects, p, ir_path, keep_old_on_fail, &[])
+}
+
+/// `states` lets a fetch into a list state behave as `assign` (section 7):
+/// the response must parse to an array of strings or the old value stays.
+fn mini_effects_for(
+    effects: &[Effect],
+    p: &Platform,
+    ir_path: &str,
+    keep_old_on_fail: bool,
+    states: &[EState],
+) -> DResult<String> {
     let mut code = String::new();
     if effects
         .iter()
@@ -3605,6 +3624,9 @@ fn mini_effects_with(
                         format!("IR fetch target '{into}' is not a valid state field"),
                     ));
                 }
+                let is_list = states
+                    .iter()
+                    .any(|st| st.name == *into && st.ty == "list");
                 let path = js_lit(&Json::String(path.clone()));
                 let target = js_lit(&Json::String(into.clone()));
                 code.push_str("await new Promise(function (resolve) { ");
@@ -3612,13 +3634,22 @@ fn mini_effects_with(
                     "{}({{url: {path}, method: \"GET\", success: function (res) {{ ",
                     p.request_api
                 ));
-                code.push_str(&format!(
-                    "page.{}({{{target}: typeof res.data === \"string\" ? res.data : JSON.stringify(res.data)}}); resolve(); ",
-                    p.state_set
-                ));
+                if is_list {
+                    // A list `into` behaves as assign: only an array of strings
+                    // writes; anything else keeps the old value (§7, D3).
+                    code.push_str(&format!(
+                        "let arr = res.data; if (typeof arr === \"string\") {{ try {{ arr = JSON.parse(arr); }} catch (e) {{ arr = null; }} }} if (Array.isArray(arr) && arr.every(function (x) {{ return typeof x === \"string\"; }})) {{ page.{}({{{target}: arr}}); }} resolve(); ",
+                        p.state_set
+                    ));
+                } else {
+                    code.push_str(&format!(
+                        "page.{}({{{target}: typeof res.data === \"string\" ? res.data : JSON.stringify(res.data)}}); resolve(); ",
+                        p.state_set
+                    ));
+                }
                 code.push_str("}, fail: function () { ");
-                if keep_old_on_fail {
-                    // Keep the previous value on failure (§7 pull-refresh).
+                if keep_old_on_fail || is_list {
+                    // Keep the previous value on failure (§7 pull-refresh, D3).
                     code.push_str("resolve(); ");
                 } else {
                     code.push_str(&format!(
@@ -3916,11 +3947,12 @@ fn mini_multipage_action_chain(event: &Json, p: &Platform, ir_path: &str) -> DRe
             "push" => {
                 let target = action_str(action, "target", ir_path)?;
                 code.push_str(&format!(
-                    "{}({{ url: \"pages/{}/index\" }}); ",
-                    p.navigate_api, target
+                    "{}({{url: \"pages/{}/index\"}}); ",
+                    p.navigate_api,
+                    target.to_lowercase()
                 ));
             }
-            "pop" => code.push_str(&format!("{}({{ delta: 1 }}); ", p.navigate_back_api)),
+            "pop" => code.push_str(&format!("{}({{delta: 1}}); ", p.navigate_back_api)),
             _ => {
                 code.push_str(&mini_action(action, p, ir_path)?);
                 code.push(' ');
@@ -3950,34 +3982,56 @@ fn emit_mini_multipage(
         .find(|p| p.key == target)
         .ok_or_else(|| bad_ir(ir_path, format!("no platform table entry for '{target}'")))?;
 
-    let page_path = |route: &str| format!("pages/{route}/index");
+    // Page paths are lowercase route names (A1); two routes that lowercase to
+    // the same path would collide on disk, so reject them up front.
+    let page_path = |route: &str| format!("pages/{}/index", route.to_lowercase());
+    let mut lower_seen: Vec<String> = Vec::new();
+    for page in &routes.pages {
+        let lower = page.name.to_lowercase();
+        if lower_seen.contains(&lower) {
+            return Err(bad_ir(
+                ir_path,
+                format!("routes '{}' and '{}' lower to the same page path", page.name, lower),
+            ));
+        }
+        lower_seen.push(lower);
+    }
     let mp_icons: &[Json] = ir
         .get("icons")
         .and_then(Json::as_array)
         .map(|a| a.as_slice())
         .unwrap_or(&[]);
 
-    // app.json: the launch router plus every main-package route page; routes
-    // with a subpackage go under subPackages (§7). The initialRoute must not be
-    // subpackaged (it must launch from the main package).
-    let mut pages: Vec<String> = vec!["pages/index/index".to_string()];
+    // app.json: one entry per route (A2), the initial route first so it is the
+    // launch page (A1). Routes with a subpackage go under subPackages (§7); the
+    // initialRoute must not be subpackaged.
+    let mut pages: Vec<String> = Vec::new();
     // page_path for a route that may live in a subpackage.
     let route_page_path = |page: &EPage| -> String {
         match &page.subpackage {
-            Some(pack) => format!("packages/{pack}/pages/{}/index", page.name),
+            Some(pack) => format!("packages/{pack}/pages/{}/index", page.name.to_lowercase()),
             None => page_path(&page.name),
         }
     };
     let mut sub_order: Vec<String> = Vec::new();
     let mut sub_map: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let initial = routes
+        .pages
+        .iter()
+        .find(|p| p.name == routes.initial)
+        .ok_or_else(|| bad_ir(ir_path, format!("initialRoute '{}' is not a declared route", routes.initial)))?;
+    if initial.subpackage.is_some() {
+        return Err(bad_ir(
+            ir_path,
+            format!("initialRoute '{}' must not declare a subpackage", routes.initial),
+        ));
+    }
+    pages.push(route_page_path(initial));
     for page in &routes.pages {
+        if page.name == routes.initial {
+            continue;
+        }
         if let Some(pack) = &page.subpackage {
-            if page.name == routes.initial {
-                return Err(bad_ir(
-                    ir_path,
-                    format!("initialRoute '{}' must not declare a subpackage", page.name),
-                ));
-            }
             if !sub_map.contains_key(pack) {
                 sub_order.push(pack.clone());
             }
@@ -4013,8 +4067,13 @@ fn emit_mini_multipage(
     // app.js: global state lives in App.globalData.states, every page writes
     // back through it and mirrors it into setData on onShow.
     let theme_js = carried_theme_js(ir);
+    let mut state_seed = JsonMap::new();
+    for st in states {
+        state_seed.insert(st.name.clone(), st.init.clone());
+    }
+    let states_js = js_lit(&Json::Object(state_seed));
     let mut app_js = format!(
-        "// Generated by opuromc for {}; multi-page, no IR interpreter.\nApp({{\n  globalData: {{ states: {{}} }},\n  onLaunch: function () {{ this.globalData.states = {{}}; }}\n}});\n",
+        "// Generated by opuromc for {}; multi-page, no IR interpreter.\nApp({{\n  globalData: {{ states: {states_js} }}\n}});\n",
         p.key
     );
     if let Some(theme) = theme_js {
@@ -4108,18 +4167,20 @@ fn emit_mini_multipage(
         // animation; a failed fetch keeps the old value (mini_effects resolves
         // either way, so failure leaves state as it was).
         if let Some(effects) = &page.pull_refresh {
-            let effect_code = mini_effects_with(effects, p, ir_path, true)?
+            let effect_code = mini_effects_for(effects, p, ir_path, true, states)?
                 .replace("page.setData(", "page.applyState(")
                 .replace("this.setData(", "this.applyState(");
             methods.push_str(&format!(
-                "  onPullDownRefresh: async function () {{ {effect_code}this.{}({{}}); }},\n",
-                "stopPullDownRefresh".to_string()
+                "  onPullDownRefresh: async function () {{ {effect_code}{}(); }},\n",
+                p.stop_refresh_api
             ));
         }
-        methods.push_str(&mini_computed(p, states, computed, ir_path)?);
+        let computed_methods = mini_computed(p, states, computed, ir_path)?
+            .replace("this.setData(", "this.applyState(");
+        methods.push_str(&computed_methods);
         for n in &nodes {
             if let Some(action) = n.events.get("tap") {
-                let effect_code = mini_effects(&event_effects(action, ir_path)?, p, ir_path)?
+                let effect_code = mini_effects_for(&event_effects(action, ir_path)?, p, ir_path, false, states)?
                     .replace("page.setData(", "page.applyState(")
                     .replace("this.setData(", "this.applyState(");
                 let code = mini_multipage_action_chain(action, p, ir_path)?
@@ -4147,32 +4208,21 @@ fn emit_mini_multipage(
         write(out, &format!("{base}.{}", p.markup_ext), &markup, ir_path)?;
         write(out, &format!("{base}.{}", p.style_ext), &style, ir_path)?;
         write(out, &format!("{base}.js"), &page_js, ir_path)?;
+        // Page-level config (A3): the platform title key; a page declaring
+        // pull-refresh enables pull-down (D1), every other page omits the key.
+        let mut page_cfg = JsonMap::new();
+        page_cfg.insert(
+            p.title_key.to_string(),
+            json!(page.title.clone().unwrap_or_else(|| page.name.clone())),
+        );
+        if page.pull_refresh.is_some() {
+            page_cfg.insert("enablePullDownRefresh".to_string(), json!(true));
+        }
+        let page_cfg_json = serde_json::to_string_pretty(&Json::Object(page_cfg))
+            .map_err(|e| bad_ir(ir_path, format!("cannot serialize page config: {e}")))?;
+        write(out, &format!("{base}.json"), &(page_cfg_json + "\n"), ir_path)?;
     }
 
-    // Launch router page: redirects into the initial route once.
-    let initial_path = page_path(&routes.initial);
-    let router_js = format!(
-        "// Generated by opuromc for {}; launch router to '{}', no IR interpreter.\nPage({{ onLoad: function () {{ const nav = {}; if (nav && nav.redirectTo) nav.redirectTo({{ url: \"{initial_path}\" }}); }} }});\n",
-        p.key, routes.initial, p.navigate_api
-    );
-    let router_markup = format!(
-        "<!-- Generated by opuromc for {}; launch router. -->\n<view class=\"route\"></view>\n",
-        p.key
-    );
-    let router_style = base_style.clone();
-    write(
-        out,
-        &format!("pages/index/index.{}", p.markup_ext),
-        &router_markup,
-        ir_path,
-    )?;
-    write(
-        out,
-        &format!("pages/index/index.{}", p.style_ext),
-        &router_style,
-        ir_path,
-    )?;
-    write(out, "pages/index/index.js", &router_js, ir_path)?;
     write(
         out,
         "app.json",
@@ -4233,40 +4283,37 @@ fn write_size_report(out: &Path, routes: &ERoutes, p: &Platform, ir_path: &str) 
     let main_bytes = total.saturating_sub(sub_total);
     let mut report = String::new();
     report.push_str(&format!("mini size report ({})\n", p.key));
-    report.push_str(&format!("main package: {main_bytes} bytes\n"));
-    for (pack, bytes) in &sub_packs {
-        report.push_str(&format!("subpackage '{pack}': {bytes} bytes\n"));
-    }
-    report.push_str(&format!("total: {total} bytes\n"));
-    // warning/error thresholds
-    let mut error: Option<String> = None;
-    if main_bytes > LIMIT_PACKAGE {
-        error = Some(format!(
-            "main package {main_bytes} bytes exceeds the 2 MB single-package limit"
-        ));
-    }
-    for (pack, bytes) in &sub_packs {
-        if *bytes > LIMIT_PACKAGE {
-            error = Some(format!(
-                "subpackage '{pack}' {bytes} bytes exceeds the 2 MB single-package limit"
+    // F1: "main package <N> B" plus one "<name> <N> B" line per subpackage.
+    let mut warnings: Vec<String> = Vec::new();
+    let warn = |bytes: usize, what: &str, warnings: &mut Vec<String>| {
+        if bytes > LIMIT_PACKAGE {
+            warnings.push(format!(
+                "warning: {what} {bytes} B exceeds the 2 MB single-package limit"
             ));
         }
+    };
+    warn(main_bytes, "main package", &mut warnings);
+    report.push_str(&format!("main package {main_bytes} B\n"));
+    for (pack, bytes) in &sub_packs {
+        warn(*bytes, pack, &mut warnings);
+        report.push_str(&format!("{pack} {bytes} B\n"));
     }
+    for line in &warnings {
+        report.push_str(line);
+        report.push('\n');
+    }
+    report.push_str(&format!("total {total} B\n"));
+    // F2: the 20 MB total limit is the hard error; the 2 MB single-package
+    // limit is a warning line above.
     if total > LIMIT_TOTAL {
-        error = Some(format!(
-            "total package {total} bytes exceeds the 20 MB total limit"
+        return Err(bad_ir(
+            ir_path,
+            format!(
+                "total package {total} B exceeds the 20 MB total limit; reduce assets or split into more subpackages"
+            ),
         ));
     }
-    match error {
-        Some(msg) => Err(bad_ir(
-            ir_path,
-            format!("{msg}; reduce assets or split into more subpackages"),
-        )),
-        None => {
-            write(out, "size-report.txt", &report, ir_path)?;
-            Ok(())
-        }
-    }
+    write(out, "size-report.txt", &report, ir_path)
 }
 
 // ------------------------------------------------- native multi-page ----

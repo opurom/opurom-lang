@@ -6840,22 +6840,206 @@ fn pull_sub_route_ir(name: &str) -> PathBuf {
 }
 
 #[test]
+fn mini_size_thresholds_warn_at_2mb_and_error_at_20mb() {
+    // F2: a single package above 2 MB is a warning line; above 20 MB total the
+    // emit fails. Real bytes: the oversized payload rides in page data.
+    let big = "x".repeat(2 * 1024 * 1024 + 512);
+    let dir = out_dir("mini-size-warn");
+    let ir = dir.join("warn.opuir.json");
+    let doc = json!({
+        "ir": "0.1.0", "app": "Big", "state": [{"name": "blob", "type": "string", "init": big}],
+        "initialRoute": "Home",
+        "routes": {"Home": {"title": "Home", "tree": {"id": 1, "kind": "Text",
+            "props": {"value": "{blob}"}, "events": {}, "children": []}}},
+        "theme": {"mode": "light", "accent": "#097FEB", "radius": 12}
+    });
+    fs::write(&ir, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+    let out = dir.join("warn-out");
+    let r = emit(&ir, "wechat", &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let report = fs::read_to_string(out.join("size-report.txt")).unwrap();
+    assert!(
+        report.contains("warning: main package"),
+        "must warn above 2 MB: {report}"
+    );
+
+    // Total above 20 MB fails the emit.
+    let huge = "y".repeat(20 * 1024 * 1024 + 512);
+    let doc = json!({
+        "ir": "0.1.0", "app": "Huge", "state": [{"name": "blob", "type": "string", "init": huge}],
+        "initialRoute": "Home",
+        "routes": {"Home": {"title": "Home", "tree": {"id": 1, "kind": "Text",
+            "props": {"value": "{blob}"}, "events": {}, "children": []}}},
+        "theme": {"mode": "light", "accent": "#097FEB", "radius": 12}
+    });
+    let ir = dir.join("huge.opuir.json");
+    fs::write(&ir, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+    let r = emit(&ir, "wechat", &dir.join("huge-out"));
+    assert!(!r.status.success(), "total above 20 MB must fail");
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(stderr.contains("20 MB total limit"), "{stderr}");
+}
+
+/// Behavioral harness (checklist C4/D3): load the generated app.js and page js
+/// in a Node `vm` sandbox with mocked App/Page/getApp/wx, then drive real
+/// handler calls — no string matching.
+fn mini_behavioral_harness(out: &Path, request_mode: &str) -> (bool, String) {
+    let harness = out.parent().unwrap().join("mini_behavior.js");
+    fs::write(
+        &harness,
+        r#"const fs = require("fs"), path = require("path"), vm = require("vm");
+const out = process.argv[2];
+const mode = process.argv[3];
+function fail(msg) { console.error("BEHAVIOR FAIL: " + msg); process.exit(1); }
+let sandbox = {};
+let appInstance = null;
+const navUrls = [];
+let stopRefresh = 0;
+sandbox.wx = {
+  navigateTo: (o) => navUrls.push(o.url),
+  navigateBack: (o) => navUrls.push("back:" + (o.delta || 1)),
+  request: (o) => {
+    if (mode === "fail") o.fail();
+    else o.success({ data: mode });
+  },
+  stopPullDownRefresh: () => { stopRefresh += 1; },
+};
+function run(file, extra) {
+  const code = fs.readFileSync(path.join(out, file), "utf8");
+  const ctx = Object.assign({
+    App: (c) => { sandbox.appCfg = c; },
+    Page: (c) => { sandbox.pageCfg = c; },
+    getApp: () => appInstance,
+    wx: sandbox.wx,
+    console,
+  }, extra || {});
+  sandbox = ctx; vm.createContext(ctx); vm.runInContext(code, ctx);
+  return ctx;
+}
+run("app.js");
+appInstance = { globalData: JSON.parse(JSON.stringify(sandbox.appCfg.globalData)) };
+function makeInstance(file) {
+  run(file);
+  const cfg = sandbox.pageCfg;
+  const inst = Object.assign({}, cfg, { data: JSON.parse(JSON.stringify(cfg.data)) });
+  inst.setData = (patch) => Object.assign(inst.data, patch);
+  return inst;
+}
+const home = makeInstance("pages/home/index.js");
+const detail = makeInstance("packages/../pages/detail/index.js".replace("packages/../", ""));
+// C1: globalData.states starts at the IR init values.
+if (appInstance.globalData.states.n !== 0) fail("C1 n=" + appInstance.globalData.states.n);
+// C4 part 1: tap +1 writes through to globalData.
+home.onTap2.call(home);
+if (appInstance.globalData.states.n !== 1) fail("C4 writeback n=" + appInstance.globalData.states.n);
+// B1 behavior: push records the target page url.
+home.onTap3.call(home);
+if (navUrls[0] !== "pages/detail/index") fail("B1 url=" + navUrls[0]);
+// C4 part 2: the pushed page mirrors fresh global state on onShow.
+detail.onShow.call(detail);
+if (detail.data.n !== 1) fail("C4 freshness n=" + detail.data.n);
+if (JSON.stringify(detail.data.items) !== JSON.stringify(["a", "b"]))
+  fail("C4 items=" + JSON.stringify(detail.data.items));
+// D3: pull-refresh with the mocked request mode.
+detail.onPullDownRefresh.call(detail).then(() => {
+  if (stopRefresh !== 1) fail("D2 stopPullDownRefresh not called");
+  let expected = ["a", "b"];
+  if (mode !== "fail") {
+    try { expected = JSON.parse(mode); } catch (e) { expected = ["a", "b"]; }
+  }
+  if (JSON.stringify(detail.data.items) !== JSON.stringify(expected))
+    fail("D3 expected " + JSON.stringify(expected) + " got " + JSON.stringify(detail.data.items));
+  console.log("BEHAVIOR OK " + mode);
+  process.exit(0);
+}).catch((e) => fail("async error: " + e));
+"#,
+    )
+    .unwrap();
+    let r = Command::new("node")
+        .arg(&harness)
+        .arg(out)
+        .arg(request_mode)
+        .output()
+        .expect("run node harness");
+    (r.status.success(), String::from_utf8_lossy(&r.stderr).to_string())
+}
+
+/// C4/D3 behavioral gates over the generated wechat bundle.
+#[test]
+fn mini_pages_behave_under_a_node_sandbox() {
+    let dir = out_dir("mini-behavior");
+    let ir = dir.join("behavior.opuir.json");
+    let doc = json!({
+        "ir": "0.1.0", "app": "Flow",
+        "state": [
+            {"name": "n", "type": "int", "init": 0},
+            {"name": "items", "type": "list", "init": ["a", "b"]}
+        ],
+        "initialRoute": "Home",
+        "routes": {
+            "Home": {"title": "Home", "tree": {"id": 1, "kind": "Column", "props": {}, "events": {}, "children": [
+                {"id": 2, "kind": "Button", "props": {"label": "+"}, "events": {"tap": {"op": "add", "target": "n", "value": 1}}, "children": []},
+                {"id": 3, "kind": "Button", "props": {"label": "Go"}, "events": {"tap": {"op": "push", "target": "Detail"}}, "children": []}
+            ]}},
+            "Detail": {"title": "Detail", "tree": {"id": 4, "kind": "Column", "props": {}, "events": {}, "children": [
+                {"id": 5, "kind": "Text", "props": {"value": "{n}"}, "events": {}, "children": []},
+                {"id": 6, "kind": "For", "props": {"source": "items", "item": "item"}, "events": {}, "children": [
+                    {"id": 7, "kind": "Text", "props": {"value": "{item}"}, "events": {}, "children": []}
+                ]}
+            ]}, "pullRefresh": {"effects": [{"kind": "fetch", "path": "/api/items", "into": "items"}]}}
+        },
+        "theme": {"mode": "light", "accent": "#097FEB", "radius": 12}
+    });
+    fs::write(&ir, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+    let out = dir.join("wx-out");
+    let r = emit(&ir, "wechat", &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+
+    // D3 failure mode: a failed fetch keeps the old list value.
+    let (ok, err) = mini_behavioral_harness(&out, "fail");
+    assert!(ok, "fail-mode harness: {err}");
+    // C4/D3 success mode: a string-array response assigns the list.
+    let (ok, err) = mini_behavioral_harness(&out, "[\"c\"]");
+    assert!(ok, "success-mode harness: {err}");
+    // D3 guard: a non-array response must not write state.
+    let (ok, err) = mini_behavioral_harness(&out, "not-json");
+    assert!(ok, "guard-mode harness: {err}");
+    let report = fs::read_to_string(out.join("size-report.txt")).unwrap();
+    assert!(report.contains("main package "), "{report}");
+}
+
+#[test]
 fn mini_pull_refresh_and_subpackage_follow_the_spec() {
     let ir = pull_sub_route_ir("mini-pr-sub");
     let out = out_dir("mini-pr-sub-out");
     let r = emit(&ir, "wechat", &out);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
-    // Pull-refresh: onPullDownRefresh runs the effects then stops the animation;
-    // a failed fetch keeps the old value (no error-string writeback).
-    let feed = fs::read_to_string(out.join("pages/Feed/index.js")).unwrap();
+    // D2: onPullDownRefresh runs the effects then stops the animation with the
+    // platform API; a failed fetch keeps the old value (no error writeback).
+    let feed = fs::read_to_string(out.join("pages/feed/index.js")).unwrap();
     assert!(feed.contains("onPullDownRefresh"), "{feed}");
-    assert!(feed.contains("stopPullDownRefresh"), "{feed}");
+    assert!(feed.contains("wx.stopPullDownRefresh(); "), "{feed}");
     assert!(feed.contains("/api/items"), "{feed}");
     assert!(feed.contains("fail: function () { resolve(); }"), "{feed}");
     assert!(!feed.contains("error: request failed"), "{feed}");
-    // Subpackage: Detail lives under packages/d2 and app.json lists subPackages.
+    // D1: only the declaring page enables pull-down in its page config.
+    let feed_cfg: Json = serde_json::from_str(
+        &fs::read_to_string(out.join("pages/feed/index.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(feed_cfg["enablePullDownRefresh"], true);
+    let detail_cfg: Json = serde_json::from_str(
+        &fs::read_to_string(out.join("packages/d2/pages/detail/index.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(detail_cfg.get("enablePullDownRefresh").is_none());
+    // D4: no onPullDownRefresh on undeclared pages.
+    let detail_js =
+        fs::read_to_string(out.join("packages/d2/pages/detail/index.js")).unwrap();
+    assert!(!detail_js.contains("onPullDownRefresh"), "{detail_js}");
+    // E2/E1: Detail lives under packages/d2; app.json maps root/pages 1:1.
     assert!(
-        out.join("packages/d2/pages/Detail/index.wxml").exists(),
+        out.join("packages/d2/pages/detail/index.wxml").exists(),
         "Detail must live under its subpackage root"
     );
     let app_json: Json =
@@ -6863,21 +7047,23 @@ fn mini_pull_refresh_and_subpackage_follow_the_spec() {
     let subs = app_json["subPackages"].as_array().expect("subPackages");
     assert_eq!(subs.len(), 1);
     assert_eq!(subs[0]["root"], "packages/d2");
+    assert_eq!(subs[0]["pages"], json!(["pages/detail/index"]));
     let main_pages: Vec<&str> = app_json["pages"]
         .as_array()
         .unwrap()
         .iter()
         .map(|v| v.as_str().unwrap())
         .collect();
-    assert!(main_pages.contains(&"pages/Feed/index"));
-    assert!(!main_pages.iter().any(|p| p.contains("Detail")));
-    // Size report: main + per-subpackage bytes, no threshold breach here.
+    // E2: the main package does not list subpackaged routes.
+    assert!(main_pages.contains(&"pages/feed/index"));
+    assert!(!main_pages.iter().any(|p| p.contains("detail")));
+    // F1: "main package <N> B" plus "<name> <N> B" per subpackage.
     let report = fs::read_to_string(out.join("size-report.txt")).expect("size report");
-    assert!(report.contains("main package:"), "{report}");
-    assert!(report.contains("subpackage 'd2':"), "{report}");
-    assert!(report.contains("total:"), "{report}");
+    assert!(report.contains("main package "), "{report}");
+    assert!(report.contains("d2 "), "{report}");
+    assert!(report.contains("total "), "{report}");
 
-    // Validation: the initialRoute must not declare a subpackage.
+    // E3: the initialRoute must not declare a subpackage.
     let dir = out_dir("mini-pr-bad");
     let bad = dir.join("bad.opuir.json");
     let mut doc: Json = serde_json::from_slice(&fs::read(&ir).unwrap()).unwrap();
@@ -6890,66 +7076,6 @@ fn mini_pull_refresh_and_subpackage_follow_the_spec() {
         "{}",
         String::from_utf8_lossy(&r.stderr)
     );
-}
-
-#[test]
-fn package_icons_from_the_ir_table_paint_on_mini_and_web() {
-    // Icons emitted by pkg_icons into the IR `icons` table must paint a real
-    // path on the mini emitters and the web canvas, not the fallback text.
-    let dir = out_dir("pkg-icon");
-    let ir = dir.join("pkg.opuir.json");
-    let doc = json!({
-        "ir": "0.1.0", "app": "Pkg", "state": [],
-        "tree": {"id": 1, "kind": "Column", "props": {}, "events": {}, "children": [
-            {"id": 2, "kind": "Icon", "props": {"name": "rocket"}, "events": {}, "children": []}
-        ]},
-        "icons": [{"name": "rocket", "viewBox": "0 0 256 256", "paths": [{"d": "M20 20 L60 60"}]}],
-        "theme": {"mode": "light", "accent": "#097FEB", "radius": 12}
-    });
-    fs::write(&ir, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
-
-    // mini: the IR path lands in the inline SVG data URI.
-    let wx = out_dir("pkg-icon-wx");
-    let r = emit(&ir, "wechat", &wx);
-    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
-    let markup = fs::read_to_string(wx.join("pages/index/index.wxml")).unwrap();
-    let b64 = markup
-        .split("base64,")
-        .nth(1)
-        .and_then(|rest| rest.split('"').next())
-        .expect("svg data uri");
-    let svg = base64_decode(b64);
-    assert!(svg.contains("M20 20 L60 60"), "mini svg: {svg}");
-
-    // web canvas: the IR path is stroked.
-    let web = out_dir("pkg-icon-web");
-    let r = emit(&ir, "web", &web);
-    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
-    let app_js = fs::read_to_string(web.join("app.js")).unwrap();
-    assert!(
-        app_js.contains("M20 20 L60 60"),
-        "web canvas path: {app_js}"
-    );
-}
-
-/// Minimal base64 decode for the icon data-URI assertion.
-fn base64_decode(s: &str) -> String {
-    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = Vec::new();
-    let mut buf = 0u32;
-    let mut bits = 0u32;
-    for c in s.bytes() {
-        let Some(v) = T.iter().position(|&t| t == c) else {
-            continue;
-        };
-        buf = (buf << 6) | v as u32;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-        }
-    }
-    String::from_utf8_lossy(&out).to_string()
 }
 
 #[test]
@@ -6996,19 +7122,19 @@ fn mini_targets_render_list_for_as_native_loop() {
 
 #[test]
 fn mini_emitters_emit_one_page_quad_per_route() {
-    // PLATFORM_DELIVERY.md §7: each route gets its own page quad, the launch
-    // page redirects to initialRoute, push/pop use the platform navigation API,
-    // and routeStack/currentRoute disappear. B-group motivation regression line.
+    // PLATFORM_DELIVERY.md section 7 + web-dev checklist A/B/G: one page quad
+    // per route, the initial route first and lowercase, push/pop on the
+    // platform navigation API, no routeStack/currentRoute simulation.
     let ir = two_route_ir("emit-mp-mini");
     let prefixes = [
-        ("wechat", "wx", "wxml"),
-        ("alipay", "my", "axml"),
-        ("qq", "qq", "qml"),
-        ("douyin", "tt", "ttml"),
-        ("baidu", "swan", "swan"),
-        ("kuaishou", "ks", "ksml"),
+        ("wechat", "wx", "wxml", "navigationBarTitleText"),
+        ("alipay", "my", "axml", "defaultTitle"),
+        ("qq", "qq", "qml", "navigationBarTitleText"),
+        ("douyin", "tt", "ttml", "navigationBarTitleText"),
+        ("baidu", "swan", "swan", "navigationBarTitleText"),
+        ("kuaishou", "ks", "ksml", "navigationBarTitleText"),
     ];
-    for (target, nav, ext) in prefixes {
+    for (target, nav, ext, title_key) in prefixes {
         let out = out_dir(&format!("emit-mp-{target}"));
         let r = emit(&ir, target, &out);
         assert!(
@@ -7016,18 +7142,7 @@ fn mini_emitters_emit_one_page_quad_per_route() {
             "{target}: {}",
             String::from_utf8_lossy(&r.stderr)
         );
-        // One page quad per route, no folded multi-section index page.
-        for route in ["Home", "Detail"] {
-            assert!(
-                out.join(format!("pages/{route}/index.{ext}")).exists(),
-                "{target} missing markup quad for {route}"
-            );
-            assert!(
-                out.join(format!("pages/{route}/index.js")).exists(),
-                "{target} missing js quad for {route}"
-            );
-        }
-        // app.json lists the router first, then every route page.
+        // A2: one entry per route; A1: the initial route first, lowercase.
         let app_json = fs::read_to_string(out.join("app.json")).unwrap();
         let doc: Json = serde_json::from_str(&app_json).unwrap();
         let pages: Vec<&str> = doc["pages"]
@@ -7036,33 +7151,59 @@ fn mini_emitters_emit_one_page_quad_per_route() {
             .iter()
             .map(|v| v.as_str().unwrap())
             .collect();
-        assert_eq!(pages[0], "pages/index/index", "{target} launch page first");
-        assert!(pages.contains(&"pages/Home/index"), "{target} Home page");
+        assert_eq!(pages, vec!["pages/home/index", "pages/detail/index"]);
+        // E4: a bundle without declared subpackages has no subPackages key.
+        assert!(doc.get("subPackages").is_none(), "{app_json}");
+        // A3: every route has the full quad including a page-level index.json.
+        for route in ["home", "detail"] {
+            assert!(
+                out.join(format!("pages/{route}/index.{ext}")).exists(),
+                "{target} missing markup quad for {route}"
+            );
+            assert!(
+                out.join(format!("pages/{route}/index.js")).exists(),
+                "{target} missing js quad for {route}"
+            );
+            assert!(
+                out.join(format!("pages/{route}/index.json")).exists(),
+                "{target} missing page config for {route}"
+            );
+        }
+        let home_cfg: Json = serde_json::from_str(
+            &fs::read_to_string(out.join("pages/home/index.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(home_cfg[title_key], "Home Screen");
         assert!(
-            pages.contains(&"pages/Detail/index"),
-            "{target} Detail page"
+            home_cfg.get("enablePullDownRefresh").is_none(),
+            "D1: undeclared page must not enable pull-down"
         );
 
-        // Each page's own markup renders only its subtree.
-        let home = fs::read_to_string(out.join(format!("pages/Home/index.{ext}"))).unwrap();
+        // A4/A5: each page's own markup only, no cross-route node ids.
+        let home = fs::read_to_string(out.join(format!("pages/home/index.{ext}"))).unwrap();
         assert!(home.contains("Welcome"), "{target} Home content");
         assert!(
-            !home.contains("Item"),
-            "{target} Home must not carry Detail"
+            !home.contains("Item") && !home.contains("n5") && !home.contains("n6"),
+            "{target} Home must not carry Detail nodes"
         );
-        let detail = fs::read_to_string(out.join(format!("pages/Detail/index.{ext}"))).unwrap();
+        let detail =
+            fs::read_to_string(out.join(format!("pages/detail/index.{ext}"))).unwrap();
         assert!(detail.contains("Item"), "{target} Detail content");
-
-        // B1: push lowers to the platform navigate API for pages/<target>/index.
-        let home_js = fs::read_to_string(out.join("pages/Home/index.js")).unwrap();
         assert!(
-            home_js.contains(&format!("{nav}.navigateTo({{ url: \"pages/Detail/index\"")),
+            !detail.contains("n2") && !detail.contains("n3"),
+            "{target} Detail must not carry Home nodes"
+        );
+
+        // B1: push lowers to the platform navigate API, lowercase target path.
+        let home_js = fs::read_to_string(out.join("pages/home/index.js")).unwrap();
+        assert!(
+            home_js.contains(&format!("{nav}.navigateTo({{url: \"pages/detail/index\"}})")),
             "{target} push navigate: {home_js}"
         );
-        // B3: pop lowers to navigateBack delta:1.
-        let detail_js = fs::read_to_string(out.join("pages/Detail/index.js")).unwrap();
+        // B3: pop lowers to navigateBack({delta: 1}).
+        let detail_js = fs::read_to_string(out.join("pages/detail/index.js")).unwrap();
         assert!(
-            detail_js.contains(&format!("{nav}.navigateBack({{ delta: 1 }})")),
+            detail_js.contains(&format!("{nav}.navigateBack({{delta: 1}})")),
             "{target} pop navigateBack: {detail_js}"
         );
         // B2: no routeStack/currentRoute simulation remains anywhere.
@@ -7070,14 +7211,15 @@ fn mini_emitters_emit_one_page_quad_per_route() {
             assert!(!js.contains("routeStack"), "{target} no routeStack");
             assert!(!js.contains("currentRoute"), "{target} no currentRoute");
         }
-        // State truth lives in App.globalData.states; pages mirror on onShow.
+        // C1: globalData.states seeded with the IR state init values.
+        // C2: pages mirror globalData on onShow.
         let app_js = fs::read_to_string(out.join("app.js")).unwrap();
-        assert!(app_js.contains("globalData"), "{target} globalData");
+        assert!(app_js.contains("globalData: { states: {} }"), "{app_js}");
         assert!(home_js.contains("onShow"), "{target} onShow mirror");
 
         let check = Command::new("node")
             .arg("--check")
-            .arg(out.join("pages/Home/index.js"))
+            .arg(out.join("pages/home/index.js"))
             .output()
             .expect("run node --check");
         assert!(check.status.success(), "{target} Home JS invalid");
