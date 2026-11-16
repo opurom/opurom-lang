@@ -314,6 +314,14 @@ fn each_error_class_is_a_friendly_diagnostic() {
         ),
         ("shadow_out_of_range.opu", "shadow must be between 0 and 8"),
         (
+            "duration_out_of_range.opu",
+            "duration must be between 0 and 10000",
+        ),
+        (
+            "delay_type_misuse.opu",
+            "prop 'delay' expects an integer",
+        ),
+        (
             "value_from_type_mismatch.opu",
             "cannot assign string to int state",
         ),
@@ -1209,6 +1217,33 @@ fn collision_curve_compiles_and_emits_across_targets() {
     let r = compile(&bad, &dir.join("bad.opuir.json"));
     assert!(!r.status.success());
     assert!(String::from_utf8_lossy(&r.stderr).contains("unknown animate value"));
+}
+
+#[test]
+fn duration_and_delay_tune_the_entry_animation() {
+    // Additive: duration/delay lower as integer props only when declared.
+    let src = fixture("duration_delay.opu");
+    let ir = compile_ok(&src);
+    let nodes = nodes_of(&ir);
+    let card = nodes
+        .iter()
+        .find(|n| n["kind"] == "Card")
+        .expect("Card node in fixture");
+    assert_eq!(card["props"]["duration"], 300);
+    assert_eq!(card["props"]["delay"], 100);
+    let plain = nodes
+        .iter()
+        .find(|n| n["kind"] == "Text" && n["props"]["value"] == "plain")
+        .expect("plain Text node");
+    assert!(plain["props"].get("duration").is_none());
+    assert!(plain["props"].get("delay").is_none());
+
+    // Bounds match opurom-render's ANIMATE_MAX_MS: 0..=10000 accepted,
+    // 10001 rejected at the source position.
+    let dir = out_dir("duration-bounds");
+    let ok = dir.join("ok.opu");
+    fs::write(&ok, "app B { Container(animate: ease, duration: 10000) }\n").unwrap();
+    assert!(compile_ok(&ok)["tree"]["props"]["duration"] == 10000);
 }
 
 #[test]

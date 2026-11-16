@@ -209,6 +209,8 @@ const GENERIC_PROPS: &[&str] = &[
     "fontScale",
     "highContrast",
     "particles",
+    "duration",
+    "delay",
 ];
 
 /// Additive `Input` validator props; these are not accepted on other kinds.
@@ -1123,6 +1125,31 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             ));
         }
         return Ok(json!(s));
+    }
+    if key == "duration" || key == "delay" {
+        // Bounds mirror opurom-render's ANIMATE_MAX_MS so a value the renderer
+        // would reject fails at its source position instead of at view time.
+        let n = match &arg.value {
+            AstValue::Lit(Lit::Int(n)) => *n,
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop '{key}' expects an integer, found {}",
+                        value_desc(other)
+                    ),
+                    format!("write an integer between 0 and 10000, such as {key}: 300"),
+                ))
+            }
+        };
+        if !(0..=10_000).contains(&n) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("{key} must be between 0 and 10000, found {n}"),
+                format!("write an integer between 0 and 10000, such as {key}: 300"),
+            ));
+        }
+        return Ok(json!(n));
     }
     if key == "gesture" {
         let s =

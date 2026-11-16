@@ -1,0 +1,9 @@
+app DurationDelay {
+  state on = false
+  Column(gap: 8) {
+    Card(animate: spring, duration: 300, delay: 100) {
+      Text("tuned")
+    }
+    Text("plain")
+  }
+}

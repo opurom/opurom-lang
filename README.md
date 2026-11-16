@@ -79,7 +79,7 @@ computed_factor = [ "-" ] INT | IDENT ;
 | List element read | `for (i in 3) { Text("{items[i]}") }` | element resolved into the node |
 | Theme block | `theme { mode: dark, accent: "#FF4D6D", radius: 8 }` | `IR.theme` |
 | Atomic shortcuts | `p` / `m` / `bg` / `rounded` | `padding` / `margin` / `color` / `radius` |
-| Visual props | `shadow`, `gradient`, `glass`, `opacity`, `border`, `animate` | passed through |
+| Visual props | `shadow`, `gradient`, `glass`, `opacity`, `border`, `animate`, `duration`, `delay` | passed through |
 | Design-system props | `Button("x", state: hover, variant: primary, tone: success)` | same-named `props` on any node |
 | Gesture binding | `Button("x", gesture: longPress) { ... }` | handler under the `longPress` event |
 | Particle field | `particles: "count=64,seed=7,radius=2"` | bounded `props.particles` object |
@@ -88,7 +88,7 @@ computed_factor = [ "-" ] INT | IDENT ;
 | Form validation | `Button("Check") { form.validate() }` | `{"op":"validate","target":"form"}` action |
 
 `for` integer counts are limited to 0..64; colors are `#RRGGBB`; `opacity` is 0..1; `shadow` is
-0..8. `particles` is a comma-separated `name=value` list: `count` is required and must be
+0..8; `duration` and `delay` are 0..10000 ms and tune the `animate` entry curve. `particles` is a comma-separated `name=value` list: `count` is required and must be
 0..512, `seed` is 0..4294967295 (default 1), `radius` is 0..32 (default 2), `alpha` is 0..1024
 (default 1024) and `color` is an optional `#RRGGBB` that falls back to the node accent.
 

@@ -1,0 +1,5 @@
+app Bad {
+  Card(animate: spring, delay: "300") {
+    Text("x")
+  }
+}
