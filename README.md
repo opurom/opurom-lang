@@ -88,7 +88,8 @@ computed_factor = [ "-" ] INT | IDENT ;
 | Form validation | `Button("Check") { form.validate() }` | `{"op":"validate","target":"form"}` action |
 
 `for` integer counts are limited to 0..64; colors are `#RRGGBB`; `opacity` is 0..1; `shadow` is
-0..8; `duration` and `delay` are 0..10000 ms and tune the `animate` entry curve. `particles` is a comma-separated `name=value` list: `count` is required and must be
+0..8; `duration` and `delay` are 0..10000 ms and tune the `animate` entry curve. `particles` is a
+comma-separated `name=value` list: `count` is required and must be
 0..512, `seed` is 0..4294967295 (default 1), `radius` is 0..32 (default 2), `alpha` is 0..1024
 (default 1024) and `color` is an optional `#RRGGBB` that falls back to the node accent.
 
