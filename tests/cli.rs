@@ -1293,14 +1293,23 @@ fn shared_clock_stagger_is_opt_in_and_validated() {
     .unwrap();
     let ir = compile_ok(&src);
     let nodes = nodes_of(&ir);
-    let a = nodes.iter().find(|n| n["props"]["value"] == "A").expect("A node");
+    let a = nodes
+        .iter()
+        .find(|n| n["props"]["value"] == "A")
+        .expect("A node");
     assert_eq!(a["props"]["animClock"], "home");
     assert_eq!(a["props"]["animInterval"][0], 0);
     assert_eq!(a["props"]["animInterval"][1], 500);
-    let b = nodes.iter().find(|n| n["props"]["value"] == "B").expect("B node");
+    let b = nodes
+        .iter()
+        .find(|n| n["props"]["value"] == "B")
+        .expect("B node");
     assert_eq!(b["props"]["animInterval"][0], 250);
     assert_eq!(b["props"]["animInterval"][1], 750);
-    let plain = nodes.iter().find(|n| n["props"]["value"] == "plain").expect("plain node");
+    let plain = nodes
+        .iter()
+        .find(|n| n["props"]["value"] == "plain")
+        .expect("plain node");
     assert!(plain["props"].get("animClock").is_none());
     assert!(plain["props"].get("animInterval").is_none());
 
@@ -1367,7 +1376,10 @@ fn text_typography_is_opt_in_and_validated() {
         .find(|n| n["kind"] == "Text" && n["props"]["value"] == "plain")
         .expect("plain Text node");
     for key in ["weight", "letterSpacing", "fontPx"] {
-        assert!(plain["props"].get(key).is_none(), "{key} leaked to default text");
+        assert!(
+            plain["props"].get(key).is_none(),
+            "{key} leaked to default text"
+        );
     }
 
     let golden = compile_ok(&contract("counter.opu"));
@@ -1398,7 +1410,10 @@ fn text_typography_is_opt_in_and_validated() {
             "unknown prop 'weight' on Column",
         ),
     ] {
-        let bad = dir.join(format!("bad-{}.opu", diagnostic.split_whitespace().next().unwrap()));
+        let bad = dir.join(format!(
+            "bad-{}.opu",
+            diagnostic.split_whitespace().next().unwrap()
+        ));
         fs::write(&bad, body).unwrap();
         let r = compile(&bad, &dir.join("bad.opuir.json"));
         assert!(!r.status.success(), "{body}");
@@ -1428,7 +1443,10 @@ fn column_span_is_additive_and_grid_scoped() {
 
     // The golden path stays byte-identical: no declaration, no prop.
     let plain = compile_ok(&contract("counter.opu"));
-    assert_eq!(plain, serde_json::from_slice::<Json>(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap());
+    assert_eq!(
+        plain,
+        serde_json::from_slice::<Json>(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap()
+    );
 
     for (body, diagnostic) in [
         (
@@ -1448,7 +1466,10 @@ fn column_span_is_additive_and_grid_scoped() {
             "columnSpan expects a non-negative integer",
         ),
     ] {
-        let bad = dir.join(format!("bad-{}.opu", diagnostic.split_whitespace().next().unwrap()));
+        let bad = dir.join(format!(
+            "bad-{}.opu",
+            diagnostic.split_whitespace().next().unwrap()
+        ));
         fs::write(&bad, body).unwrap();
         let r = compile(&bad, &dir.join("bad.opuir.json"));
         assert!(!r.status.success(), "{body}");

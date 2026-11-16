@@ -235,7 +235,15 @@ const GENERIC_NUMERIC: &[&str] = &["padding", "margin", "radius"];
 const HANDLER_VERBS: &[&str] = &["list", "get", "create", "update", "delete"];
 
 const ANIMATE_VALUES: &[&str] = &[
-    "spring", "ease", "inertia", "collision", "fast", "medium", "large", "color", "none",
+    "spring",
+    "ease",
+    "inertia",
+    "collision",
+    "fast",
+    "medium",
+    "large",
+    "color",
+    "none",
 ];
 
 /// Gesture names the renderer binds
@@ -463,7 +471,14 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             tap: false,
         },
         "Text" => KindInfo {
-            props: &["value", "size", "color", "weight", "letterSpacing", "fontPx"],
+            props: &[
+                "value",
+                "size",
+                "color",
+                "weight",
+                "letterSpacing",
+                "fontPx",
+            ],
             required: &["value"],
             numeric: &["size"],
             positional: Some("value"),
@@ -1013,15 +1028,22 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             AstValue::Lit(Lit::Str(s)) if !s.is_empty() => Ok(json!(s)),
             other => Err(ctx.err(
                 arg.pos,
-                format!("prop 'animClock' expects a non-empty string id, found {}", value_desc(other)),
+                format!(
+                    "prop 'animClock' expects a non-empty string id, found {}",
+                    value_desc(other)
+                ),
                 "write animClock: 'home'".to_string(),
             )),
         };
     }
     if key == "animInterval" {
         let parse = || -> Option<(i64, i64)> {
-            let AstValue::Lit(Lit::List(parts)) = &arg.value else { return None };
-            if parts.len() != 2 { return None }
+            let AstValue::Lit(Lit::List(parts)) = &arg.value else {
+                return None;
+            };
+            if parts.len() != 2 {
+                return None;
+            }
             Some((parts[0].parse().ok()?, parts[1].parse().ok()?))
         };
         return match parse() {
@@ -1045,7 +1067,10 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             AstValue::Lit(Lit::Str(s)) if s == "normal" || s == "bold" => Ok(json!(s)),
             other => Err(ctx.err(
                 arg.pos,
-                format!("prop 'weight' expects 'normal' or 'bold', found {}", value_desc(other)),
+                format!(
+                    "prop 'weight' expects 'normal' or 'bold', found {}",
+                    value_desc(other)
+                ),
                 "write weight: \"normal\" or weight: \"bold\"".to_string(),
             )),
         };
@@ -1055,7 +1080,10 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             AstValue::Lit(Lit::Int(n)) => Ok(json!(n)),
             other => Err(ctx.err(
                 arg.pos,
-                format!("prop 'letterSpacing' expects an integer, found {}", value_desc(other)),
+                format!(
+                    "prop 'letterSpacing' expects an integer, found {}",
+                    value_desc(other)
+                ),
                 "write letterSpacing: -2 on a Text node".to_string(),
             )),
         };
@@ -1070,7 +1098,10 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             )),
             other => Err(ctx.err(
                 arg.pos,
-                format!("prop 'fontPx' expects an integer, found {}", value_desc(other)),
+                format!(
+                    "prop 'fontPx' expects an integer, found {}",
+                    value_desc(other)
+                ),
                 "write fontPx: 34 on a Text node".to_string(),
             )),
         };
@@ -1085,7 +1116,10 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             )),
             other => Err(ctx.err(
                 arg.pos,
-                format!("columnSpan expects a non-negative integer, found {}", value_desc(other)),
+                format!(
+                    "columnSpan expects a non-negative integer, found {}",
+                    value_desc(other)
+                ),
                 "write columnSpan: 2 on a direct Grid child".to_string(),
             )),
         };
@@ -1247,7 +1281,8 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             return Err(ctx.err(
                 arg.pos,
                 format!("unknown animate value '{s}'"),
-                "use one of: spring, ease, inertia, collision, fast, medium, large, color, none".to_string(),
+                "use one of: spring, ease, inertia, collision, fast, medium, large, color, none"
+                    .to_string(),
             ));
         }
         return Ok(json!(s));
