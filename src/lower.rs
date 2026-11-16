@@ -211,6 +211,8 @@ const GENERIC_PROPS: &[&str] = &[
     "particles",
     "duration",
     "delay",
+    "repaintBoundary",
+    "relayoutBoundary",
 ];
 
 /// Additive `Input` validator props; these are not accepted on other kinds.
@@ -1118,16 +1120,16 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         }
         return Ok(json!(s));
     }
-    if key == "glass" {
+    if matches!(key, "glass" | "repaintBoundary" | "relayoutBoundary") {
         return match &arg.value {
             AstValue::Lit(Lit::Bool(b)) => Ok(json!(*b)),
             other => Err(ctx.err(
                 arg.pos,
                 format!(
-                    "prop 'glass' expects true or false, found {}",
+                    "prop '{key}' expects true or false, found {}",
                     value_desc(other)
                 ),
-                "write glass: true or glass: false".to_string(),
+                format!("write {key}: true or {key}: false"),
             )),
         };
     }

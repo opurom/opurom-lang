@@ -1,0 +1,11 @@
+app RenderBoundaries {
+  Column(gap: 8) {
+    Text("plain")
+    Card(repaintBoundary: true) {
+      Text("cached", relayoutBoundary: false)
+    }
+    Container(repaintBoundary: false, relayoutBoundary: true) {
+      Text("fixed")
+    }
+  }
+}

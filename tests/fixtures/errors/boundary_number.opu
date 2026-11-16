@@ -1,0 +1,1 @@
+app B { Text("x", relayoutBoundary: 1) }

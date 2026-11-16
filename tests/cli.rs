@@ -348,6 +348,15 @@ fn each_error_class_is_a_friendly_diagnostic() {
             "quality_unknown_field.opu",
             "unknown quality field 'shadow'",
         ),
+        (
+            "boundary_string.opu",
+            "prop 'repaintBoundary' expects true or false",
+        ),
+        (
+            "boundary_number.opu",
+            "prop 'relayoutBoundary' expects true or false",
+        ),
+        ("boundary_missing.opu", "expected a literal or identifier"),
     ];
     for &(file, message) in cases {
         let path = error_fixture(file);
@@ -1415,6 +1424,65 @@ fn duration_and_delay_tune_the_entry_animation() {
     let ok = dir.join("ok.opu");
     fs::write(&ok, "app B { Container(animate: ease, duration: 10000) }\n").unwrap();
     assert!(compile_ok(&ok)["tree"]["props"]["duration"] == 10000);
+}
+
+#[test]
+fn boundary_props_lower_only_when_declared() {
+    let ir = compile_ok(&fixture("render_boundaries.opu"));
+    let nodes = nodes_of(&ir);
+    let card = nodes
+        .iter()
+        .find(|n| n["kind"] == "Card")
+        .expect("Card node in fixture");
+    assert_eq!(card["props"]["repaintBoundary"], true);
+    assert!(card["props"].get("relayoutBoundary").is_none());
+    let container = nodes
+        .iter()
+        .find(|n| n["kind"] == "Container")
+        .expect("Container node in fixture");
+    assert_eq!(container["props"]["repaintBoundary"], false);
+    assert_eq!(container["props"]["relayoutBoundary"], true);
+    let cached = nodes
+        .iter()
+        .find(|n| n["props"]["value"] == "cached")
+        .expect("cached Text node");
+    assert_eq!(cached["props"]["relayoutBoundary"], false);
+    for n in nodes
+        .iter()
+        .filter(|n| n["props"]["value"] == "plain" || n["props"]["value"] == "fixed")
+    {
+        assert!(n["props"].get("repaintBoundary").is_none());
+        assert!(n["props"].get("relayoutBoundary").is_none());
+    }
+
+    // Additive: programs without boundary props keep their exact IR bytes.
+    let dir = out_dir("boundary-golden");
+    for (src, golden) in [
+        (
+            contract("counter.opu"),
+            fixture("golden/counter.opuir.json"),
+        ),
+        (
+            fixture("golden/todo.opu"),
+            fixture("golden/todo.opuir.json"),
+        ),
+    ] {
+        if !src.is_file() {
+            continue;
+        }
+        let out = dir.join(format!(
+            "{}.opuir.json",
+            golden.file_stem().unwrap().to_string_lossy()
+        ));
+        let r = compile(&src, &out);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        assert_eq!(fs::read(&out).unwrap(), fs::read(&golden).unwrap());
+        let plain: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+        for n in nodes_of(&plain) {
+            assert!(n["props"].get("repaintBoundary").is_none());
+            assert!(n["props"].get("relayoutBoundary").is_none());
+        }
+    }
 }
 
 #[test]

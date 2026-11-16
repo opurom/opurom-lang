@@ -30,6 +30,14 @@ Every field is independent and validated at its source position; absent fields k
 default render path. The declaration lowers to a root `renderQuality` object; a program without
 it emits byte-identical IR. Renderers consume the object as a contract, not CSS.
 
+## Incremental render boundaries
+
+`repaintBoundary: true` and `relayoutBoundary: true` are independent opt-in props on any node.
+They lower to the same-named `node.props` booleans for the incremental render pipeline
+(INCREMENTAL_RENDER_PIPELINE section 5): the first isolates paint marks, the second isolates
+layout marks. Only the literal booleans `true` and `false` are accepted; a program declaring
+neither keeps byte-identical IR.
+
 ## Grammar summary (IR 0.1.0 and the additive layers)
 
 ```ebnf
@@ -60,6 +68,7 @@ node          = KIND [ "(" [ args ] ")" ] [ "async" ] [ ";" | "{" { node | state
               | "for" "(" IDENT "in" ( INT | IDENT ) ")" "{" { node } "}"
               | "for" IDENT "in" [ "state" "." ] IDENT "{" { node } "}" ;
 args          = ( IDENT ":" value | value ) { "," ... } [ "," ] ;
+boundary_prop = ( "repaintBoundary" | "relayoutBoundary" ) ":" ( "true" | "false" ) ;
 value         = INT | FLOAT | STRING | BOOL | IDENT ;
 statement     = IDENT ( "+=" | "-=" | "=" ) expr [";"]
               | IDENT "." "toggle" "(" ")" [";"]
@@ -111,6 +120,7 @@ computed_factor = [ "-" ] INT | IDENT ;
 | Theme block | `theme { mode: dark, accent: "#FF4D6D", radius: 8 }` | `IR.theme` |
 | Atomic shortcuts | `p` / `m` / `bg` / `rounded` | `padding` / `margin` / `color` / `radius` |
 | Visual props | `shadow`, `gradient`, `glass`, `opacity`, `border`, `animate`, `duration`, `delay` | passed through |
+| Render boundaries | `Card(repaintBoundary: true, relayoutBoundary: false)` | same-named boolean `props` on any node |
 | Design-system props | `Button("x", state: hover, variant: primary, tone: success)` | same-named `props` on any node |
 | Gesture binding | `Button("x", gesture: longPress) { ... }` | handler under the `longPress` event |
 | Particle field | `particles: "count=64,seed=7,radius=2"` | bounded `props.particles` object |
