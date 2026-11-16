@@ -545,9 +545,9 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             tap: false,
         },
         "Icon" => KindInfo {
-            props: &["name"],
+            props: &["name", "width", "height"],
             required: &["name"],
-            numeric: &[],
+            numeric: &["width", "height"],
             positional: None,
             children: false,
             tap: false,

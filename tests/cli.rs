@@ -6698,6 +6698,56 @@ fn grid_compact_columns_lower_as_a_numeric_prop() {
 }
 
 #[test]
+fn icon_size_props_lower_as_numeric_and_opt_in() {
+    let dir = out_dir("icon-size");
+    let src = dir.join("icons.opu");
+    fs::write(
+        &src,
+        "app Icons {\n  Icon(name: \"star\", width: 48, height: 48)\n  Icon(name: \"home\")\n}\n",
+    )
+    .unwrap();
+    let doc = compile_ok(&src);
+    let icons: Vec<&Json> = nodes_of(&doc)
+        .into_iter()
+        .filter(|n| n["kind"] == "Icon")
+        .collect();
+    assert_eq!(icons.len(), 2);
+    assert_eq!(icons[0]["props"]["name"], "star");
+    assert_eq!(icons[0]["props"]["width"], 48);
+    assert_eq!(icons[0]["props"]["height"], 48);
+    assert!(icons[1]["props"].get("width").is_none());
+    assert!(icons[1]["props"].get("height").is_none());
+
+    let out = dir.join("icons.opuir.json");
+    let again = dir.join("icons-again.opuir.json");
+    assert!(compile(&src, &out).status.success());
+    assert!(compile(&src, &again).status.success());
+    assert_eq!(fs::read(&out).unwrap(), fs::read(&again).unwrap());
+
+    for (key, text) in [
+        (
+            "width",
+            "app Bad {\n  Icon(name: \"star\", width: \"big\")\n}\n",
+        ),
+        (
+            "height",
+            "app Bad {\n  Icon(name: \"star\", height: 24.5)\n}\n",
+        ),
+    ] {
+        let bad = dir.join("bad.opu");
+        fs::write(&bad, text).unwrap();
+        let r = compile(&bad, &dir.join("bad.opuir.json"));
+        assert!(!r.status.success(), "{key}: a non-integer must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            err.contains(&format!("prop '{key}' expects an integer")),
+            "{err}"
+        );
+        assert_diag(&err, &bad);
+    }
+}
+
+#[test]
 fn mini_program_grids_lower_column_counts_to_percentage_cells() {
     // WXSS/ACSS have no CSS Grid, so every mini-program target must emit a
     // wrapping flex row with equal-width cells. A phone-width page prefers a
