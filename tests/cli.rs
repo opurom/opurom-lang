@@ -6883,7 +6883,7 @@ fn mini_size_thresholds_warn_at_2mb_and_error_at_20mb() {
 /// Behavioral harness (checklist C4/D3): load the generated app.js and page js
 /// in a Node `vm` sandbox with mocked App/Page/getApp/wx, then drive real
 /// handler calls — no string matching.
-fn mini_behavioral_harness(out: &Path, request_mode: &str) -> (bool, String) {
+fn mini_behavioral_harness(out: &Path, request_mode: &str, prefix: &str) -> (bool, String) {
     let harness = out.parent().unwrap().join("mini_behavior.js");
     fs::write(
         &harness,
@@ -6895,7 +6895,8 @@ let sandbox = {};
 let appInstance = null;
 const navUrls = [];
 let stopRefresh = 0;
-sandbox.wx = {
+const prefix = process.argv[4] || "wx";
+const api = {
   navigateTo: (o) => navUrls.push(o.url),
   navigateBack: (o) => navUrls.push("back:" + (o.delta || 1)),
   request: (o) => {
@@ -6904,13 +6905,16 @@ sandbox.wx = {
   },
   stopPullDownRefresh: () => { stopRefresh += 1; },
 };
+sandbox[prefix] = api;
+const env = Object.assign({}, sandbox);
+env.wx = api;
+sandbox = env;
 function run(file, extra) {
   const code = fs.readFileSync(path.join(out, file), "utf8");
-  const ctx = Object.assign({
+  const ctx = Object.assign({}, env, {
     App: (c) => { sandbox.appCfg = c; },
     Page: (c) => { sandbox.pageCfg = c; },
     getApp: () => appInstance,
-    wx: sandbox.wx,
     console,
   }, extra || {});
   sandbox = ctx; vm.createContext(ctx); vm.runInContext(code, ctx);
@@ -6959,6 +6963,7 @@ detail.onPullDownRefresh.call(detail).then(() => {
         .arg(&harness)
         .arg(out)
         .arg(request_mode)
+        .arg(prefix)
         .output()
         .expect("run node harness");
     (r.status.success(), String::from_utf8_lossy(&r.stderr).to_string())
@@ -6991,21 +6996,26 @@ fn mini_pages_behave_under_a_node_sandbox() {
         "theme": {"mode": "light", "accent": "#097FEB", "radius": 12}
     });
     fs::write(&ir, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
-    let out = dir.join("wx-out");
-    let r = emit(&ir, "wechat", &out);
-    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
-
-    // D3 failure mode: a failed fetch keeps the old list value.
-    let (ok, err) = mini_behavioral_harness(&out, "fail");
-    assert!(ok, "fail-mode harness: {err}");
-    // C4/D3 success mode: a string-array response assigns the list.
-    let (ok, err) = mini_behavioral_harness(&out, "[\"c\"]");
-    assert!(ok, "success-mode harness: {err}");
-    // D3 guard: a non-array response must not write state.
-    let (ok, err) = mini_behavioral_harness(&out, "not-json");
-    assert!(ok, "guard-mode harness: {err}");
-    let report = fs::read_to_string(out.join("size-report.txt")).unwrap();
-    assert!(report.contains("main package "), "{report}");
+    for (target, prefix) in [
+        ("wechat", "wx"),
+        ("alipay", "my"),
+        ("qq", "qq"),
+        ("douyin", "tt"),
+        ("baidu", "swan"),
+        ("kuaishou", "ks"),
+    ] {
+        let out = dir.join(format!("{target}-out"));
+        let r = emit(&ir, target, &out);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        let (ok, err) = mini_behavioral_harness(&out, "fail", prefix);
+        assert!(ok, "{target} fail-mode: {err}");
+        let (ok, err) = mini_behavioral_harness(&out, "[\"c\"]", prefix);
+        assert!(ok, "{target} success-mode: {err}");
+        let (ok, err) = mini_behavioral_harness(&out, "not-json", prefix);
+        assert!(ok, "{target} guard-mode: {err}");
+        let report = fs::read_to_string(out.join("size-report.txt")).unwrap();
+        assert!(report.contains("main package "), "{report}");
+    }
 }
 
 #[test]
