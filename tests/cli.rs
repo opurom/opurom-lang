@@ -1877,6 +1877,115 @@ fn native_emitter_builds_and_runs_with_piped_stdin() {
 }
 
 #[test]
+fn native_emitter_exposes_ir_override_points() {
+    // The generated runner keeps the embedded IR as the default and exposes
+    // two override points for hot reload: the Opurom_IR_PATH startup swap
+    // and the `reload` stdin command.
+    let dir = out_dir("native-reload-src");
+    let ir = dir.join("app.opuir.json");
+    let r = compile(&fixture("features.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = dir.join("native");
+    let r = emit(&ir, "native", &out);
+    assert!(
+        r.status.success(),
+        "native emit failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let src = fs::read_to_string(out.join("src/main.rs")).unwrap();
+    assert!(src.contains("Opurom_IR_PATH"), "{src}");
+    assert!(src.contains("\"reload\" =>"), "{src}");
+    assert!(src.contains("render_frame(&state, &ir_text)"), "{src}");
+}
+
+#[test]
+fn native_emitter_reloads_ir_from_stdin_and_env() {
+    let dir = out_dir("native-reload");
+    let ir = dir.join("app.opuir.json");
+    let r = compile(&fixture("features.opu"), &ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = dir.join("native");
+    let r = emit(&ir, "native", &out);
+    assert!(
+        r.status.success(),
+        "native emit failed: {}",
+        String::from_utf8_lossy(&r.stderr)
+    );
+    let (built, stderr) = build_native(&out);
+    assert!(built, "cargo build --release failed:\n{stderr}");
+    let exe = out.join("target/release/opurom_native");
+
+    // An alternate tree with a different state shape, to prove the swap.
+    let alt_src = dir.join("alt.opu");
+    fs::write(
+        &alt_src,
+        "app NR {\n  state n: int = 0;\n  Column { Button(\"Add\") { n += 1 } }\n}\n",
+    )
+    .unwrap();
+    let alt = dir.join("alt.opuir.json");
+    let r = compile(&alt_src, &alt);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let alt_path = alt.to_string_lossy().to_string();
+
+    // A missing file keeps the embedded tree and reports the failure.
+    let (ran, stdout) = run_native(
+        &exe,
+        "reload /nonexistent/opuir.json\nstate\nquit\n",
+    );
+    assert!(ran, "native binary exited nonzero");
+    assert!(stdout.contains("error: cannot reload from"), "{stdout}");
+    assert!(
+        stdout.contains("state count=0 flag=false name=world"),
+        "{stdout}"
+    );
+
+    // Invalid IR content is rejected and the embedded tree survives.
+    let bad = dir.join("bad.opuir.json");
+    fs::write(&bad, "{ not json").unwrap();
+    let bad_path = bad.to_string_lossy().to_string();
+    let (ran, stdout) = run_native(&exe, &format!("reload {bad_path}\nstate\nquit\n"));
+    assert!(ran, "native binary exited nonzero");
+    assert!(stdout.contains("error: invalid IR in"), "{stdout}");
+    assert!(
+        stdout.contains("state count=0 flag=false name=world"),
+        "{stdout}"
+    );
+
+    // A valid reload swaps the rendered tree: a second frame comes from the
+    // alternate IR (its a11y sidecar is far smaller), while the compiled
+    // state and handlers stay untouched by design.
+    let (ran, stdout) = run_native(&exe, &format!("reload {alt_path}\nstate\nquit\n"));
+    assert!(ran, "native binary exited nonzero");
+    assert_eq!(stdout.matches("frame:").count(), 2, "{stdout}");
+    assert!(stdout.contains("a11y: 1074 bytes"), "{stdout}");
+    assert!(
+        stdout.contains("a11y: 157 bytes"),
+        "second render must come from the reloaded tree: {stdout}"
+    );
+    assert!(
+        stdout.contains("state count=0 flag=false name=world"),
+        "state must survive the reload: {stdout}"
+    );
+
+    // Opurom_IR_PATH swaps the tree at startup the same way.
+    let mut child = Command::new(&exe)
+        .env("Opurom_IR_PATH", &alt_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn generated native binary");
+    {
+        let mut pipe = child.stdin.take().expect("stdin pipe");
+        pipe.write_all(b"quit\n").expect("write stdin");
+    }
+    let o = child.wait_with_output().expect("wait for native binary");
+    assert!(o.status.success(), "native binary exited nonzero");
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(stdout.contains("frame:"), "{stdout}");
+}
+
+#[test]
 fn native_emitter_dispatches_gesture_commands() {
     let dir = out_dir("native-gesture");
     let src = dir.join("gesture.opu");
@@ -1975,7 +2084,7 @@ fn native_emitter_renders_and_writes_a_frame() {
     );
     for marker in [
         "opurom_render::Renderer",
-        "render_frame(&state)",
+        "render_frame(&state, &ir_text)",
         "write_ppm",
     ] {
         assert!(native_rs.contains(marker), "native source missing {marker}");

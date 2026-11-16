@@ -1717,8 +1717,10 @@ fn native_source(
         state_sets.push_str("    let _ = state;\n");
     }
     s.push_str(
-        &r##"// Rendered frame: re-renders the embedded IR with the live state, then
-// writes the PPM frame. Default viewport 800x600, overridable through
+        &r##"// Rendered frame: re-renders the current IR with the live state, then
+// writes the PPM frame. The IR text starts as the embedded constant and can
+// be swapped at startup through Opurom_IR_PATH or at runtime through the
+// `reload` stdin command. Default viewport 800x600, overridable through
 // Opurom_FRAME_WIDTH and Opurom_FRAME_HEIGHT. The frame path is the first
 // argument, defaulting to the system temp directory so the state machine never
 // writes into the caller's directory.
@@ -1758,8 +1760,8 @@ fn write_ppm(frame: &opurom_render::Frame, path: &str) -> std::io::Result<()> {
     std::fs::write(path, ppm)
 }
 
-fn render_frame(state: &State) {
-    let ir = match opurom_render::parse_ir(IR_TEXT) {
+fn render_frame(state: &State, ir_text: &str) {
+    let ir = match opurom_render::parse_ir(ir_text) {
         Ok(ir) => ir,
         Err(e) => {
             println!("error: embedded IR is invalid: {e}");
@@ -1805,7 +1807,20 @@ fn render_frame(state: &State) {
     }
     s.push_str("    };\n");
     s.push_str(concat!(
-        "    render_frame(&state);\n",
+        "    // The embedded constant stays the default; Opurom_IR_PATH swaps it\n",
+        "    // at startup so a preview host can hand the binary fresh IR without\n",
+        "    // rebuilding. A bad override keeps the embedded IR.\n",
+        "    let mut ir_text = IR_TEXT.to_string();\n",
+        "    if let Ok(path) = std::env::var(\"Opurom_IR_PATH\") {\n",
+        "        match std::fs::read_to_string(&path) {\n",
+        "            Ok(text) => match opurom_render::parse_ir(&text) {\n",
+        "                Ok(_) => ir_text = text,\n",
+        "                Err(e) => println!(\"error: cannot load IR from {path}: {e}\"),\n",
+        "            },\n",
+        "            Err(e) => println!(\"error: cannot load IR from {path}: {e}\"),\n",
+        "        }\n",
+        "    }\n",
+        "    render_frame(&state, &ir_text);\n",
         "    let stdin = io::stdin();\n",
         "    for line in stdin.lock().lines() {\n",
         "        let line = match line { Ok(l) => l, Err(_) => break };\n",
@@ -1813,6 +1828,23 @@ fn render_frame(state: &State) {
         "        if parts.is_empty() { continue; }\n",
         "        match parts[0] {\n",
         "            \"quit\" => break,\n",
+        "            \"reload\" => {\n",
+        "                if parts.len() < 2 {\n",
+        "                    println!(\"error: usage: reload <path>\");\n",
+        "                    continue;\n",
+        "                }\n",
+        "                let path = parts[1..].join(\" \");\n",
+        "                match std::fs::read_to_string(&path) {\n",
+        "                    Ok(text) => match opurom_render::parse_ir(&text) {\n",
+        "                        Ok(_) => {\n",
+        "                            ir_text = text;\n",
+        "                            render_frame(&state, &ir_text);\n",
+        "                        }\n",
+        "                        Err(e) => println!(\"error: invalid IR in {path}: {e}\"),\n",
+        "                    },\n",
+        "                    Err(e) => println!(\"error: cannot reload from {path}: {e}\"),\n",
+        "                }\n",
+        "            }\n",
         "            \"state\" => print_state(&state),\n",
         "            \"tap\" | \"doubleTap\" | \"longPress\" | \"drag\" | \"input\" => {\n",
         "                if parts.len() < 2 {\n",
@@ -1828,7 +1860,7 @@ fn render_frame(state: &State) {
         "                let patches = apply(&mut state, id, parts[0], input);\n",
         "                print_state(&state);\n",
         "                for p in patches { println!(\"patch {}={}\", p.name, p.value); }\n",
-        "                render_frame(&state);\n",
+        "                render_frame(&state, &ir_text);\n",
         "            }\n",
         "            other => println!(\"error: unknown command {:?}\", other),\n",
         "        }\n",
