@@ -2854,6 +2854,93 @@ fn optimizer_is_a_no_op_on_golden_counter_ir() {
 }
 
 #[test]
+fn optimizer_exports_state_refs_and_nearest_boundaries() {
+    let dir = out_dir("opt-maps");
+    let raw = dir.join("raw.opuir.json");
+    let r = compile(&fixture("incremental_maps.opu"), &raw);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = dir.join("optimized.opuir.json");
+    let r = optimize(&raw, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let got: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+
+    // Direct references only, sorted and deduplicated; dead state is gone from
+    // both the state array and the changed-key map.
+    assert_eq!(got["stateRefs"], json!({"a": [2, 5], "b": [4, 7]}));
+    assert!(got["stateRefs"].get("dead").is_none());
+    assert_eq!(state_names(&got), vec!["a", "b"]);
+
+    // Nearest boundary is inclusive; a false prop inherits; no boundary is null.
+    assert_eq!(
+        got["nodeBoundaries"],
+        json!({
+            "0": {"repaint": null, "relayout": null},
+            "1": {"repaint": 1, "relayout": null},
+            "2": {"repaint": 1, "relayout": null},
+            "3": {"repaint": 1, "relayout": 3},
+            "4": {"repaint": 1, "relayout": 3},
+            "5": {"repaint": 1, "relayout": 3},
+            "6": {"repaint": 6, "relayout": 3},
+            "7": {"repaint": 6, "relayout": 3},
+            "8": {"repaint": 1, "relayout": 3},
+            "9": {"repaint": null, "relayout": null}
+        })
+    );
+
+    // Two runs, plus re-optimizing exported IR, produce identical bytes.
+    let again = dir.join("optimized-again.opuir.json");
+    let r = optimize(&raw, &again);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(fs::read(&out).unwrap(), fs::read(&again).unwrap());
+    let twice = dir.join("optimized-twice.opuir.json");
+    let r = optimize(&out, &twice);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(fs::read(&out).unwrap(), fs::read(&twice).unwrap());
+}
+
+#[test]
+fn optimizer_maps_are_absent_without_boundaries() {
+    let dir = out_dir("opt-maps-absent");
+    for (src, golden) in [
+        (
+            contract("counter.opu"),
+            Some(fixture("golden/counter.opuir.json")),
+        ),
+        (
+            fixture("golden/todo.opu"),
+            Some(fixture("golden/todo.opuir.json")),
+        ),
+        (
+            workspace()
+                .join("..")
+                .join("opurom-examples/apps/forum/forum.opu"),
+            None,
+        ),
+    ] {
+        if !src.is_file() {
+            continue;
+        }
+        let compiled = dir.join("compiled.opuir.json");
+        let r = compile(&src, &compiled);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        let out = dir.join("optimized.opuir.json");
+        let r = optimize(&compiled, &out);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        if let Some(golden) = golden {
+            assert_eq!(
+                fs::read(&out).unwrap(),
+                fs::read(&golden).unwrap(),
+                "{} changed its bytes",
+                golden.display()
+            );
+        }
+        let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+        assert!(ir.get("stateRefs").is_none());
+        assert!(ir.get("nodeBoundaries").is_none());
+    }
+}
+
+#[test]
 fn optimizer_removes_dead_state_and_null_props() {
     let dir = out_dir("opt-dead");
     let ir_path = dir.join("dead.opuir.json");

@@ -1,8 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-use serde_json::Value as Json;
+use serde_json::{json, Map as JsonMap, Value as Json};
 
 use crate::diag::{DResult, Diagnostic};
 use crate::emit::bad_ir;
@@ -20,6 +20,9 @@ const IR_FIELDS: &[&str] = &[
     "computed",
     "initialRoute",
     "routes",
+    "icons",
+    "stateRefs",
+    "nodeBoundaries",
 ];
 const ROUTE_FIELDS: &[&str] = &["tree", "title"];
 const STATE_FIELDS: &[&str] = &["name", "type", "init"];
@@ -278,6 +281,105 @@ fn collect_refs(v: &Json, states: &[String], refs: &mut HashSet<String>) {
     }
 }
 
+/// Resolve a reference to the base states whose patches can change it. Computed
+/// names expand through surviving operands; loop variables and reserved targets
+/// are not state keys and drop out.
+fn base_states(
+    name: &str,
+    live: &HashSet<String>,
+    computed: &HashMap<String, Vec<String>>,
+    out: &mut BTreeSet<String>,
+) {
+    let mut stack = vec![name.to_string()];
+    let mut seen = HashSet::new();
+    while let Some(name) = stack.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        if live.contains(&name) {
+            out.insert(name);
+        } else if let Some(operands) = computed.get(&name) {
+            stack.extend(operands.iter().cloned());
+        }
+    }
+}
+
+/// Aggregate the states one node directly observes: its own props, visibility
+/// and events, not its children's subtrees. Each child gets its own entry.
+fn export_state_refs(
+    node: &Json,
+    states: &[String],
+    live: &HashSet<String>,
+    computed: &HashMap<String, Vec<String>>,
+    out: &mut BTreeMap<String, BTreeSet<u64>>,
+) {
+    let Some(id) = node["id"].as_u64() else {
+        return;
+    };
+    let mut own = node.clone();
+    if let Some(o) = own.as_object_mut() {
+        o.remove("children");
+    }
+    let mut refs = HashSet::new();
+    collect_refs(&own, states, &mut refs);
+    let mut base = BTreeSet::new();
+    for name in refs {
+        base_states(&name, live, computed, &mut base);
+    }
+    for name in base {
+        out.entry(name).or_default().insert(id);
+    }
+    if let Some(children) = node["children"].as_array() {
+        for child in children {
+            export_state_refs(child, states, live, computed, out);
+        }
+    }
+}
+
+fn boundary_true(node: &Json, key: &str) -> bool {
+    node["props"]
+        .get(key)
+        .and_then(Json::as_bool)
+        .unwrap_or(false)
+}
+
+fn has_boundary(node: &Json) -> bool {
+    boundary_true(node, "repaintBoundary")
+        || boundary_true(node, "relayoutBoundary")
+        || node["children"]
+            .as_array()
+            .is_some_and(|c| c.iter().any(has_boundary))
+}
+
+/// Precompute each node's nearest repaint and relayout boundary, inclusive of
+/// the node itself. `null` means no boundary up to the tree root.
+fn export_boundaries(
+    node: &Json,
+    repaint: Option<u64>,
+    relayout: Option<u64>,
+    out: &mut JsonMap<String, Json>,
+) {
+    let Some(id) = node["id"].as_u64() else {
+        return;
+    };
+    let rp = if boundary_true(node, "repaintBoundary") {
+        Some(id)
+    } else {
+        repaint
+    };
+    let rl = if boundary_true(node, "relayoutBoundary") {
+        Some(id)
+    } else {
+        relayout
+    };
+    out.insert(id.to_string(), json!({"repaint": rp, "relayout": rl}));
+    if let Some(children) = node["children"].as_array() {
+        for child in children {
+            export_boundaries(child, rp, rl, out);
+        }
+    }
+}
+
 fn drop_null_props(node: &mut Json) {
     if let Some(props) = node.get_mut("props").and_then(Json::as_object_mut) {
         props.retain(|_, v| !v.is_null());
@@ -391,6 +493,53 @@ fn optimize(ir: &mut Json) {
             if let Some(tree) = entry.get_mut("tree") {
                 drop_null_props(tree);
             }
+        }
+    }
+    let live: HashSet<String> = ir
+        .get("state")
+        .and_then(Json::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|s| s.get("name").and_then(Json::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let computed: HashMap<String, Vec<String>> = ir
+        .get("computed")
+        .and_then(Json::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| {
+                    let name = entry.get("name")?.as_str()?;
+                    let expr = entry.get("expr")?.as_str()?;
+                    Some((
+                        name.to_string(),
+                        expr_idents(expr).map(str::to_string).collect(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let trees: Vec<&Json> = ir
+        .get("tree")
+        .into_iter()
+        .chain(
+            ir.get("routes")
+                .and_then(Json::as_object)
+                .into_iter()
+                .flat_map(|routes| routes.values().filter_map(|entry| entry.get("tree"))),
+        )
+        .collect();
+    if trees.iter().any(|tree| has_boundary(tree)) {
+        let mut boundaries = JsonMap::new();
+        let mut refs: BTreeMap<String, BTreeSet<u64>> = BTreeMap::new();
+        for tree in trees {
+            export_boundaries(tree, None, None, &mut boundaries);
+            export_state_refs(tree, &states, &live, &computed, &mut refs);
+        }
+        if let Some(o) = ir.as_object_mut() {
+            o.insert("stateRefs".to_string(), json!(refs));
+            o.insert("nodeBoundaries".to_string(), Json::Object(boundaries));
         }
     }
 }

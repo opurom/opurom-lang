@@ -38,6 +38,13 @@ They lower to the same-named `node.props` booleans for the incremental render pi
 layout marks. Only the literal booleans `true` and `false` are accepted; a program declaring
 neither keeps byte-identical IR.
 
+`opuromc optimize` exports two additive maps when a tree declares a boundary prop:
+`stateRefs` maps each live state name to the sorted, deduplicated ids of nodes that
+directly read it (dead states and loop-local names are excluded), and `nodeBoundaries`
+maps each node id to `{"repaint": <id|null>, "relayout": <id|null>}`, the nearest
+boundary at or above it (`null` means the root). Both are deterministic and absent
+from programs without boundaries.
+
 ## Grammar summary (IR 0.1.0 and the additive layers)
 
 ```ebnf

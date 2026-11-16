@@ -1,0 +1,17 @@
+app IncrementalMaps {
+  state a = 0
+  state b = 0
+  state dead = 7
+  Column(repaintBoundary: true) {
+    Text("{a}")
+    Row(relayoutBoundary: true) {
+      Text("{b}")
+      Text("{a}")
+      Container(repaintBoundary: true) {
+        Text("{b}")
+      }
+      Text("plain", repaintBoundary: false)
+    }
+  }
+  Text("outside")
+}
