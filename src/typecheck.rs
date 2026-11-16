@@ -642,7 +642,7 @@ impl<'a> Checker<'a> {
     fn effect(&self, effect: &Effect) -> DResult<()> {
         if let Effect::Fetch { into, pos, .. } = effect {
             let ty = self.state_of(into).ok_or_else(|| {
-                self.unknown_state(into, "in fetch target", *pos, "a declared string state")
+                self.unknown_state(into, "in fetch target", *pos, "a declared string or list state")
             })?;
             if self.env.computed.contains(into) {
                 return Err(self.readonly(into, ty, *pos));
@@ -651,11 +651,11 @@ impl<'a> Checker<'a> {
                 return Err(self.err(
                     *pos,
                     format!(
-                        "'fetch' requires a string state, found {} state '{}'",
+                        "'fetch' requires a string or list state, found {} state '{}'",
                         ty.name(),
                         into
                     ),
-                    "string",
+                    "string or list",
                     ty.name(),
                     format!("declare '{into}' with a string or list initializer"),
                 ));

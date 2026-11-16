@@ -2890,6 +2890,17 @@ fn async_effects_lower_to_the_documented_ir() {
         ir["state"][1],
         json!({"name": "payload", "type": "string", "init": "idle"})
     );
+
+    // Phase A data path: fetch lands API data directly in a list state.
+    let list_ir = compile_ok(&fixture("fetch_list.opu"));
+    assert_eq!(
+        list_ir["tree"]["events"]["tap"]["effects"],
+        json!([{"kind": "fetch", "path": "/api/items", "into": "items"}])
+    );
+    assert_eq!(
+        list_ir["state"][0],
+        json!({"name": "items", "type": "list", "init": []})
+    );
 }
 
 #[test]
@@ -2904,7 +2915,7 @@ fn async_diagnostics_are_friendly() {
             "delay must be between 0 and 60000 ms",
         ),
         ("delay_negative.opu", "delay must be between 0 and 60000 ms"),
-        ("fetch_non_string.opu", "'fetch' requires a string state"),
+        ("fetch_non_string.opu", "'fetch' requires a string or list state"),
         (
             "fetch_unknown_state.opu",
             "unknown state 'payload' in fetch target",

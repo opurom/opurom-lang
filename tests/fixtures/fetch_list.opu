@@ -1,0 +1,6 @@
+app FetchList {
+  state items = []
+  Button("Load") async {
+    await fetch("/api/items", items)
+  }
+}
