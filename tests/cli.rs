@@ -1754,6 +1754,32 @@ fn quality_decl_lowers_to_root_render_quality() {
 }
 
 #[test]
+fn optimizer_preserves_render_quality_field() {
+    let dir = out_dir("opt-render-quality");
+    let raw = dir.join("raw.opuir.json");
+    let r = compile(&fixture("quality.opu"), &raw);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = dir.join("optimized.opuir.json");
+    let r = optimize(&raw, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let got: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(got["renderQuality"]["msaa"], 4);
+    assert_eq!(got["renderQuality"]["gradientBits"], 16);
+
+    let plain_raw = dir.join("plain.opuir.json");
+    let r = compile(&fixture("features_additive.opu"), &plain_raw);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let plain_out = dir.join("plain-optimized.opuir.json");
+    let r = optimize(&plain_raw, &plain_out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let plain: Json = serde_json::from_slice(&fs::read(&plain_out).unwrap()).unwrap();
+    assert!(
+        plain.get("renderQuality").is_none(),
+        "no quality decl means no renderQuality after optimize"
+    );
+}
+
+#[test]
 fn i18n_v1_lowers_root_fields_catalogs_and_locale_patch() {
     let ir = compile_ok(&fixture("i18n.opu"));
     assert_eq!(

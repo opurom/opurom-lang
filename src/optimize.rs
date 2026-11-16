@@ -23,6 +23,7 @@ const IR_FIELDS: &[&str] = &[
     "icons",
     "stateRefs",
     "nodeBoundaries",
+    "renderQuality",
 ];
 const ROUTE_FIELDS: &[&str] = &["tree", "title"];
 const STATE_FIELDS: &[&str] = &["name", "type", "init"];
