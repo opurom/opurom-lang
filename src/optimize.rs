@@ -24,6 +24,7 @@ const IR_FIELDS: &[&str] = &[
     "stateRefs",
     "nodeBoundaries",
     "renderQuality",
+    "transition",
 ];
 const ROUTE_FIELDS: &[&str] = &["tree", "title"];
 const STATE_FIELDS: &[&str] = &["name", "type", "init"];
