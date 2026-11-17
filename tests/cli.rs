@@ -3732,6 +3732,36 @@ fn fold_node_visibility_renumbers_and_matches_fixture() {
 }
 
 #[test]
+fn folded_ir_renders_without_the_sidecar() {
+    // The id map is a write-only migration artifact: deleting it must leave the
+    // folded IR fully renderable and frame-identical.
+    let dir = out_dir("fold-nodes-sidecar-free");
+    let src = fixture("folded/visibility.opu");
+    let plain = dir.join("plain.opuir.json");
+    let folded = dir.join("folded.opuir.json");
+    assert!(compile(&src, &plain).status.success());
+    let r = compile_nodes_folded(&src, &folded);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let sidecar = folded.with_extension("idmap.json");
+    assert!(sidecar.is_file());
+    fs::remove_file(&sidecar).unwrap();
+    assert!(!sidecar.exists());
+
+    let (ok_plain, out_plain) = render_ir(&plain, &dir.join("plain.ppm"));
+    let (ok_folded, out_folded) = render_ir(&folded, &dir.join("folded.ppm"));
+    assert!(ok_plain, "{out_plain}");
+    assert!(ok_folded, "{out_folded}");
+    assert_eq!(
+        fs::read(dir.join("plain.ppm")).unwrap(),
+        fs::read(dir.join("folded.ppm")).unwrap()
+    );
+    assert!(
+        !sidecar.exists(),
+        "render must not recreate or read the sidecar"
+    );
+}
+
+#[test]
 fn fold_node_visibility_keeps_native_patches_equal_via_id_map() {
     let dir = out_dir("fold-nodes-native");
     let src = fixture("folded/visibility.opu");

@@ -107,8 +107,9 @@ fn run() -> DResult<()> {
                 )
             })?;
             if let Some(map) = idmap {
-                // Build sidecar only: node ids are dense pre-order and are not
-                // stable across folding, so consumers migrate through this map.
+                // Write-only build artifact: nothing in the build or at
+                // runtime ever reads this back; it exists for manual and
+                // script migration only.
                 let sidecar = Path::new(&out).with_extension("idmap.json");
                 let text = serde_json::to_string_pretty(&map).map_err(|e| {
                     Diagnostic::file(
