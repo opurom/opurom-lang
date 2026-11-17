@@ -8820,3 +8820,60 @@ fn native_without_press_frames_are_byte_identical() {
         "press off must be byte-identical to no press command"
     );
 }
+
+// ---- Button textColor (G7, background/foreground separation) ----
+
+#[test]
+fn text_color_writes_ir_independent_of_fill() {
+    let dir = out_dir("text-color");
+    let src = dir.join("tc.opu");
+    fs::write(
+        &src,
+        "app TC {\n  Button(\"Go\", color: \"#112233\", textColor: \"#EEFFFF\")\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    assert_eq!(ir["tree"]["props"]["color"], json!("#112233"));
+    assert_eq!(ir["tree"]["props"]["textColor"], json!("#EEFFFF"));
+}
+
+#[test]
+fn text_color_is_generic_across_kinds() {
+    let dir = out_dir("text-color-generic");
+    let src = dir.join("g.opu");
+    fs::write(&src, "app G {\n  Text(\"hi\", textColor: \"#FEDCBA\")\n}\n").unwrap();
+    let ir = compile_ok(&src);
+    assert_eq!(ir["tree"]["props"]["textColor"], json!("#FEDCBA"));
+}
+
+#[test]
+fn text_color_rejects_non_color_and_non_string() {
+    let dir = out_dir("text-color-bad");
+    let bad = dir.join("bad.opu");
+    fs::write(&bad, "app B { Button(\"Go\", textColor: \"red\") }\n").unwrap();
+    let r = compile(&bad, &dir.join("bad.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("invalid color 'red' for 'textColor'"),
+        "{stderr}"
+    );
+
+    let typ = dir.join("typ.opu");
+    fs::write(&typ, "app B { Button(\"Go\", textColor: 255) }\n").unwrap();
+    let r = compile(&typ, &dir.join("typ.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(stderr.contains("expects a color string"), "{stderr}");
+}
+
+#[test]
+fn text_color_absent_keeps_golden_ir_unchanged() {
+    let golden = compile_ok(&contract("counter.opu"));
+    let expected: Json =
+        serde_json::from_slice(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap();
+    assert_eq!(
+        golden, expected,
+        "counter golden IR must stay byte-identical"
+    );
+}

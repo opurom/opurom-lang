@@ -196,6 +196,7 @@ const GENERIC_PROPS: &[&str] = &[
     "padding",
     "margin",
     "color",
+    "textColor",
     "radius",
     "shadow",
     "gradient",
@@ -1202,7 +1203,7 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         }
         return Ok(json!(n));
     }
-    if key == "color" || key == "border" {
+    if key == "color" || key == "border" || key == "textColor" {
         let s = match &arg.value {
             AstValue::Lit(Lit::Str(s)) => s.clone(),
             other => {
