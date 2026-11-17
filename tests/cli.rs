@@ -8724,6 +8724,119 @@ fn only_referenced_package_icons_are_embedded_in_the_ir() {
 }
 
 #[test]
+fn icon_styles_and_rtl_are_baked_into_package_paths() {
+    // A package icon's requested style and RTL variant are resolved at compile
+    // time: each use gets its own IR entry under a collision-free variant name,
+    // and a missing style degrades to outline with a readable warning.
+    let dir = out_dir("icon-variant-bake");
+    let pkg = dir.join("registry/icons/1.0.0");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(
+        dir.join("opurom.json"),
+        r#"{"name":"p","version":"0.1.0","dependencies":{"icons":"1.0.0"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("opurom.lock"),
+        r#"{"packages":[{"name":"icons","path":"registry/icons/1.0.0"}]}"#,
+    )
+    .unwrap();
+    fs::write(
+        pkg.join("opurom-pkg.json"),
+        r#"{"name":"icons","version":"1.0.0","kind":"icons","entry":"icons.json"}"#,
+    )
+    .unwrap();
+    fs::write(
+        pkg.join("icons.json"),
+        r#"{"icons":[
+          {"name":"star","viewBox":"0 0 24 24","paths":[{"d":"M3 12h18"}],"styles":{"outline":[{"d":"M3 12h18"}],"filled":[{"d":"M4 12h16"}]}},
+          {"name":"arrow-left","viewBox":"0 0 24 24","paths":[{"d":"M9 5l7 7-7 7"}],"styles":{"outline":[{"d":"M9 5l7 7-7 7"}]}}
+        ]}"#,
+    )
+    .unwrap();
+
+    let src = dir.join("main.opu");
+    fs::write(
+        &src,
+        "app I {\n  Column {\n    Icon(name: \"star\", iconStyle: filled)\n    Icon(name: \"star\")\n    Icon(name: \"star\", flipRtl: true)\n    Icon(name: \"arrow-left\", iconStyle: filled)\n    Icon(name: \"arrow-left\", iconStyle: rounded)\n    Icon(name: \"arrow-left\", flipRtl: true)\n  }\n}\n",
+    )
+    .unwrap();
+    let out = dir.join("main.opuir.json");
+    let run = compile(&src, &out);
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("warning: icon 'arrow-left' has no filled artwork; outlined is used"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("warning: icon 'arrow-left' has no rounded artwork; outlined is used"),
+        "{stderr}"
+    );
+    let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    let table = ir
+        .get("icons")
+        .and_then(Json::as_array)
+        .expect("icons table");
+    let paths = |key: &str| -> Vec<String> {
+        table.iter().find(|e| e["name"] == key).unwrap()["paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p.as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(paths("star~filled"), vec!["M4 12h16"]);
+    assert_eq!(paths("star"), vec!["M3 12h18"]);
+    assert_eq!(paths("star~rtl"), vec!["M21 12h-18"]);
+    assert_eq!(paths("arrow-left~filled"), vec!["M9 5l7 7-7 7"]);
+    assert_eq!(paths("arrow-left~rounded"), vec!["M9 5l7 7-7 7"]);
+    assert_eq!(paths("arrow-left~rtl"), vec!["M15 5l-7 7 7 7"]);
+    let used: Vec<&str> = nodes_of(&ir)
+        .into_iter()
+        .filter(|n| n["kind"] == "Icon")
+        .map(|n| n["props"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        used,
+        vec![
+            "star~filled",
+            "star",
+            "star~rtl",
+            "arrow-left~filled",
+            "arrow-left~rounded",
+            "arrow-left~rtl",
+        ]
+    );
+    let out2 = dir.join("main2.opuir.json");
+    assert!(compile(&src, &out2).status.success());
+    assert_eq!(fs::read(&out).unwrap(), fs::read(&out2).unwrap());
+
+    // Web resolves the baked variant by name instead of falling back to a
+    // text label, which is what a name-keyed emitter would do otherwise.
+    let web = dir.join("web");
+    let emitted = emit(&out, "web", &web);
+    assert!(
+        emitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let js = fs::read_to_string(web.join("app.js")).unwrap();
+    assert!(
+        js.contains("M4 12h16"),
+        "web must draw the baked path: {js}"
+    );
+    assert!(
+        !js.contains("fillText(\"star~filled\""),
+        "variant name must not fall back to text: {js}"
+    );
+}
+
+#[test]
 fn imported_module_may_declare_and_expand_a_component() {
     let dir = out_dir("mod-component");
     fs::create_dir_all(dir.join("components")).unwrap();

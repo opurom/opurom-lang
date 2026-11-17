@@ -2235,12 +2235,10 @@ fn ir_icon_path<'a>(icons: &'a [Json], name: &str) -> Option<&'a str> {
     let entry = icons
         .iter()
         .find(|e| e.get("name").and_then(Json::as_str) == Some(name))?;
-    entry
-        .get("paths")
-        .and_then(Json::as_array)?
-        .first()?
-        .get("d")
-        .and_then(Json::as_str)
+    let first = entry.get("paths").and_then(Json::as_array)?.first()?;
+    first
+        .as_str()
+        .or_else(|| first.get("d").and_then(Json::as_str))
 }
 
 fn draw_node(

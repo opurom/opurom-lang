@@ -3073,38 +3073,70 @@ fn build_tree<'c>(
     Ok((tree, conditions))
 }
 
-/// Collects the `name` of every `Icon` node reachable in an IR tree fragment
-/// (top-level `tree` or `routes[*].tree`). Used to embed only referenced
-/// package icons.
-fn collect_icon_names(node: &Json, out: &mut std::collections::BTreeSet<String>) {
+/// One package Icon use: the base name plus the style and RTL variant whose
+/// geometry is baked into its IR record.
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct IconUse {
+    name: String,
+    style: String,
+    flip: bool,
+}
+
+impl IconUse {
+    /// `~` cannot occur in a package icon id, so variants never collide with
+    /// a real name. The default variant keeps the plain name for byte parity.
+    fn variant_key(&self) -> String {
+        let mut key = self.name.clone();
+        if self.style != "outlined" {
+            key.push('~');
+            key.push_str(&self.style);
+        }
+        if self.flip {
+            key.push_str("~rtl");
+        }
+        key
+    }
+}
+
+/// Collect Icon uses that resolve to a package glyph, rewriting each node's
+/// `name` to its baked variant so every name-keyed consumer picks the right
+/// artwork without an IR field or a runtime lookup.
+fn collect_icon_uses(
+    node: &mut Json,
+    icons: &JsonMap<String, Json>,
+    uses: &mut std::collections::BTreeMap<IconUse, String>,
+) {
     match node {
         Json::Object(map) => {
             if map.get("kind").and_then(Json::as_str) == Some("Icon") {
-                if let Some(name) = map
-                    .get("props")
-                    .and_then(|p| p.get("name"))
-                    .and_then(Json::as_str)
-                {
-                    out.insert(name.to_string());
+                if let Some(props) = map.get_mut("props").and_then(Json::as_object_mut) {
+                    if let Some(name) = props.get("name").and_then(Json::as_str).map(str::to_string)
+                    {
+                        if icons.contains_key(&name) {
+                            let style = props
+                                .get("iconStyle")
+                                .and_then(Json::as_str)
+                                .unwrap_or("outlined")
+                                .to_string();
+                            let flip = props
+                                .get("flipRtl")
+                                .and_then(Json::as_bool)
+                                .unwrap_or(false);
+                            let key = IconUse { name, style, flip };
+                            let variant = key.variant_key();
+                            uses.insert(key, variant.clone());
+                            props.insert("name".to_string(), Json::String(variant));
+                        }
+                    }
                 }
             }
-            if let Some(route_tree) = map.get("tree") {
-                collect_icon_names(route_tree, out);
-            }
-            if let Some(children) = map.get("children").and_then(Json::as_array) {
-                for child in children {
-                    collect_icon_names(child, out);
-                }
-            }
-            if let Some(routes) = map.get("routes").and_then(Json::as_object) {
-                for route in routes.values() {
-                    collect_icon_names(route, out);
-                }
+            for value in map.values_mut() {
+                collect_icon_uses(value, icons, uses);
             }
         }
         Json::Array(items) => {
             for item in items {
-                collect_icon_names(item, out);
+                collect_icon_uses(item, icons, uses);
             }
         }
         _ => {}
@@ -3444,25 +3476,28 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             .collect::<Vec<Json>>();
         out.insert("imports".to_string(), Json::Array(imports));
     }
-    if !ctx.icons.is_empty() {
-        // Only carry package icons the tree actually references, by name. A
-        // project that declares an icon package but uses none must not embed
-        // the whole catalog (that bloats the IR and every emitted package).
-        let mut used: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        collect_icon_names(&Json::Object(out.clone()), &mut used);
-        let icons: Vec<Json> = used
-            .iter()
-            .filter_map(|name| ctx.icons.get(name).map(|record| (name, record)))
-            .map(|(name, record)| {
-                json!({"name": name, "viewBox": record["viewBox"], "paths": record["paths"]})
-            })
-            .collect();
-        if !icons.is_empty() {
-            out.insert("icons".to_string(), Json::Array(icons));
-        }
-    }
     if !computed_json.is_empty() {
         out.insert("computed".to_string(), Json::Array(computed_json));
     }
-    Ok(Json::Object(out))
+    let mut root = Json::Object(out);
+    if !ctx.icons.is_empty() {
+        let mut uses: std::collections::BTreeMap<IconUse, String> =
+            std::collections::BTreeMap::new();
+        collect_icon_uses(&mut root, &ctx.icons, &mut uses);
+        let icons: Vec<Json> = uses
+            .iter()
+            .filter_map(|(use_, key)| {
+                let record = ctx.icons.get(&use_.name)?;
+                let paths =
+                    crate::pkg_icons::variant_paths(&use_.name, record, &use_.style, use_.flip);
+                Some(json!({"name": key, "viewBox": record["viewBox"], "paths": paths}))
+            })
+            .collect();
+        if !icons.is_empty() {
+            if let Json::Object(map) = &mut root {
+                map.insert("icons".to_string(), Json::Array(icons));
+            }
+        }
+    }
+    Ok(root)
 }
