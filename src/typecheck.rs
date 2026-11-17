@@ -6,8 +6,8 @@ use crate::catalog;
 use crate::diag::{DResult, Diagnostic};
 use crate::lower::{interp_parts, offset_pos, IndexExpr, Part, Ty, KINDS};
 use crate::parser::{
-    Arg, Block, Effect, Expr, ExprKind, ForIter, Lit, Node, NodeKind, Pos, Program, Stmt, StmtKind,
-    Value as AstValue,
+    platform_result_type, Arg, Block, Effect, Expr, ExprKind, ForIter, Lit, Node, NodeKind, Pos,
+    Program, Stmt, StmtKind, Value as AstValue,
 };
 
 /// The value lattice of the language: `int`, `bool` and `string` are stored in
@@ -831,6 +831,49 @@ impl<'a> Checker<'a> {
         Ok(())
     }
 
+    /// `result` and `error` name state targets; their types must match the
+    /// capability's result and the shared typed-error string.
+    fn platform_target(&self, call: &crate::parser::PlatformCallDecl) -> DResult<()> {
+        let (name, pos) = &call.result;
+        let want = match platform_result_type(&call.capability) {
+            "bool" => ValueTy::Bool,
+            _ => ValueTy::Str,
+        };
+        let got = self.state_of(name).ok_or_else(|| {
+            self.unknown_state(name, "in PlatformCall 'result'", *pos, want.name())
+        })?;
+        if got != want {
+            return Err(self.err(
+                *pos,
+                format!(
+                    "PlatformCall 'result' requires a {} state, found {} state '{name}'",
+                    want.name(),
+                    got.name()
+                ),
+                want.name(),
+                got.name(),
+                format!("declare '{name}' as {} or bind another state", want.name()),
+            ));
+        }
+        let (name, pos) = &call.error;
+        let got = self
+            .state_of(name)
+            .ok_or_else(|| self.unknown_state(name, "in PlatformCall 'error'", *pos, "string"))?;
+        if got != ValueTy::Str {
+            return Err(self.err(
+                *pos,
+                format!(
+                    "PlatformCall 'error' requires a string state, found {} state '{name}'",
+                    got.name()
+                ),
+                "string",
+                got.name(),
+                format!("declare '{name}' as string or bind another state"),
+            ));
+        }
+        Ok(())
+    }
+
     fn args(&self, source_kind: &str, args: &[Arg]) -> DResult<()> {
         let Some(kind) = primitive_kind(source_kind)? else {
             return Ok(());
@@ -877,6 +920,7 @@ impl<'a> Checker<'a> {
     fn nodes(&mut self, nodes: &[Node]) -> DResult<()> {
         for node in nodes {
             match &node.kind {
+                NodeKind::PlatformCall(call) => self.platform_target(call)?,
                 NodeKind::Widget(kind) => self.args(kind, &node.args)?,
                 NodeKind::If { cond, cond_pos, .. } => self.condition(cond, *cond_pos)?,
                 NodeKind::For { var, iter } => {

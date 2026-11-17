@@ -349,6 +349,27 @@ fn each_error_class_is_a_friendly_diagnostic() {
             "unknown quality field 'shadow'",
         ),
         (
+            "boundary_string.opu",
+            "prop 'repaintBoundary' expects true or false",
+        ),
+        (
+            "boundary_number.opu",
+            "prop 'relayoutBoundary' expects true or false",
+        ),
+        ("boundary_missing.opu", "expected a literal or identifier"),
+        (
+            "platform_unknown_capability.opu",
+            "unknown platform capability 'bluetooth'",
+        ),
+        (
+            "platform_bad_field_type.opu",
+            "request field 'id' expects int",
+        ),
+        (
+            "platform_bad_result_type.opu",
+            "PlatformCall 'result' requires a bool state",
+        ),
+        (
             "grid_fill_string.opu",
             "prop 'fillHeight' expects true or false",
         ),
@@ -361,15 +382,6 @@ fn each_error_class_is_a_friendly_diagnostic() {
             "grid_fill_non_grid.opu",
             "unknown prop 'fillHeight' on Column",
         ),
-        (
-            "boundary_string.opu",
-            "prop 'repaintBoundary' expects true or false",
-        ),
-        (
-            "boundary_number.opu",
-            "prop 'relayoutBoundary' expects true or false",
-        ),
-        ("boundary_missing.opu", "expected a literal or identifier"),
     ];
     for &(file, message) in cases {
         let path = error_fixture(file);
@@ -1411,6 +1423,7 @@ fn grid_fill_height_is_additive_and_grid_only() {
 
 #[test]
 fn boundary_props_lower_only_when_declared() {
+    // Additive: programs without boundary props keep their exact IR bytes.
     let ir = compile_ok(&fixture("render_boundaries.opu"));
     let nodes = nodes_of(&ir);
     let card = nodes
@@ -1822,6 +1835,108 @@ fn duration_and_delay_tune_the_entry_animation() {
     let ok = dir.join("ok.opu");
     fs::write(&ok, "app B { Container(animate: ease, duration: 10000) }\n").unwrap();
     assert!(compile_ok(&ok)["tree"]["props"]["duration"] == 10000);
+}
+
+
+
+#[test]
+fn platform_calls_lower_typed_capability_nodes() {
+    let dir = out_dir("platform-calls");
+    let out = dir.join("calls.opuir.json");
+    let r = compile(&fixture("platform_calls.opu"), &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    let calls: Vec<&Json> = nodes_of(&ir)
+        .into_iter()
+        .filter(|n| n["kind"] == "PlatformCall")
+        .collect();
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[0]["props"]["capability"], "notification");
+    assert_eq!(
+        calls[0]["props"]["request"],
+        json!({"id": 1, "channel": "updates", "title": "Hi", "body": "text"})
+    );
+    assert_eq!(calls[0]["props"]["result"], "notified");
+    assert_eq!(calls[0]["props"]["error"], "err");
+    assert_eq!(calls[1]["props"]["capability"], "camera");
+    assert_eq!(
+        calls[1]["props"]["request"],
+        json!({"facing": "back", "flash": false})
+    );
+    assert_eq!(calls[1]["props"]["result"], "photo");
+    assert_eq!(calls[2]["props"]["capability"], "location");
+    assert_eq!(
+        calls[2]["props"]["request"],
+        json!({"accuracy": "fine", "timeout": 5000})
+    );
+    assert_eq!(calls[2]["props"]["result"], "place");
+    for call in &calls {
+        assert_eq!(call["props"]["error"], "err");
+        assert_eq!(call["children"], json!([]));
+        assert_eq!(call["events"], json!({}));
+    }
+
+    let again = dir.join("calls-again.opuir.json");
+    let r = compile(&fixture("platform_calls.opu"), &again);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(fs::read(&out).unwrap(), fs::read(&again).unwrap());
+
+    // Optimizer must not prune the states bound as result/error targets.
+    let opt = dir.join("calls.opt.json");
+    let r = optimize(&out, &opt);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let optimized: Json = serde_json::from_slice(&fs::read(&opt).unwrap()).unwrap();
+    assert_eq!(
+        state_names(&optimized),
+        vec!["notified", "photo", "place", "err"]
+    );
+}
+
+#[test]
+fn platform_calls_absent_keeps_golden_ir_byte_identical() {
+    let dir = out_dir("platform-golden");
+    let examples = workspace().join("..").join("opurom-examples");
+    let cases = [
+        (
+            contract("counter.opu"),
+            Some(fixture("golden/counter.opuir.json")),
+        ),
+        (
+            fixture("golden/todo.opu"),
+            Some(fixture("golden/todo.opuir.json")),
+        ),
+        (examples.join("apps/forum/forum.opu"), None),
+        (examples.join("apps/teamhub/teamhub.opu"), None),
+        (examples.join("apps/uicatalog/main.opu"), None),
+    ];
+    for (src, golden) in cases {
+        if !src.is_file() {
+            continue;
+        }
+        let out = dir.join("out.opuir.json");
+        let r = compile(&src, &out);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        if let Some(golden) = golden {
+            assert_eq!(
+                fs::read(&out).unwrap(),
+                fs::read(&golden).unwrap(),
+                "{} changed its bytes",
+                golden.display()
+            );
+        }
+        let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+        fn has_call(v: &Json) -> bool {
+            if v["kind"] == "PlatformCall" {
+                return true;
+            }
+            match v {
+                Json::Object(o) => o.values().any(has_call),
+                Json::Array(a) => a.iter().any(has_call),
+                _ => false,
+            }
+        }
+        assert!(!has_call(&ir), "{} gained a PlatformCall", src.display());
+    }
 }
 
 #[test]
@@ -3190,6 +3305,93 @@ fn optimizer_is_a_no_op_on_golden_counter_ir() {
         format!("optimize: {in_bytes} bytes in, {out_bytes} bytes out"),
         "byte counts must come from the real files"
     );
+}
+
+#[test]
+fn optimizer_exports_state_refs_and_nearest_boundaries() {
+    let dir = out_dir("opt-maps");
+    let raw = dir.join("raw.opuir.json");
+    let r = compile(&fixture("incremental_maps.opu"), &raw);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let out = dir.join("optimized.opuir.json");
+    let r = optimize(&raw, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let got: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+
+    // Direct references only, sorted and deduplicated; dead state is gone from
+    // both the state array and the changed-key map.
+    assert_eq!(got["stateRefs"], json!({"a": [2, 5], "b": [4, 7]}));
+    assert!(got["stateRefs"].get("dead").is_none());
+    assert_eq!(state_names(&got), vec!["a", "b"]);
+
+    // Nearest boundary is inclusive; a false prop inherits; no boundary is null.
+    assert_eq!(
+        got["nodeBoundaries"],
+        json!({
+            "0": {"repaint": null, "relayout": null},
+            "1": {"repaint": 1, "relayout": null},
+            "2": {"repaint": 1, "relayout": null},
+            "3": {"repaint": 1, "relayout": 3},
+            "4": {"repaint": 1, "relayout": 3},
+            "5": {"repaint": 1, "relayout": 3},
+            "6": {"repaint": 6, "relayout": 3},
+            "7": {"repaint": 6, "relayout": 3},
+            "8": {"repaint": 1, "relayout": 3},
+            "9": {"repaint": null, "relayout": null}
+        })
+    );
+
+    // Two runs, plus re-optimizing exported IR, produce identical bytes.
+    let again = dir.join("optimized-again.opuir.json");
+    let r = optimize(&raw, &again);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(fs::read(&out).unwrap(), fs::read(&again).unwrap());
+    let twice = dir.join("optimized-twice.opuir.json");
+    let r = optimize(&out, &twice);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(fs::read(&out).unwrap(), fs::read(&twice).unwrap());
+}
+
+#[test]
+fn optimizer_maps_are_absent_without_boundaries() {
+    let dir = out_dir("opt-maps-absent");
+    for (src, golden) in [
+        (
+            contract("counter.opu"),
+            Some(fixture("golden/counter.opuir.json")),
+        ),
+        (
+            fixture("golden/todo.opu"),
+            Some(fixture("golden/todo.opuir.json")),
+        ),
+        (
+            workspace()
+                .join("..")
+                .join("opurom-examples/apps/forum/forum.opu"),
+            None,
+        ),
+    ] {
+        if !src.is_file() {
+            continue;
+        }
+        let compiled = dir.join("compiled.opuir.json");
+        let r = compile(&src, &compiled);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        let out = dir.join("optimized.opuir.json");
+        let r = optimize(&compiled, &out);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        if let Some(golden) = golden {
+            assert_eq!(
+                fs::read(&out).unwrap(),
+                fs::read(&golden).unwrap(),
+                "{} changed its bytes",
+                golden.display()
+            );
+        }
+        let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+        assert!(ir.get("stateRefs").is_none());
+        assert!(ir.get("nodeBoundaries").is_none());
+    }
 }
 
 #[test]

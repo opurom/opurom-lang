@@ -1,0 +1,10 @@
+app BadResult {
+  state a = 0
+  state e = ""
+  PlatformCall {
+    capability: notification
+    request { id: 1, channel: "c", title: "t", body: "" }
+    result: a
+    error: e
+  }
+}

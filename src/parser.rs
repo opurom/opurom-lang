@@ -132,6 +132,7 @@ pub enum NodeKind {
         list: String,
         list_pos: Pos,
     },
+    PlatformCall(PlatformCallDecl),
 }
 
 #[derive(Clone, Debug)]
@@ -296,6 +297,56 @@ pub struct QualityDecl {
     pub stroke: Option<String>,
     pub text_baseline: Option<String>,
     pub pos: Pos,
+}
+
+/// An additive native capability call. Request fields are capability-specific
+/// literals; `result` and `error` name the states receiving the typed outcome.
+#[derive(Clone, Debug)]
+pub struct PlatformCallDecl {
+    pub capability: String,
+    pub cap_pos: Pos,
+    pub request: Vec<(String, Value, Pos)>,
+    pub result: (String, Pos),
+    pub error: (String, Pos),
+    pub pos: Pos,
+}
+
+/// Capability ids and their typed request schemas. Keyword fields carry their
+/// allowed literals; the tuple order is the canonical request field order.
+pub const PLATFORM_CAPABILITIES: &[&str] = &["notification", "camera", "location"];
+pub const PLATFORM_REQUEST_SCHEMA: &[(&str, &[(&str, &str, &[&str])])] = &[
+    (
+        "notification",
+        &[
+            ("id", "int", &[]),
+            ("channel", "string", &[]),
+            ("title", "string", &[]),
+            ("body", "string", &[]),
+        ],
+    ),
+    (
+        "camera",
+        &[
+            ("facing", "keyword", &["front", "back"]),
+            ("flash", "bool", &[]),
+        ],
+    ),
+    (
+        "location",
+        &[
+            ("accuracy", "keyword", &["coarse", "fine"]),
+            ("timeout", "int", &[]),
+        ],
+    ),
+];
+
+/// The state type a capability writes to its `result` target.
+pub fn platform_result_type(capability: &str) -> &'static str {
+    if capability == "notification" {
+        "bool"
+    } else {
+        "string"
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1221,9 +1272,237 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// `PlatformCall { capability: notification, request { ... }, result: s, error: e }`.
+    /// Request values are literals only; the schema is fixed per capability.
+    fn platform_call(&mut self, start: Pos) -> DResult<Node> {
+        // The node kind token is already consumed by the caller.
+        self.expect_sym("{", "'PlatformCall' needs a '{'")?;
+        let mut capability: Option<(String, Pos)> = None;
+        let mut request: Vec<(String, Value, Pos)> = Vec::new();
+        let mut result: Option<(String, Pos)> = None;
+        let mut error: Option<(String, Pos)> = None;
+        loop {
+            self.eat_sym(";");
+            self.eat_sym(",");
+            if self.eat_sym("}") {
+                break;
+            }
+            if matches!(self.peek().tok, Tok::Eof) {
+                return Err(self.err(
+                    "unexpected end of file, expected '}'",
+                    "close the PlatformCall block with '}'",
+                ));
+            }
+            let (key, kp) = self.expect_ident("a PlatformCall field name")?;
+            match key.as_str() {
+                "capability" => {
+                    self.expect_sym(":", "write 'capability: name'")?;
+                    if capability.is_some() {
+                        return Err(Diagnostic::new(
+                            self.path,
+                            kp.line,
+                            kp.col,
+                            "duplicate 'capability' in PlatformCall",
+                            "declare one capability per call",
+                        ));
+                    }
+                    let (name, np) = self.expect_ident("a capability id")?;
+                    if !PLATFORM_CAPABILITIES.contains(&name.as_str()) {
+                        return Err(Diagnostic::new(
+                            self.path,
+                            np.line,
+                            np.col,
+                            format!("unknown platform capability '{name}'"),
+                            format!("use one of: {}", PLATFORM_CAPABILITIES.join(", ")),
+                        ));
+                    }
+                    capability = Some((name, np));
+                }
+                "request" => {
+                    self.expect_sym("{", "'request' needs a '{'")?;
+                    loop {
+                        self.eat_sym(";");
+                        self.eat_sym(",");
+                        if self.eat_sym("}") {
+                            break;
+                        }
+                        if matches!(self.peek().tok, Tok::Eof) {
+                            return Err(self.err(
+                                "unexpected end of file, expected '}'",
+                                "close the request block with '}'",
+                            ));
+                        }
+                        let (field, fp) = self.expect_ident("a request field name")?;
+                        self.expect_sym(":", "write 'field: literal' inside 'request'")?;
+                        let (value, _) = self.value()?;
+                        if !matches!(value, Value::Lit(_)) {
+                            return Err(Diagnostic::new(
+                                self.path,
+                                fp.line,
+                                fp.col,
+                                format!("request field '{field}' accepts literals only"),
+                                "write an int, string or bool literal; state values belong in 'result'",
+                            ));
+                        }
+                        if request.iter().any(|(name, _, _)| *name == field) {
+                            return Err(Diagnostic::new(
+                                self.path,
+                                fp.line,
+                                fp.col,
+                                format!("duplicate request field '{field}'"),
+                                "write each request field once",
+                            ));
+                        }
+                        request.push((field, value, fp));
+                    }
+                }
+                "result" | "error" => {
+                    self.expect_sym(":", "write 'result: state' or 'error: state'")?;
+                    let (name, np) = self.expect_ident("a state name")?;
+                    let slot = if key == "result" {
+                        &mut result
+                    } else {
+                        &mut error
+                    };
+                    if slot.is_some() {
+                        return Err(Diagnostic::new(
+                            self.path,
+                            kp.line,
+                            kp.col,
+                            format!("duplicate '{key}' in PlatformCall"),
+                            format!("declare '{key}' once per call"),
+                        ));
+                    }
+                    *slot = Some((name, np));
+                }
+                other => {
+                    return Err(Diagnostic::new(
+                        self.path,
+                        kp.line,
+                        kp.col,
+                        format!("unknown PlatformCall field '{other}'"),
+                        "use capability, request, result or error",
+                    ));
+                }
+            }
+        }
+        let Some((capability, cap_pos)) = capability else {
+            return Err(Diagnostic::new(
+                self.path,
+                start.line,
+                start.col,
+                "'PlatformCall' requires 'capability'",
+                "write 'capability: notification'",
+            ));
+        };
+        let Some(result) = result else {
+            return Err(Diagnostic::new(
+                self.path,
+                start.line,
+                start.col,
+                "'PlatformCall' requires 'result'",
+                "name the state receiving the typed result",
+            ));
+        };
+        let Some(error) = error else {
+            return Err(Diagnostic::new(
+                self.path,
+                start.line,
+                start.col,
+                "'PlatformCall' requires 'error'",
+                "name the string state receiving the typed error code",
+            ));
+        };
+        let schema = PLATFORM_REQUEST_SCHEMA
+            .iter()
+            .find(|(name, _)| *name == capability)
+            .map(|(_, fields)| *fields)
+            .unwrap_or(&[]);
+        for (field, value, pos) in &request {
+            let Some((_, kind, keywords)) = schema.iter().find(|(name, _, _)| name == field) else {
+                return Err(Diagnostic::new(
+                    self.path,
+                    pos.line,
+                    pos.col,
+                    format!("unknown request field '{field}' for capability '{capability}'"),
+                    format!(
+                        "use {}",
+                        schema
+                            .iter()
+                            .map(|(name, _, _)| *name)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                ));
+            };
+            let matches = match (*kind, &value) {
+                ("int", Value::Lit(Lit::Int(_))) => true,
+                ("bool", Value::Lit(Lit::Bool(_))) => true,
+                ("string", Value::Lit(Lit::Str(_))) => true,
+                ("keyword", Value::Lit(Lit::Str(s))) => keywords.contains(&s.as_str()),
+                _ => false,
+            };
+            if !matches {
+                let found = match value {
+                    Value::Lit(Lit::Int(_)) => "int",
+                    Value::Lit(Lit::Float(_)) => "decimal",
+                    Value::Lit(Lit::Str(_)) => "string",
+                    Value::Lit(Lit::Bool(_)) => "bool",
+                    Value::Lit(Lit::List(_)) => "list",
+                    Value::Ident(_) => "identifier",
+                };
+                let hint = match *kind {
+                    "int" => "an integer",
+                    "bool" => "a boolean",
+                    "string" => "a string",
+                    _ => "an allowed keyword",
+                };
+                let expected = if *kind == "keyword" {
+                    format!("one of {}", keywords.join(", "))
+                } else {
+                    (*kind).to_string()
+                };
+                return Err(Diagnostic::new(
+                    self.path,
+                    pos.line,
+                    pos.col,
+                    format!("request field '{field}' expects {expected}, found {found}"),
+                    format!("write {hint} for '{field}'"),
+                ));
+            }
+        }
+        for (field, _, _) in schema {
+            if !request.iter().any(|(name, _, _)| name == field) {
+                return Err(Diagnostic::new(
+                    self.path,
+                    start.line,
+                    start.col,
+                    format!("request field '{field}' is required for capability '{capability}'"),
+                    format!("write {field} inside the request block"),
+                ));
+            }
+        }
+        Ok(Node {
+            kind: NodeKind::PlatformCall(PlatformCallDecl {
+                capability,
+                cap_pos,
+                request,
+                result,
+                error,
+                pos: start,
+            }),
+            pos: start,
+            args: Vec::new(),
+            block: None,
+        })
+    }
+
     fn node(&mut self) -> DResult<Node> {
         let start = self.pos();
         let (kind, _) = self.expect_ident("a node kind")?;
+        if kind == "PlatformCall" {
+            return self.platform_call(start);
+        }
         let mut args = Vec::new();
         if self.eat_sym("(") {
             if !self.sym(")") {

@@ -1978,7 +1978,7 @@ fn count_expanded(nodes: &[Node], ctx: &Ctx) -> DResult<usize> {
     for n in nodes {
         let count = match &n.kind {
             // A repeatable subtree is one IR node; its children are a template.
-            NodeKind::Widget(_) | NodeKind::Repeat { .. } => 1,
+            NodeKind::Widget(_) | NodeKind::Repeat { .. } | NodeKind::PlatformCall(_) => 1,
             NodeKind::If { else_block, .. } => {
                 let block = n.block.as_ref().ok_or_else(|| {
                     ctx.err(n.pos, "'if' needs a block", "write 'if (dark) { ... }'")
@@ -2284,6 +2284,34 @@ fn lower_node_list(ctx: &mut Ctx, nodes: &[Node], cond: Cond) -> DResult<Vec<Jso
                     node_json.insert("unless".to_string(), json!(u));
                 }
                 node_json.insert("repeat".to_string(), json!({"item": var, "list": list}));
+                out.push(Json::Object(node_json));
+            }
+            NodeKind::PlatformCall(call) => {
+                let id = ctx.take_id();
+                let mut request = JsonMap::new();
+                for (field, value, _) in &call.request {
+                    let AstValue::Lit(lit) = value else {
+                        unreachable!("the parser accepts literal request fields only")
+                    };
+                    request.insert(field.clone(), json_lit(lit));
+                }
+                let mut props = JsonMap::new();
+                props.insert("capability".to_string(), json!(call.capability));
+                props.insert("request".to_string(), Json::Object(request));
+                props.insert("result".to_string(), json!(call.result.0));
+                props.insert("error".to_string(), json!(call.error.0));
+                let mut node_json = JsonMap::new();
+                node_json.insert("id".to_string(), json!(id));
+                node_json.insert("kind".to_string(), json!("PlatformCall"));
+                node_json.insert("props".to_string(), Json::Object(props));
+                node_json.insert("children".to_string(), json!([]));
+                node_json.insert("events".to_string(), Json::Object(JsonMap::new()));
+                if let Some(w) = cond.when {
+                    node_json.insert("when".to_string(), json!(w));
+                }
+                if let Some(u) = cond.unless {
+                    node_json.insert("unless".to_string(), json!(u));
+                }
                 out.push(Json::Object(node_json));
             }
             NodeKind::Widget(_) => out.push(lower_node(ctx, node, cond)?),

@@ -38,6 +38,26 @@ They lower to the same-named `node.props` booleans for the incremental render pi
 layout marks. Only the literal booleans `true` and `false` are accepted; a program declaring
 neither keeps byte-identical IR.
 
+`opuromc optimize` exports two additive maps when a tree declares a boundary prop:
+`stateRefs` maps each live state name to the sorted, deduplicated ids of nodes that
+directly read it (dead states and loop-local names are excluded), and `nodeBoundaries`
+maps each node id to `{"repaint": <id|null>, "relayout": <id|null>}`, the nearest
+boundary at or above it (`null` means the root). Both are deterministic and absent
+from programs without boundaries.
+
+## Native capability calls
+
+`PlatformCall { ... }` is an additive node that lowers to `{"kind":"PlatformCall","props":{...}}`.
+It carries `capability` (`notification`, `camera` or `location`), a typed `request` object,
+and `result` / `error` state names. Request schemas: notification
+`{id:int, channel:string, title:string, body:string}`; camera
+`{facing:front|back, flash:bool}`; location `{accuracy:coarse|fine, timeout:int}`.
+`result` is a bool state for notification and a string state for camera/location;
+`error` is always a string state receiving a typed code
+(`Ok | Invalid | Unsupported | PermissionDenied | NoHardware | Internal`).
+Request values must be literals; unknown fields, wrong types and wrong target types
+fail at their source position. A program without `PlatformCall` is byte-identical.
+
 ## Grammar summary (IR 0.1.0 and the additive layers)
 
 ```ebnf
@@ -64,12 +84,18 @@ quality_prop  = "msaa" ":" "4" | "gradientBits" ":" "16"
               | "curve" ":" ("bezier"|"none") | "stroke" ":" ("physical"|"logical")
               | "textBaseline" ":" ("grid"|"band") ;
 node          = KIND [ "(" [ args ] ")" ] [ "async" ] [ ";" | "{" { node | statement | effect } "}" ]
+              | platform_call
               | "if" "(" IDENT ")" "{" { node } "}" [ "else" "{" { node } "}" ]
               | "for" "(" IDENT "in" ( INT | IDENT ) ")" "{" { node } "}"
               | "for" IDENT "in" [ "state" "." ] IDENT "{" { node } "}" ;
 args          = ( IDENT ":" value | value ) { "," ... } [ "," ] ;
 boundary_prop = ( "repaintBoundary" | "relayoutBoundary" ) ":" ( "true" | "false" ) ;
 grid_prop     = "fillHeight" ":" ( "true" | "false" ) ; (* Grid only; opt-in row-height fill *)
+platform_call = "PlatformCall" "{" { capability | request | result | error } "}" ;
+capability    = "capability" ":" ( "notification" | "camera" | "location" ) [ "," | ";" ] ;
+request       = "request" "{" { IDENT ":" literal } [ "," | ";" ] "}" ;
+result        = "result" ":" IDENT [ "," | ";" ] ;
+error         = "error" ":" IDENT [ "," | ";" ] ;
 value         = INT | FLOAT | STRING | BOOL | IDENT ;
 statement     = IDENT ( "+=" | "-=" | "=" ) expr [";"]
               | IDENT "." "toggle" "(" ")" [";"]
