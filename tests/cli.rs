@@ -1482,6 +1482,87 @@ fn column_span_is_additive_and_grid_scoped() {
 }
 
 #[test]
+fn icon_style_and_flip_rtl_are_additive_opt_ins() {
+    // Both props are generic and additive: absent or explicitly default emits
+    // no IR key, so nodes without them stay byte-identical.
+    let dir = out_dir("icon-style-rtl");
+    let src = dir.join("icons.opu");
+    fs::write(
+        &src,
+        "app I {\n  Column {\n    Icon(name: \"star\", iconStyle: filled, flipRtl: true)\n    Icon(name: \"star\")\n    Icon(name: \"star\", iconStyle: outlined, flipRtl: false)\n  }\n}\n",
+    )
+    .unwrap();
+    let doc = compile_ok(&src);
+    let icons: Vec<&Json> = nodes_of(&doc)
+        .into_iter()
+        .filter(|n| n["kind"] == "Icon")
+        .collect();
+    assert_eq!(icons.len(), 3);
+    assert_eq!(icons[0]["props"]["iconStyle"], "filled");
+    assert_eq!(icons[0]["props"]["flipRtl"], true);
+    for key in ["iconStyle", "flipRtl"] {
+        assert!(icons[1]["props"].get(key).is_none(), "{key} absent");
+        assert!(
+            icons[2]["props"].get(key).is_none(),
+            "explicit default {key} must emit no key"
+        );
+    }
+
+    // Explicit defaults compile to the exact same bytes as omitting them:
+    // two otherwise-identical programs, one declaring both defaults.
+    let plain = dir.join("plain.opu");
+    fs::write(
+        &plain,
+        "app I {\n  Column {\n    Icon(name: \"star\")\n    Icon(name: \"home\")\n  }\n}\n",
+    )
+    .unwrap();
+    let explicit = dir.join("explicit.opu");
+    fs::write(
+        &explicit,
+        "app I {\n  Column {\n    Icon(name: \"star\", iconStyle: outlined, flipRtl: false)\n    Icon(name: \"home\", iconStyle: outlined)\n  }\n}\n",
+    )
+    .unwrap();
+    let a = dir.join("plain.opuir.json");
+    let b = dir.join("explicit.opuir.json");
+    assert!(compile(&plain, &a).status.success());
+    assert!(compile(&explicit, &b).status.success());
+    assert_eq!(fs::read(&a).unwrap(), fs::read(&b).unwrap());
+
+    // Golden unchanged with no declaration.
+    let golden = compile_ok(&contract("counter.opu"));
+    let expected: Json =
+        serde_json::from_slice(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap();
+    assert_eq!(golden, expected);
+
+    for (body, needle) in [
+        (
+            "app B { Icon(name: \"star\", iconStyle: bold) }",
+            "unknown iconStyle 'bold'",
+        ),
+        (
+            "app B { Icon(name: \"star\", iconStyle: 1) }",
+            "prop 'iconStyle' expects a keyword",
+        ),
+        (
+            "app B { Icon(name: \"star\", flipRtl: 1) }",
+            "prop 'flipRtl' expects true or false",
+        ),
+        (
+            "app B { Icon(name: \"star\", flipRtl: \"yes\") }",
+            "prop 'flipRtl' expects true or false",
+        ),
+    ] {
+        let bad = dir.join("bad.opu");
+        fs::write(&bad, body).unwrap();
+        let r = compile(&bad, &dir.join("bad.opuir.json"));
+        assert!(!r.status.success(), "{body} must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(err.contains(needle), "wanted {needle}, got {err}");
+        assert_diag(&err, &bad);
+    }
+}
+
+#[test]
 fn motion_tokens_emit_across_targets_without_touching_defaults() {
     let dir = out_dir("motion-tokens");
     let src = dir.join("tokens.opu");

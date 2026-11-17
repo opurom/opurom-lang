@@ -222,6 +222,8 @@ const GENERIC_PROPS: &[&str] = &[
     "reverseDuration",
     "animationBehavior",
     "overshoot",
+    "iconStyle",
+    "flipRtl",
 ];
 
 /// Additive `Input` validator props; these are not accepted on other kinds.
@@ -305,6 +307,11 @@ const CURVE_VALUES: &[&str] = &[
 /// Gesture names the renderer binds
 /// callbacks that this layer exposes.
 const GESTURE_VALUES: &[&str] = &["tap", "doubleTap", "longPress", "drag"];
+
+/// Explicit icon drawing styles accepted by the `iconStyle` prop. The renderer
+/// resolves missing artwork to `outlined`, so this set stays a closed keyword
+/// enum; a missing style is a warning at lookup time, not a compile error.
+const ICON_STYLE_VALUES: &[&str] = &["outlined", "filled", "rounded", "sharp"];
 
 /// Interaction state, design-system variant and semantic tone are node props
 /// every kind accepts; the values mirror opurom-render's `ir.rs`. Emitters
@@ -1291,6 +1298,30 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         check_color(ctx, arg.pos, key, &s)?;
         return Ok(json!(s));
     }
+    if key == "iconStyle" {
+        let s = match &arg.value {
+            AstValue::Lit(Lit::Str(s)) => s.clone(),
+            AstValue::Ident(s) => s.clone(),
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop 'iconStyle' expects a keyword, found {}",
+                        value_desc(other)
+                    ),
+                    "write one of: outlined, filled, rounded, sharp".to_string(),
+                ))
+            }
+        };
+        if !ICON_STYLE_VALUES.contains(&s.as_str()) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("unknown iconStyle '{s}'"),
+                "use one of: outlined, filled, rounded, sharp".to_string(),
+            ));
+        }
+        return Ok(json!(s));
+    }
     if key == "gradient" {
         let s = match &arg.value {
             AstValue::Lit(Lit::Str(s)) => s.clone(),
@@ -1320,7 +1351,7 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
     }
     if matches!(
         key,
-        "glass" | "repaintBoundary" | "relayoutBoundary" | "fillHeight" | "overshoot"
+        "glass" | "repaintBoundary" | "relayoutBoundary" | "fillHeight" | "overshoot" | "flipRtl"
     ) {
         return match &arg.value {
             AstValue::Lit(Lit::Bool(b)) => Ok(json!(*b)),
@@ -1869,6 +1900,14 @@ fn lower_node(ctx: &mut Ctx, node: &Node, cond: Cond) -> DResult<Json> {
             Json::String(s) => Json::String(substitute_loops(ctx, arg.pos, &s)?),
             other => other,
         };
+        // Explicit defaults are the same as omitting the prop: neither
+        // `iconStyle: outlined` nor `flipRtl: false` adds an IR key, so
+        // declaring them keeps the node byte-identical.
+        if (key == "iconStyle" && val == json!("outlined"))
+            || (key == "flipRtl" && val == json!(false))
+        {
+            continue;
+        }
         props.insert(key, val);
     }
     if let Some(Json::String(clock)) = props.get("animClock") {
