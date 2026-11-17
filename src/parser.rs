@@ -685,6 +685,126 @@ impl<'a> Parser<'a> {
         Ok(Lit::List(nums.into_iter().map(|n| n.to_string()).collect()))
     }
 
+    /// A positional corner array is ambiguous (CSS and GPU use different
+    /// orders), so it is rejected at the source position before the generic
+    /// two-integer-list reader can misread it.
+    fn corner_array_error(&mut self) -> Diagnostic {
+        let start = self.pos();
+        self.bump();
+        while !matches!(self.peek().tok, Tok::Eof) && !self.sym("]") {
+            self.bump();
+        }
+        if self.sym("]") {
+            self.bump();
+        }
+        Diagnostic::new(
+            self.path,
+            start.line,
+            start.col,
+            "cornerRadii rejects an array of corners".to_string(),
+            "use named corners: { topLeft: 16, topRight: [16, 8] }".to_string(),
+        )
+    }
+
+    /// Named `cornerRadii` object. Entries ride in the existing list literal as
+    /// `name=value` / `name=rx,ry` strings, so the public Value enum stays
+    /// unchanged and no other value consumer needs a new match arm. Only this
+    /// prop enters this path (see `arg`).
+    fn corner_radii(&mut self) -> DResult<(Value, Pos)> {
+        let start = self.pos();
+        self.expect_sym("{", "cornerRadii expects a named object")?;
+        let mut entries: Vec<String> = Vec::new();
+        loop {
+            if self.sym("}") {
+                self.bump();
+                break;
+            }
+            let t = self.peek().clone();
+            let Tok::Ident(name) = t.tok.clone() else {
+                return Err(Diagnostic::new(
+                    self.path,
+                    t.line,
+                    t.col,
+                    "corner name must be topLeft, topRight, bottomRight or bottomLeft".to_string(),
+                    "write a named corner such as topLeft: 16".to_string(),
+                ));
+            };
+            self.bump();
+            if !matches!(
+                name.as_str(),
+                "topLeft" | "topRight" | "bottomRight" | "bottomLeft"
+            ) {
+                return Err(Diagnostic::new(
+                    self.path,
+                    t.line,
+                    t.col,
+                    format!("unknown corner '{name}'"),
+                    "use topLeft, topRight, bottomRight or bottomLeft".to_string(),
+                ));
+            }
+            if entries.iter().any(|e| e.starts_with(&format!("{name}="))) {
+                return Err(Diagnostic::new(
+                    self.path,
+                    t.line,
+                    t.col,
+                    format!("duplicate corner '{name}'"),
+                    "name each corner at most once".to_string(),
+                ));
+            }
+            self.expect_sym(":", "a corner needs ':' and a radius")?;
+            if self.sym("[") {
+                let Lit::List(pair) = self.int_pair()? else {
+                    unreachable!("int_pair always returns a list literal")
+                };
+                entries.push(format!("{name}={},{}", pair[0], pair[1]));
+            } else {
+                let value_start = self.pos();
+                let negative = self.sym("-");
+                if negative {
+                    self.bump();
+                }
+                let n = self.peek().clone();
+                if !matches!(n.tok, Tok::Int(_)) {
+                    return Err(Diagnostic::new(
+                        self.path,
+                        n.line,
+                        n.col,
+                        "a corner radius must be an integer or an [rx, ry] pair".to_string(),
+                        "write 16 or [16, 8]".to_string(),
+                    ));
+                }
+                self.bump();
+                if negative {
+                    return Err(Diagnostic::new(
+                        self.path,
+                        value_start.line,
+                        value_start.col,
+                        "a corner radius must be non-negative".to_string(),
+                        "write 0 or a positive integer".to_string(),
+                    ));
+                }
+                let Tok::Int(v) = n.tok else {
+                    unreachable!("checked above")
+                };
+                entries.push(format!("{name}={v}"));
+            }
+            if self.sym("}") {
+                self.bump();
+                break;
+            }
+            if !self.eat_sym(",") {
+                return Err(Diagnostic::new(
+                    self.path,
+                    self.pos().line,
+                    self.pos().col,
+                    "corners must be separated by ','".to_string(),
+                    "write { topLeft: 16, topRight: [16, 8] }".to_string(),
+                ));
+            }
+        }
+        Ok((Value::Lit(Lit::List(entries)), start))
+    }
+
     fn arg(&mut self) -> DResult<Arg> {
         if let Tok::Ident(name) = self.peek().tok.clone() {
             let colon =
@@ -692,7 +812,13 @@ impl<'a> Parser<'a> {
             if colon {
                 self.bump();
                 self.bump();
-                let (value, pos) = self.value()?;
+                let (value, pos) = if name == "cornerRadii" && self.sym("{") {
+                    self.corner_radii()?
+                } else if name == "cornerRadii" && self.sym("[") {
+                    return Err(self.corner_array_error());
+                } else {
+                    self.value()?
+                };
                 return Ok(Arg {
                     name: Some(name),
                     value,

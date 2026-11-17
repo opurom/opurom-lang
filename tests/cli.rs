@@ -9297,6 +9297,91 @@ fn icon_styles_and_rtl_are_baked_into_package_paths() {
 }
 
 #[test]
+fn corner_radii_are_named_and_additive() {
+    let dir = out_dir("corner-radii");
+    let src = fixture("golden/corner_radii.opu");
+    let out = dir.join("corner_radii.opuir.json");
+    let r = compile(&src, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(
+        fs::read(&out).unwrap(),
+        fs::read(fixture("golden/corner_radii.opuir.json")).unwrap()
+    );
+    let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    let props =
+        |id: u64| -> &Json { &nodes_of(&ir).into_iter().find(|n| n["id"] == id).unwrap()["props"] };
+    assert_eq!(props(1)["cornerRadii"]["topLeft"], 16);
+    assert_eq!(props(1)["cornerRadii"]["topRight"], json!([16, 8]));
+    assert_eq!(props(1)["cornerRadii"]["bottomRight"], 0);
+    assert_eq!(props(1)["cornerRadii"]["bottomLeft"], 12);
+    assert_eq!(props(2)["cornerRadii"], json!({"topRight": 28}));
+    assert!(props(3).get("cornerRadii").is_none(), "absent stays absent");
+
+    for (src, golden) in [
+        (contract("counter.opu"), contract("counter.opuir.json")),
+        (
+            fixture("golden/gallery.opu"),
+            fixture("golden/gallery.opuir.json"),
+        ),
+        (
+            fixture("golden/profile.opu"),
+            fixture("golden/profile.opuir.json"),
+        ),
+        (
+            fixture("golden/showcase.opu"),
+            fixture("golden/showcase.opuir.json"),
+        ),
+        (
+            fixture("golden/todo.opu"),
+            fixture("golden/todo.opuir.json"),
+        ),
+    ] {
+        let plain = dir.join(format!(
+            "{}-plain.json",
+            src.file_stem().unwrap().to_string_lossy()
+        ));
+        assert!(compile(&src, &plain).status.success());
+        assert_eq!(fs::read(&plain).unwrap(), fs::read(golden).unwrap());
+    }
+}
+
+#[test]
+fn corner_radii_reject_arrays_and_bad_corners() {
+    let dir = out_dir("corner-radii-errors");
+    for (body, needle) in [
+        (
+            "app X { Container(cornerRadii: [16, 8, 4, 2]) }",
+            "cornerRadii rejects an array of corners",
+        ),
+        (
+            "app X { Container(cornerRadii: { topLeft: -1 }) }",
+            "a corner radius must be non-negative",
+        ),
+        (
+            "app X { Container(cornerRadii: { foo: 4 }) }",
+            "unknown corner 'foo'",
+        ),
+        (
+            "app X { Container(cornerRadii: { topLeft: 16, topLeft: 2 }) }",
+            "duplicate corner 'topLeft'",
+        ),
+        (
+            "app X { Container(cornerRadii: 4) }",
+            "prop 'cornerRadii' expects a named object",
+        ),
+    ] {
+        let src = dir.join("bad.opu");
+        fs::write(&src, body).unwrap();
+        let out = dir.join("bad.opuir.json");
+        let r = compile(&src, &out);
+        assert!(!r.status.success(), "{body} compiled");
+        let stderr = String::from_utf8_lossy(&r.stderr);
+        assert!(stderr.contains(needle), "{stderr}");
+        assert_diag(&stderr, &src);
+    }
+}
+
+#[test]
 fn role_keywords_are_validated_at_compile_time() {
     let dir = out_dir("role-validation");
     let src = dir.join("good.opu");

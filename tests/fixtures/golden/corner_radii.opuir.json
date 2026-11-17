@@ -1,0 +1,56 @@
+{
+  "app": "Corners",
+  "ir": "0.1.0",
+  "state": [],
+  "theme": {
+    "accent": "#097FEB",
+    "mode": "system",
+    "radius": 12
+  },
+  "tree": {
+    "children": [
+      {
+        "children": [],
+        "events": {},
+        "id": 1,
+        "kind": "Container",
+        "props": {
+          "cornerRadii": {
+            "bottomLeft": 12,
+            "bottomRight": 0,
+            "topLeft": 16,
+            "topRight": [
+              16,
+              8
+            ]
+          }
+        }
+      },
+      {
+        "children": [],
+        "events": {},
+        "id": 2,
+        "kind": "Container",
+        "props": {
+          "cornerRadii": {
+            "topRight": 28
+          },
+          "padding": 0
+        }
+      },
+      {
+        "children": [],
+        "events": {},
+        "id": 3,
+        "kind": "Container",
+        "props": {
+          "padding": 0
+        }
+      }
+    ],
+    "events": {},
+    "id": 0,
+    "kind": "Column",
+    "props": {}
+  }
+}

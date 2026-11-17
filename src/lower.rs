@@ -198,6 +198,7 @@ const GENERIC_PROPS: &[&str] = &[
     "color",
     "textColor",
     "radius",
+    "cornerRadii",
     "shadow",
     "gradient",
     "glass",
@@ -1328,6 +1329,66 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             ));
         }
         return Ok(json!(s));
+    }
+    if key == "cornerRadii" {
+        let parts = match &arg.value {
+            AstValue::Lit(Lit::List(parts)) => parts,
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop 'cornerRadii' expects a named object, found {}",
+                        value_desc(other)
+                    ),
+                    "write { topLeft: 16, topRight: [16, 8], bottomRight: 0, bottomLeft: 12 }"
+                        .to_string(),
+                ))
+            }
+        };
+        if parts.is_empty() {
+            return Err(ctx.err(
+                arg.pos,
+                "cornerRadii must name at least one corner".to_string(),
+                "write { topLeft: 16 }".to_string(),
+            ));
+        }
+        if !parts[0].contains('=') {
+            return Err(ctx.err(
+                arg.pos,
+                "cornerRadii rejects a four-element array".to_string(),
+                "CSS and GPU corner orders differ; write named corners instead".to_string(),
+            ));
+        }
+        let mut corners = JsonMap::new();
+        for entry in parts {
+            let Some((name, dims)) = entry.split_once('=') else {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!("malformed corner entry '{entry}'"),
+                    "write topLeft: 16".to_string(),
+                ));
+            };
+            let values: Vec<u64> = dims
+                .split(',')
+                .filter_map(|s| s.parse::<u64>().ok())
+                .collect();
+            if values.is_empty() || values.len() > 2 {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!("corner '{name}' needs one radius or an [rx, ry] pair"),
+                    "write 16 or [16, 8]".to_string(),
+                ));
+            }
+            let value = if values.len() == 1 {
+                json!(values[0])
+            } else {
+                json!(values)
+            };
+            corners.insert(name.to_string(), value);
+        }
+        // Render clamps oversized radii once in RoundingRadii::scaled, so the
+        // compiler only validates non-negative literals here.
+        return Ok(Json::Object(corners));
     }
     if key == "role" {
         let s = match &arg.value {

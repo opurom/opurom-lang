@@ -1,0 +1,7 @@
+app Corners {
+  Column {
+    Container(cornerRadii: { topLeft: 16, topRight: [16, 8], bottomRight: 0, bottomLeft: 12 })
+    Container(padding: 0, cornerRadii: { topRight: 28 })
+    Container(padding: 0)
+  }
+}
