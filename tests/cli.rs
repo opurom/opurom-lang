@@ -3131,6 +3131,17 @@ fn optimize(ir: &Path, out: &Path) -> Output {
         .expect("run opuromc optimize")
 }
 
+fn compile_nodes_folded(src: &Path, out: &Path) -> Output {
+    bin()
+        .arg("compile")
+        .arg(src)
+        .arg("-o")
+        .arg(out)
+        .arg("--fold-nodes")
+        .output()
+        .expect("run opuromc compile --fold-nodes")
+}
+
 fn compile_folded(src: &Path, out: &Path) -> Output {
     bin()
         .arg("compile")
@@ -3618,6 +3629,74 @@ fn constant_folding_leaves_state_expressions() {
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
     assert_eq!(ir["computed"][0]["expr"], "count * 2");
+}
+
+#[test]
+fn inline_constant_text_keeps_ids_and_matches_folded_fixture() {
+    let dir = out_dir("fold-nodes-text");
+    let src = fixture("folded/text.opu");
+    let plain = dir.join("plain.opuir.json");
+    let folded = dir.join("folded.opuir.json");
+    assert!(compile(&src, &plain).status.success());
+    let r = compile_nodes_folded(&src, &folded);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let a: Json = serde_json::from_slice(&fs::read(&plain).unwrap()).unwrap();
+    let b: Json = serde_json::from_slice(&fs::read(&folded).unwrap()).unwrap();
+    assert_eq!(a["tree"]["children"][0]["props"]["value"], "{label}");
+    assert_eq!(b["tree"]["children"][0]["props"]["value"], "ready");
+    assert_eq!(
+        a["tree"]["children"][1]["props"]["value"], "{count}",
+        "a written state must stay interpolated"
+    );
+    assert_eq!(b["tree"]["children"][1]["props"]["value"], "{count}");
+    let ids = |ir: &Json| -> Vec<u64> {
+        nodes_of(ir)
+            .into_iter()
+            .map(|n| n["id"].as_u64().unwrap())
+            .collect()
+    };
+    assert_eq!(ids(&a), ids(&b), "text inlining must not change ids");
+    assert_eq!(
+        fs::read(&folded).unwrap(),
+        fs::read(fixture("folded/text.opuir.json")).unwrap(),
+        "folded output must match the committed fixture"
+    );
+    assert!(
+        !folded.with_extension("idmap.json").exists(),
+        "text inlining changes no id, so it writes no sidecar"
+    );
+
+    // Render parity: the folded tree must produce the same frame bytes.
+    let (ok_plain, out_plain) = render_ir(&plain, &dir.join("plain.ppm"));
+    let (ok_folded, out_folded) = render_ir(&folded, &dir.join("folded.ppm"));
+    assert!(ok_plain, "{out_plain}");
+    assert!(ok_folded, "{out_folded}");
+    assert_eq!(
+        fs::read(dir.join("plain.ppm")).unwrap(),
+        fs::read(dir.join("folded.ppm")).unwrap(),
+        "folded text must render identically"
+    );
+}
+
+#[test]
+fn fold_nodes_is_a_no_op_without_a_foldable_pattern() {
+    let dir = out_dir("fold-nodes-noop");
+    for (i, src) in [contract("counter.opu"), fixture("golden/todo.opu")]
+        .into_iter()
+        .enumerate()
+    {
+        let plain = dir.join(format!("{i}-plain.json"));
+        let folded = dir.join(format!("{i}-folded.json"));
+        assert!(compile(&src, &plain).status.success());
+        let r = compile_nodes_folded(&src, &folded);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        assert_eq!(
+            fs::read(&folded).unwrap(),
+            fs::read(&plain).unwrap(),
+            "no foldable pattern means byte-identical output"
+        );
+        assert!(!folded.with_extension("idmap.json").exists());
+    }
 }
 
 #[test]

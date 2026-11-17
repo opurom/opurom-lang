@@ -1,0 +1,11 @@
+app FoldText {
+  state label = "ready"
+  state count = 0
+  Column {
+    Text("{label}")
+    Text("{count}")
+    Button("bump") {
+      count = 1
+    }
+  }
+}

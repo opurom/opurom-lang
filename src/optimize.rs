@@ -553,6 +553,178 @@ fn optimize(ir: &mut Json) {
     }
 }
 
+/// Names a node can write at runtime: event action targets plus `input`
+/// bindings. The generated native harness reaches state only through events,
+/// so this set is closed over every runtime mutation path.
+fn collect_writes(node: &Json, writes: &mut HashSet<String>) {
+    if let Some(bind) = node
+        .get("props")
+        .and_then(Json::as_object)
+        .and_then(|p| p.get("bind"))
+        .and_then(Json::as_str)
+    {
+        writes.insert(bind.to_string());
+    }
+    if let Some(events) = node.get("events").and_then(Json::as_object) {
+        for action in events.values() {
+            let list: Vec<&Json> = match action {
+                Json::Array(items) => items.iter().collect(),
+                other => vec![other],
+            };
+            for one in list {
+                let is_write = one.get("op").and_then(Json::as_str).is_some_and(|op| {
+                    matches!(
+                        op,
+                        "set" | "add" | "sub" | "toggle" | "assign" | "append" | "removeAt"
+                    )
+                });
+                if is_write {
+                    if let Some(target) = one.get("target").and_then(Json::as_str) {
+                        writes.insert(target.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if let Some(children) = node.get("children").and_then(Json::as_array) {
+        for child in children {
+            collect_writes(child, writes);
+        }
+    }
+}
+
+/// Scalar states whose value cannot change at runtime, with their literal
+/// init. Computeds enter only when none of their operands is mutable; their
+/// init was already evaluated by `infer_computed`.
+fn constant_scalars(ir: &Json) -> HashMap<String, Json> {
+    let mut mutable = HashSet::new();
+    if let Some(tree) = ir.get("tree") {
+        collect_writes(tree, &mut mutable);
+    }
+    if let Some(routes) = ir.get("routes").and_then(Json::as_object) {
+        for route in routes.values() {
+            if let Some(tree) = route.get("tree") {
+                collect_writes(tree, &mut mutable);
+            }
+        }
+    }
+    let exprs: Vec<(String, Vec<String>)> = ir
+        .get("computed")
+        .and_then(Json::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|c| {
+                    Some((
+                        c.get("name")?.as_str()?.to_string(),
+                        expr_idents(c.get("expr")?.as_str()?)
+                            .map(str::to_string)
+                            .collect(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    loop {
+        let before = mutable.len();
+        for (name, operands) in &exprs {
+            if operands.iter().any(|op| mutable.contains(op)) {
+                mutable.insert(name.clone());
+            }
+        }
+        if mutable.len() == before {
+            break;
+        }
+    }
+    ir.get("state")
+        .and_then(Json::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|s| {
+                    let name = s.get("name")?.as_str()?;
+                    if mutable.contains(name) {
+                        return None;
+                    }
+                    let ty = s.get("type")?.as_str()?;
+                    if !matches!(ty, "int" | "bool" | "string") {
+                        return None;
+                    }
+                    let init = s.get("init")?;
+                    if !init.is_number() && !init.is_boolean() && !init.is_string() {
+                        return None;
+                    }
+                    Some((name.to_string(), init.clone()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn inline_string(text: &str, consts: &HashMap<String, Json>) -> Option<String> {
+    let parts = interp_parts(text).ok()?;
+    let mut out = String::new();
+    let mut saw_state = false;
+    for part in parts {
+        match part {
+            Part::Lit(lit) => out.push_str(&lit),
+            // Catalog keys are resolved before IR; refuse to guess here.
+            Part::Catalog(_, _) | Part::Index { .. } => return None,
+            Part::Var(name, _) => {
+                saw_state = true;
+                match consts.get(&name)? {
+                    Json::String(v) => out.push_str(v),
+                    Json::Number(v) => out.push_str(&v.to_string()),
+                    Json::Bool(v) => out.push_str(if *v { "true" } else { "false" }),
+                    _ => return None,
+                }
+            }
+        }
+    }
+    (saw_state && out != text).then_some(out)
+}
+
+fn inline_walk(node: &mut Json, consts: &HashMap<String, Json>, count: &mut usize) {
+    let Some(o) = node.as_object_mut() else {
+        return;
+    };
+    if let Some(props) = o.get_mut("props").and_then(Json::as_object_mut) {
+        for key in ["value", "label", "title", "placeholder", "name"] {
+            let Some(text) = props.get(key).and_then(Json::as_str) else {
+                continue;
+            };
+            if let Some(replacement) = inline_string(text, consts) {
+                props.insert(key.to_string(), Json::String(replacement));
+                *count += 1;
+            }
+        }
+    }
+    if let Some(children) = o.get_mut("children").and_then(Json::as_array_mut) {
+        for child in children {
+            inline_walk(child, consts, count);
+        }
+    }
+}
+
+/// Stage 2a step 1: replace state interpolations whose value cannot change
+/// with their literal value. No node is added or removed and no id changes.
+pub fn inline_constant_text(ir: &mut Json) -> usize {
+    let consts = constant_scalars(ir);
+    if consts.is_empty() {
+        return 0;
+    }
+    let mut count = 0;
+    if let Some(tree) = ir.get_mut("tree") {
+        inline_walk(tree, &consts, &mut count);
+    }
+    if let Some(routes) = ir.get_mut("routes").and_then(Json::as_object_mut) {
+        for route in routes.values_mut() {
+            if let Some(tree) = route.get_mut("tree") {
+                inline_walk(tree, &consts, &mut count);
+            }
+        }
+    }
+    count
+}
+
 /// Evaluate a whitespace-separated integer expression when it has no state
 /// operands. Uses the emitters' `+ - *` grammar and i64 checked arithmetic;
 /// anything else (a state name, overflow, malformed input) returns None so the
@@ -684,6 +856,28 @@ pub fn run(ir_path: &str, out: &Path, fold: bool) -> DResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_constant_text_skips_written_and_computed_mutable_states() {
+        let mut ir = json!({
+            "state": [
+                {"name": "label", "type": "string", "init": "ready"},
+                {"name": "count", "type": "int", "init": 0},
+                {"name": "base", "type": "int", "init": 2},
+                {"name": "double", "type": "int", "init": 4}
+            ],
+            "computed": [{"name": "double", "type": "int", "expr": "base * 2"}],
+            "tree": {"id": 0, "kind": "Column", "props": {}, "events": {}, "children": [
+                {"id": 1, "kind": "Text", "props": {"value": "{label} {double}"}, "events": {}, "children": []},
+                {"id": 2, "kind": "Text", "props": {"value": "{count}"},
+                 "events": {"tap": {"op": "set", "target": "count", "value": 1}}, "children": []}
+            ]}
+        });
+        assert_eq!(inline_constant_text(&mut ir), 1);
+        assert_eq!(ir["tree"]["children"][0]["props"]["value"], "ready 4");
+        assert_eq!(ir["tree"]["children"][1]["props"]["value"], "{count}");
+        assert_eq!(ir["tree"]["children"][0]["id"], 1, "no id changes");
+    }
 
     #[test]
     fn folded_integer_respects_precedence_and_overflow() {
