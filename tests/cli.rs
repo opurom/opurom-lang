@@ -1863,8 +1863,6 @@ fn duration_and_delay_tune_the_entry_animation() {
     assert!(compile_ok(&ok)["tree"]["props"]["duration"] == 10000);
 }
 
-
-
 #[test]
 fn platform_calls_lower_typed_capability_nodes() {
     let dir = out_dir("platform-calls");
