@@ -1,0 +1,17 @@
+app FoldVisibility {
+  state debug = true
+  state banner = false
+  state count = 0
+  Column {
+    Text("always")
+    if (debug) {
+      Text("debug note")
+    }
+    if (banner) {
+      Text("hidden banner")
+    }
+    Button("bump") {
+      count = 1
+    }
+  }
+}

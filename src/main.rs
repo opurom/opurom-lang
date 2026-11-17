@@ -87,8 +87,10 @@ fn run() -> DResult<()> {
             if args.iter().any(|a| a == "--fold-constants") {
                 optimize::fold_constants(&mut ir);
             }
+            let mut idmap = None;
             if args.iter().any(|a| a == "--fold-nodes") {
                 optimize::inline_constant_text(&mut ir);
+                idmap = optimize::fold_node_visibility(&mut ir);
             }
             let text = serde_json::to_string_pretty(&ir).map_err(|e| {
                 Diagnostic::file(
@@ -104,6 +106,25 @@ fn run() -> DResult<()> {
                     "check the -o path and permissions",
                 )
             })?;
+            if let Some(map) = idmap {
+                // Build sidecar only: node ids are dense pre-order and are not
+                // stable across folding, so consumers migrate through this map.
+                let sidecar = Path::new(&out).with_extension("idmap.json");
+                let text = serde_json::to_string_pretty(&map).map_err(|e| {
+                    Diagnostic::file(
+                        src_path,
+                        format!("cannot serialize id map: {e}"),
+                        "report this compiler bug",
+                    )
+                })? + "\n";
+                fs::write(&sidecar, text).map_err(|e| {
+                    Diagnostic::file(
+                        src_path,
+                        format!("cannot write {}: {e}", sidecar.display()),
+                        "check the -o directory and permissions",
+                    )
+                })?;
+            }
             Ok(())
         }
         Some("emit")

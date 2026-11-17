@@ -725,6 +725,247 @@ pub fn inline_constant_text(ir: &mut Json) -> usize {
     count
 }
 
+/// Props and fields that make deleting a node unsafe: runtime interaction,
+/// animation/effects, incremental-render boundaries and generated subtrees.
+fn delete_blocked(node: &Json) -> bool {
+    let Some(o) = node.as_object() else {
+        return true;
+    };
+    if o.get("events")
+        .and_then(Json::as_object)
+        .is_some_and(|e| !e.is_empty())
+    {
+        return true;
+    }
+    if o.get("repeat").is_some() || o.get("component").is_some() {
+        return true;
+    }
+    let Some(props) = o.get("props").and_then(Json::as_object) else {
+        return false;
+    };
+    const BLOCKERS: &[&str] = &[
+        "bind",
+        "gesture",
+        "role",
+        "state",
+        "disabled",
+        "variant",
+        "tone",
+        "high_contrast",
+        "animate",
+        "duration",
+        "delay",
+        "animClock",
+        "animInterval",
+        "effects",
+        "particles",
+        "repaintBoundary",
+        "relayoutBoundary",
+        "source",
+        "item",
+    ];
+    BLOCKERS.iter().any(|key| props.contains_key(*key))
+}
+
+/// True when no node in the subtree can be addressed by an event, gesture or
+/// accessibility action. A hidden branch with a live handler can still be
+/// fired by the native harness, so it must not be deleted.
+fn dispatch_free(node: &Json) -> bool {
+    if delete_blocked(node) {
+        return false;
+    }
+    node.get("children")
+        .and_then(Json::as_array)
+        .is_none_or(|children| children.iter().all(dispatch_free))
+}
+
+fn count_nodes(node: &Json) -> usize {
+    1 + node
+        .get("children")
+        .and_then(Json::as_array)
+        .map(|c| c.iter().map(count_nodes).sum::<usize>())
+        .unwrap_or(0)
+}
+
+/// Resolve `when`/`unless` on states proven constant. A permanently visible
+/// key is dropped; a permanently hidden subtree is deleted when it carries no
+/// dispatchable behaviour. Returns true when anything was deleted.
+fn fold_visibility(
+    node: &mut Json,
+    bools: &HashMap<String, bool>,
+    report: &mut (usize, usize),
+    is_root: bool,
+) -> bool {
+    let mut deleted = false;
+    if let Some(children) = node.get_mut("children").and_then(Json::as_array_mut) {
+        children.retain_mut(|child| {
+            let gone = fold_visibility(child, bools, report, false);
+            deleted |= gone;
+            !gone
+        });
+    }
+    let hide = node
+        .get("when")
+        .and_then(Json::as_str)
+        .and_then(|name| bools.get(name))
+        .is_some_and(|visible| !*visible)
+        || node
+            .get("unless")
+            .and_then(Json::as_str)
+            .and_then(|name| bools.get(name))
+            .is_some_and(|visible| *visible);
+    if hide && !is_root && !delete_blocked(node) && dispatch_free(node) {
+        report.0 += count_nodes(node);
+        return true;
+    }
+    let mut removed = false;
+    if let Some(name) = node.get("when").and_then(Json::as_str).map(str::to_string) {
+        if bools.get(&name) == Some(&true) {
+            node.as_object_mut().map(|o| o.remove("when"));
+            removed = true;
+        }
+    }
+    if let Some(name) = node
+        .get("unless")
+        .and_then(Json::as_str)
+        .map(str::to_string)
+    {
+        if bools.get(&name) == Some(&false) {
+            node.as_object_mut().map(|o| o.remove("unless"));
+            removed = true;
+        }
+    }
+    report.1 += usize::from(removed);
+    deleted
+}
+
+/// Renumber one tree in pre-order from its current root id and record the
+/// old→new id map. Route trees keep their own root id, so no id crosses a
+/// route boundary.
+fn renumber_tree(root: &mut Json, map: &mut BTreeMap<String, String>) {
+    fn walk(node: &mut Json, next: &mut u64, map: &mut BTreeMap<String, String>) {
+        let Some(o) = node.as_object_mut() else {
+            return;
+        };
+        if let Some(old) = o.get("id").and_then(Json::as_u64) {
+            let new = *next;
+            *next += 1;
+            o.insert("id".to_string(), Json::Number(new.into()));
+            map.insert(old.to_string(), new.to_string());
+        }
+        if let Some(children) = o.get_mut("children").and_then(Json::as_array_mut) {
+            for child in children {
+                walk(child, next, map);
+            }
+        }
+    }
+    let start = root.get("id").and_then(Json::as_u64).unwrap_or(0);
+    let mut next = start;
+    walk(root, &mut next, map);
+}
+
+/// Recompute the id-keyed export maps from the current tree without pruning
+/// state or props. Called after a renumber so no stale id survives.
+fn rebuild_id_maps(ir: &mut Json) {
+    let states: Vec<String> = ir
+        .get("state")
+        .and_then(Json::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|s| s.get("name")?.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let live: HashSet<String> = states.iter().cloned().collect();
+    let computed: HashMap<String, Vec<String>> = ir
+        .get("computed")
+        .and_then(Json::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| {
+                    let name = entry.get("name")?.as_str()?;
+                    let expr = entry.get("expr")?.as_str()?;
+                    Some((
+                        name.to_string(),
+                        expr_idents(expr).map(str::to_string).collect(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let trees: Vec<&Json> = ir
+        .get("tree")
+        .into_iter()
+        .chain(
+            ir.get("routes")
+                .and_then(Json::as_object)
+                .into_iter()
+                .flat_map(|routes| routes.values().filter_map(|entry| entry.get("tree"))),
+        )
+        .collect();
+    let has_boundary = trees.iter().any(|tree| has_boundary(tree));
+    let mut boundaries = JsonMap::new();
+    let mut refs: BTreeMap<String, BTreeSet<u64>> = BTreeMap::new();
+    if has_boundary {
+        for tree in &trees {
+            export_boundaries(tree, None, None, &mut boundaries);
+            export_state_refs(tree, &states, &live, &computed, &mut refs);
+        }
+    }
+    if let Some(o) = ir.as_object_mut() {
+        o.remove("stateRefs");
+        o.remove("nodeBoundaries");
+        if has_boundary {
+            o.insert("stateRefs".to_string(), json!(refs));
+            o.insert("nodeBoundaries".to_string(), Json::Object(boundaries));
+        }
+    }
+}
+
+/// Stage 2a step 2: fold visibility of constant bool states, renumber every
+/// affected tree and rebuild the id-keyed export maps. Returns the old→new id
+/// map when node ids changed; callers write it as a build sidecar, never into
+/// IR.
+pub fn fold_node_visibility(ir: &mut Json) -> Option<Json> {
+    let bools: HashMap<String, bool> = constant_scalars(ir)
+        .into_iter()
+        .filter_map(|(name, value)| value.as_bool().map(|b| (name, b)))
+        .collect();
+    if bools.is_empty() {
+        return None;
+    }
+    let mut report = (0usize, 0usize);
+    let mut map = BTreeMap::new();
+    if let Some(tree) = ir.get_mut("tree") {
+        if fold_visibility(tree, &bools, &mut report, true) {
+            renumber_tree(tree, &mut map);
+        }
+    }
+    if let Some(routes) = ir.get_mut("routes").and_then(Json::as_object_mut) {
+        for route in routes.values_mut() {
+            if let Some(tree) = route.get_mut("tree") {
+                if fold_visibility(tree, &bools, &mut report, true) {
+                    renumber_tree(tree, &mut map);
+                }
+            }
+        }
+    }
+    if report.0 == 0 && report.1 == 0 {
+        return None;
+    }
+    // The old maps were computed on the pre-fold ids. Rebuild them from the
+    // folded tree, keeping state and props untouched.
+    rebuild_id_maps(ir);
+    if report.0 == 0 {
+        return None;
+    }
+    Some(Json::Object(
+        map.into_iter()
+            .map(|(old, new)| (old, Json::String(new)))
+            .collect(),
+    ))
+}
+
 /// Evaluate a whitespace-separated integer expression when it has no state
 /// operands. Uses the emitters' `+ - *` grammar and i64 checked arithmetic;
 /// anything else (a state name, overflow, malformed input) returns None so the

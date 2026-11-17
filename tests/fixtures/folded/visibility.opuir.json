@@ -1,0 +1,67 @@
+{
+  "app": "FoldVisibility",
+  "ir": "0.1.0",
+  "state": [
+    {
+      "init": true,
+      "name": "debug",
+      "type": "bool"
+    },
+    {
+      "init": false,
+      "name": "banner",
+      "type": "bool"
+    },
+    {
+      "init": 0,
+      "name": "count",
+      "type": "int"
+    }
+  ],
+  "theme": {
+    "accent": "#097FEB",
+    "mode": "system",
+    "radius": 12
+  },
+  "tree": {
+    "children": [
+      {
+        "children": [],
+        "events": {},
+        "id": 1,
+        "kind": "Text",
+        "props": {
+          "value": "always"
+        }
+      },
+      {
+        "children": [],
+        "events": {},
+        "id": 2,
+        "kind": "Text",
+        "props": {
+          "value": "debug note"
+        }
+      },
+      {
+        "children": [],
+        "events": {
+          "tap": {
+            "op": "set",
+            "target": "count",
+            "value": 1
+          }
+        },
+        "id": 3,
+        "kind": "Button",
+        "props": {
+          "label": "bump"
+        }
+      }
+    ],
+    "events": {},
+    "id": 0,
+    "kind": "Column",
+    "props": {}
+  }
+}

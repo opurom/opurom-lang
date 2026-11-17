@@ -3679,6 +3679,198 @@ fn inline_constant_text_keeps_ids_and_matches_folded_fixture() {
 }
 
 #[test]
+fn fold_node_visibility_renumbers_and_matches_fixture() {
+    let dir = out_dir("fold-nodes-vis");
+    let src = fixture("folded/visibility.opu");
+    let plain = dir.join("plain.opuir.json");
+    let folded = dir.join("folded.opuir.json");
+    assert!(compile(&src, &plain).status.success());
+    let r = compile_nodes_folded(&src, &folded);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let a: Json = serde_json::from_slice(&fs::read(&plain).unwrap()).unwrap();
+    let b: Json = serde_json::from_slice(&fs::read(&folded).unwrap()).unwrap();
+    assert_eq!(a["tree"]["children"][2]["when"], "banner");
+    assert_eq!(b["tree"]["children"].as_array().unwrap().len(), 3);
+    for node in nodes_of(&b) {
+        assert!(node.get("when").is_none(), "constant when must be resolved");
+    }
+    let ids: Vec<u64> = nodes_of(&b)
+        .into_iter()
+        .map(|n| n["id"].as_u64().unwrap())
+        .collect();
+    assert_eq!(ids, vec![0, 1, 2, 3], "dense pre-order after renumber");
+    assert_eq!(
+        fs::read(&folded).unwrap(),
+        fs::read(fixture("folded/visibility.opuir.json")).unwrap(),
+        "folded output must match the committed fixture"
+    );
+
+    // The sidecar is a build artifact, not IR: old id 4 maps to 3, the deleted
+    // id 3 is absent, and the folded IR itself carries no map.
+    let sidecar = folded.with_extension("idmap.json");
+    let map: Json = serde_json::from_slice(&fs::read(&sidecar).unwrap()).unwrap();
+    assert_eq!(map["4"], "3");
+    assert!(map.get("3").is_none(), "{map}");
+    assert!(b.get("nodeBoundaries").is_none());
+    assert!(b.get("stateRefs").is_none());
+
+    // Render's real parser accepts the renumbered tree and paints the same frame.
+    let (ok_plain, out_plain) = render_ir(&plain, &dir.join("plain.ppm"));
+    let (ok_folded, out_folded) = render_ir(&folded, &dir.join("folded.ppm"));
+    assert!(ok_plain, "{out_plain}");
+    assert!(ok_folded, "{out_folded}");
+    assert_eq!(
+        fs::read(dir.join("plain.ppm")).unwrap(),
+        fs::read(dir.join("folded.ppm")).unwrap(),
+        "folded visibility must render identically"
+    );
+
+    let again = dir.join("again.opuir.json");
+    let r = compile_nodes_folded(&src, &again);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(fs::read(&folded).unwrap(), fs::read(&again).unwrap());
+}
+
+#[test]
+fn fold_node_visibility_keeps_native_patches_equal_via_id_map() {
+    let dir = out_dir("fold-nodes-native");
+    let src = fixture("folded/visibility.opu");
+    let plain_ir = dir.join("plain.opuir.json");
+    let folded_ir = dir.join("folded.opuir.json");
+    assert!(compile(&src, &plain_ir).status.success());
+    let r = compile_nodes_folded(&src, &folded_ir);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let map: Json =
+        serde_json::from_slice(&fs::read(folded_ir.with_extension("idmap.json")).unwrap()).unwrap();
+
+    let build = |ir: &Path, name: &str| -> PathBuf {
+        let out = dir.join(name);
+        assert!(emit(ir, "native", &out).status.success());
+        let (ok, log) = build_native(&out);
+        assert!(ok, "native build failed: {log}");
+        out.join("target/release/opurom_native")
+    };
+    let plain_exe = build(&plain_ir, "native-plain");
+    let folded_exe = build(&folded_ir, "native-folded");
+
+    // Plain ids come from the plain tree; the sidecar is the only migration path.
+    let plain_tap = format!("tap {}\nquit\n", plain_ir_id(&plain_ir, "Button"));
+    let folded_id = map[plain_ir_id(&plain_ir, "Button").to_string().as_str()]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let folded_tap = format!("tap {folded_id}\nquit\n");
+    let (ok_plain, plain_stdout) = run_native(&plain_exe, &plain_tap);
+    let (ok_folded, folded_stdout) = run_native(&folded_exe, &folded_tap);
+    assert!(ok_plain && ok_folded, "{plain_stdout}\n{folded_stdout}");
+    let patches = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|l| l.starts_with("patch ") || l.starts_with("state "))
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(patches(&plain_stdout), patches(&folded_stdout));
+}
+
+fn plain_ir_id(ir: &Path, kind: &str) -> u64 {
+    let doc: Json = serde_json::from_slice(&fs::read(ir).unwrap()).unwrap();
+    nodes_of(&doc)
+        .into_iter()
+        .find(|n| n["kind"] == kind)
+        .and_then(|n| n["id"].as_u64())
+        .expect("node kind present")
+}
+
+#[test]
+fn fold_node_visibility_rebuilds_id_keyed_maps() {
+    let dir = out_dir("fold-nodes-maps");
+    let src = dir.join("maps.opu");
+    fs::write(
+        &src,
+        "app FoldMaps {\n  state debug = false\n  Column {\n    Text(\"a\")\n    if (debug) {\n      Text(\"b\")\n    }\n    Text(\"c\", repaintBoundary: true)\n  }\n}\n",
+    )
+    .unwrap();
+    let folded = dir.join("folded.opuir.json");
+    let r = compile_nodes_folded(&src, &folded);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let optimized = dir.join("optimized.opuir.json");
+    let r = optimize(&folded, &optimized);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let ir: Json = serde_json::from_slice(&fs::read(&optimized).unwrap()).unwrap();
+    let ids: Vec<u64> = nodes_of(&ir)
+        .into_iter()
+        .map(|n| n["id"].as_u64().unwrap())
+        .collect();
+    assert_eq!(ids, vec![0, 1, 2], "the hidden branch is gone");
+    let boundaries = ir["nodeBoundaries"].as_object().unwrap();
+    for (key, entry) in boundaries {
+        assert!(
+            ids.contains(&key.parse().unwrap()),
+            "stale boundary id {key}"
+        );
+        for side in ["repaint", "relayout"] {
+            if let Some(boundary) = entry[side].as_u64() {
+                assert!(ids.contains(&boundary), "stale boundary target {boundary}");
+            }
+        }
+    }
+    for (name, list) in ir["stateRefs"].as_object().unwrap() {
+        for id in list.as_array().unwrap() {
+            let id = id.as_u64().unwrap();
+            assert!(ids.contains(&id), "stale stateRefs id {id} for {name}");
+        }
+    }
+}
+
+#[test]
+fn fold_node_visibility_never_renumbers_across_routes() {
+    let dir = out_dir("fold-nodes-routes");
+    let src = dir.join("multi.opu");
+    fs::write(
+        &src,
+        "app Multi {\n  state debug = false\n  route Home {\n    Column {\n      if (debug) {\n        Text(\"gone\")\n      }\n      Text(\"home\")\n    }\n  }\n  route Detail {\n    Column {\n      Text(\"detail\")\n    }\n  }\n}\n",
+    )
+    .unwrap();
+    let plain = dir.join("plain.opuir.json");
+    let folded = dir.join("folded.opuir.json");
+    assert!(compile(&src, &plain).status.success());
+    let r = compile_nodes_folded(&src, &folded);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let a: Json = serde_json::from_slice(&fs::read(&plain).unwrap()).unwrap();
+    let b: Json = serde_json::from_slice(&fs::read(&folded).unwrap()).unwrap();
+    let tree_ids = |ir: &Json, name: &str| -> Vec<u64> {
+        let mut out = Vec::new();
+        fn walk(n: &Json, out: &mut Vec<u64>) {
+            out.push(n["id"].as_u64().unwrap());
+            for c in n["children"].as_array().unwrap() {
+                walk(c, out);
+            }
+        }
+        walk(&ir["routes"][name]["tree"], &mut out);
+        out
+    };
+    let home_plain = tree_ids(&a, "Home");
+    let detail_plain = tree_ids(&a, "Detail");
+    let home_folded = tree_ids(&b, "Home");
+    let detail_folded = tree_ids(&b, "Detail");
+    assert_eq!(home_plain.len(), 3, "{home_plain:?}");
+    assert_eq!(home_folded.len(), 2, "{home_folded:?}");
+    assert_eq!(home_folded[0], home_plain[0], "route root id is preserved");
+    assert_eq!(
+        detail_folded, detail_plain,
+        "an untouched route keeps every id"
+    );
+    assert_eq!(
+        (1..home_folded.len())
+            .map(|i| home_folded[i] - home_folded[i - 1])
+            .max()
+            .unwrap(),
+        1,
+        "each tree stays dense pre-order from its own root"
+    );
+}
+
+#[test]
 fn fold_nodes_is_a_no_op_without_a_foldable_pattern() {
     let dir = out_dir("fold-nodes-noop");
     for (i, src) in [contract("counter.opu"), fixture("golden/todo.opu")]
