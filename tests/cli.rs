@@ -1737,6 +1737,81 @@ fn duration_and_delay_tune_the_entry_animation() {
 }
 
 #[test]
+fn flutter_curve_and_reverse_props_lower_additively() {
+    // Each Flutter curve/reverse/reduce-motion prop lowers only when declared,
+    // so the default IR and frames stay byte-identical.
+    let dir = out_dir("flutter-curves");
+    let src = dir.join("curves.opu");
+    fs::write(
+        &src,
+        "app C {\n  Column {\n    Container(animate: ease, curve: easeOutBack, reverseCurve: easeIn, reverseDuration: 200, animationBehavior: preserve, overshoot: true)\n    Container(animate: ease)\n  }\n}\n",
+    )
+    .unwrap();
+    let doc = compile_ok(&src);
+    let containers: Vec<&Json> = nodes_of(&doc)
+        .into_iter()
+        .filter(|n| n["kind"] == "Container")
+        .collect();
+    assert_eq!(containers.len(), 2);
+    let declared = containers[0]["props"].as_object().unwrap();
+    assert_eq!(declared["curve"], "easeOutBack");
+    assert_eq!(declared["reverseCurve"], "easeIn");
+    assert_eq!(declared["reverseDuration"], 200);
+    assert_eq!(declared["animationBehavior"], "preserve");
+    assert_eq!(declared["overshoot"], true);
+    let plain = containers[1]["props"].as_object().unwrap();
+    for key in [
+        "curve",
+        "reverseCurve",
+        "reverseDuration",
+        "animationBehavior",
+        "overshoot",
+    ] {
+        assert!(
+            plain.get(key).is_none(),
+            "{key} must be absent when undeclared"
+        );
+    }
+
+    let first = dir.join("curves-a.opuir.json");
+    let again = dir.join("curves-b.opuir.json");
+    assert!(compile(&src, &first).status.success());
+    assert!(compile(&src, &again).status.success());
+    assert_eq!(fs::read(&first).unwrap(), fs::read(&again).unwrap());
+
+    for (text, needle) in [
+        (
+            "app B { Container(animate: ease, curve: wobble) }\n",
+            "unknown curve 'wobble'",
+        ),
+        (
+            "app B { Container(animate: ease, reverseCurve: 1) }\n",
+            "prop 'reverseCurve' expects a curve name",
+        ),
+        (
+            "app B { Container(animate: ease, animationBehavior: fast) }\n",
+            "unknown animationBehavior 'fast'",
+        ),
+        (
+            "app B { Container(animate: ease, reverseDuration: 20000) }\n",
+            "reverseDuration must be between 0 and 10000",
+        ),
+        (
+            "app B { Container(animate: ease, overshoot: 1) }\n",
+            "prop 'overshoot' expects true or false",
+        ),
+    ] {
+        let bad = dir.join("bad.opu");
+        fs::write(&bad, text).unwrap();
+        let r = compile(&bad, &dir.join("bad.opuir.json"));
+        assert!(!r.status.success(), "{needle}: must fail");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(err.contains(needle), "wanted {needle}, got {err}");
+        assert_diag(&err, &bad);
+    }
+}
+
+#[test]
 fn boundary_props_lower_only_when_declared() {
     let ir = compile_ok(&fixture("render_boundaries.opu"));
     let nodes = nodes_of(&ir);

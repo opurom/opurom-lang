@@ -217,6 +217,11 @@ const GENERIC_PROPS: &[&str] = &[
     "columnSpan",
     "animClock",
     "animInterval",
+    "curve",
+    "reverseCurve",
+    "reverseDuration",
+    "animationBehavior",
+    "overshoot",
 ];
 
 /// Additive `Input` validator props; these are not accepted on other kinds.
@@ -245,6 +250,56 @@ const ANIMATE_VALUES: &[&str] = &[
     "large",
     "color",
     "none",
+];
+
+/// Flutter 3.50 `Curves` members accepted by the optional `curve` and
+/// `reverseCurve` props. Names match `animation/curves.dart:1467-1901`; the
+/// renderer maps them to fixed-point evaluations. An absent prop keeps the
+/// motion token's built-in trajectory, so the default path is unchanged.
+const CURVE_VALUES: &[&str] = &[
+    "linear",
+    "decelerate",
+    "fastLinearToSlowEaseIn",
+    "fastEaseInToSlowEaseOut",
+    "ease",
+    "easeIn",
+    "easeInToLinear",
+    "easeInSine",
+    "easeInQuad",
+    "easeInCubic",
+    "easeInQuart",
+    "easeInQuint",
+    "easeInExpo",
+    "easeInCirc",
+    "easeInBack",
+    "easeOut",
+    "linearToEaseOut",
+    "easeOutSine",
+    "easeOutQuad",
+    "easeOutCubic",
+    "easeOutQuart",
+    "easeOutQuint",
+    "easeOutExpo",
+    "easeOutCirc",
+    "easeOutBack",
+    "easeInOut",
+    "easeInOutSine",
+    "easeInOutQuad",
+    "easeInOutCubic",
+    "easeInOutCubicEmphasized",
+    "easeInOutQuart",
+    "easeInOutQuint",
+    "easeInOutExpo",
+    "easeInOutCirc",
+    "easeInOutBack",
+    "fastOutSlowIn",
+    "slowMiddle",
+    "bounceIn",
+    "bounceOut",
+    "bounceInOut",
+    "elasticIn",
+    "elasticOut",
+    "elasticInOut",
 ];
 
 /// Gesture names the renderer binds
@@ -1249,7 +1304,7 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
     }
     if matches!(
         key,
-        "glass" | "repaintBoundary" | "relayoutBoundary" | "fillHeight"
+        "glass" | "repaintBoundary" | "relayoutBoundary" | "fillHeight" | "overshoot"
     ) {
         return match &arg.value {
             AstValue::Lit(Lit::Bool(b)) => Ok(json!(*b)),
@@ -1289,7 +1344,53 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         }
         return Ok(json!(s));
     }
-    if key == "duration" || key == "delay" {
+    if key == "curve" || key == "reverseCurve" {
+        let s = match &arg.value {
+            AstValue::Lit(Lit::Str(s)) | AstValue::Ident(s) => s.clone(),
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop '{key}' expects a curve name, found {}",
+                        value_desc(other)
+                    ),
+                    format!("write a named curve such as {key}: easeOutCubic"),
+                ))
+            }
+        };
+        if !CURVE_VALUES.contains(&s.as_str()) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("unknown curve '{s}'"),
+                "use a Flutter Curves name such as linear, easeIn, easeOutCubic, easeInOutBack, bounceOut, elasticOut",
+            ));
+        }
+        return Ok(json!(s));
+    }
+    if key == "animationBehavior" {
+        let s = match &arg.value {
+            AstValue::Lit(Lit::Str(s)) | AstValue::Ident(s) => s.clone(),
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop 'animationBehavior' expects a keyword, found {}",
+                        value_desc(other)
+                    ),
+                    "write animationBehavior: normal or animationBehavior: preserve".to_string(),
+                ))
+            }
+        };
+        if s != "normal" && s != "preserve" {
+            return Err(ctx.err(
+                arg.pos,
+                format!("unknown animationBehavior '{s}'"),
+                "use one of: normal, preserve".to_string(),
+            ));
+        }
+        return Ok(json!(s));
+    }
+    if key == "duration" || key == "delay" || key == "reverseDuration" {
         // Bounds mirror opurom-render's ANIMATE_MAX_MS so a value the renderer
         // would reject fails at its source position instead of at view time.
         let n = match &arg.value {
