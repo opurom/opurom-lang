@@ -313,6 +313,13 @@ const GESTURE_VALUES: &[&str] = &["tap", "doubleTap", "longPress", "drag"];
 /// enum; a missing style is a warning at lookup time, not a compile error.
 const ICON_STYLE_VALUES: &[&str] = &["outlined", "filled", "rounded", "sharp"];
 
+/// Accessible roles accepted by `opurom-render/src/ir.rs:397-424`. Rejecting
+/// other names here keeps a source error at the source position instead of a
+/// hard IR parse failure in every consumer.
+const ROLE_VALUES: &[&str] = &[
+    "button", "text", "image", "checkbox", "slider", "heading", "none",
+];
+
 /// Interaction state, design-system variant and semantic tone are node props
 /// every kind accepts; the values mirror opurom-render's `ir.rs`. Emitters
 /// share this table so all ten preserve the same keys. `state` is only a prop
@@ -1318,6 +1325,27 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
                 arg.pos,
                 format!("unknown iconStyle '{s}'"),
                 "use one of: outlined, filled, rounded, sharp".to_string(),
+            ));
+        }
+        return Ok(json!(s));
+    }
+    if key == "role" {
+        let s = match &arg.value {
+            AstValue::Lit(Lit::Str(s)) | AstValue::Ident(s) => s.clone(),
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!("prop 'role' expects a keyword, found {}", value_desc(other)),
+                    "write one of: button, text, image, checkbox, slider, heading, none"
+                        .to_string(),
+                ))
+            }
+        };
+        if !ROLE_VALUES.contains(&s.as_str()) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("unknown role '{s}'"),
+                "use one of: button, text, image, checkbox, slider, heading, none".to_string(),
             ));
         }
         return Ok(json!(s));

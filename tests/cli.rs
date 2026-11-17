@@ -9297,6 +9297,38 @@ fn icon_styles_and_rtl_are_baked_into_package_paths() {
 }
 
 #[test]
+fn role_keywords_are_validated_at_compile_time() {
+    let dir = out_dir("role-validation");
+    let src = dir.join("good.opu");
+    fs::write(&src, "app R { Column { Text(\"hi\", role: heading) } }\n").unwrap();
+    let ir = compile_ok(&src);
+    let roles: Vec<&str> = nodes_of(&ir)
+        .into_iter()
+        .filter_map(|n| n["props"]["role"].as_str())
+        .collect();
+    assert_eq!(roles, vec!["heading"]);
+    for (body, needle) in [
+        (
+            "app R { Column { Text(\"hi\", role: alert) } }",
+            "unknown role 'alert'",
+        ),
+        (
+            "app R { Column { Text(\"hi\", role: 1) } }",
+            "prop 'role' expects a keyword",
+        ),
+    ] {
+        let bad = dir.join("bad.opu");
+        fs::write(&bad, body).unwrap();
+        let out = dir.join("bad.opuir.json");
+        let r = compile(&bad, &out);
+        assert!(!r.status.success(), "{body} compiled");
+        let stderr = String::from_utf8_lossy(&r.stderr);
+        assert!(stderr.contains(needle), "{stderr}");
+        assert_diag(&stderr, &bad);
+    }
+}
+
+#[test]
 fn imported_module_may_declare_and_expand_a_component() {
     let dir = out_dir("mod-component");
     fs::create_dir_all(dir.join("components")).unwrap();
