@@ -498,7 +498,9 @@ fn number_to_decimal(n: &serde_json::Number) -> String {
 }
 
 /// Flatten a JSON token object into `(key, string value)` leaves. Keys join the
-/// full path with `-`, and `.` inside a segment is rewritten to `-`.
+/// full path with `-`, and `.` inside a segment is rewritten to `-`. Arrays are
+/// kept as JSON text so structured tokens such as elevation shadows survive;
+/// booleans and null stay invalid.
 fn flatten_token_object(
     obj: &serde_json::Map<String, Json>,
     prefix: &str,
@@ -517,6 +519,10 @@ fn flatten_token_object(
             Json::Object(child) => flatten_token_object(child, &full, out, origin, pos)?,
             Json::String(text) => out.push((full, text.clone())),
             Json::Number(n) => out.push((full, number_to_decimal(n))),
+            Json::Array(values) => out.push((
+                full,
+                serde_json::to_string(values).unwrap_or_else(|_| "[]".into()),
+            )),
             _ => {
                 return Err(token_err(
                     origin,

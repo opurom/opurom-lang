@@ -1272,6 +1272,22 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
                 ))
             }
         };
+        // Design-token colour reference. Only the minimal primary role is
+        // enabled; the IR carries the semantic name and the renderer resolves
+        // it against the active light/dark palette.
+        if let Some(role) = s
+            .strip_prefix("{@md-sys-color-")
+            .and_then(|r| r.strip_suffix('}'))
+        {
+            if role != "primary" {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!("unsupported design token role 'md-sys-color-{role}'"),
+                    "only '{@md-sys-color-primary}' is enabled".to_string(),
+                ));
+            }
+            return Ok(json!("@md-sys-color-primary"));
+        }
         check_color(ctx, arg.pos, key, &s)?;
         return Ok(json!(s));
     }

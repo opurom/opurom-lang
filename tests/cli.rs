@@ -8732,6 +8732,27 @@ fn token_import_flattens_nested_and_dotted_keys() {
 }
 
 #[test]
+fn token_import_accepts_nested_objects_and_arrays() {
+    let dir = out_dir("token-import-structured");
+    fs::write(
+        dir.join("tokens.json"),
+        r##"{"md": {"elev-0": [], "elev-1": {"umbra": {"offset": [0, 2], "blur": 1}}}}"##,
+    )
+    .unwrap();
+    let src = dir.join("main.opu");
+    fs::write(
+        &src,
+        "app A { theme { tokens { import \"tokens.json\" } } Container { Text(\"hi\") } }\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let tok = &ir["theme"]["tokens"];
+    assert_eq!(tok["md-elev-0"], json!("[]"));
+    assert_eq!(tok["md-elev-1-umbra-offset"], json!("[0,2]"));
+    assert_eq!(tok["md-elev-1-umbra-blur"], json!("1"));
+}
+
+#[test]
 fn token_import_keeps_golden_ir_unchanged_without_declaration() {
     let golden = compile_ok(&contract("counter.opu"));
     let expected: Json =
@@ -8919,6 +8940,33 @@ fn text_color_is_generic_across_kinds() {
     fs::write(&src, "app G {\n  Text(\"hi\", textColor: \"#FEDCBA\")\n}\n").unwrap();
     let ir = compile_ok(&src);
     assert_eq!(ir["tree"]["props"]["textColor"], json!("#FEDCBA"));
+}
+
+#[test]
+fn design_token_color_emits_semantic_role() {
+    let dir = out_dir("design-token-color");
+    let src = dir.join("role.opu");
+    fs::write(
+        &src,
+        "app D { Button(\"Go\", color: \"{@md-sys-color-primary}\") }\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    assert_eq!(ir["tree"]["props"]["color"], json!("@md-sys-color-primary"));
+
+    let bad = dir.join("bad.opu");
+    fs::write(
+        &bad,
+        "app D { Button(\"Go\", color: \"{@md-sys-color-secondary}\") }\n",
+    )
+    .unwrap();
+    let r = compile(&bad, &dir.join("bad.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("unsupported design token role 'md-sys-color-secondary'"),
+        "{stderr}"
+    );
 }
 
 #[test]
