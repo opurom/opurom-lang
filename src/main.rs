@@ -18,7 +18,7 @@ use std::path::Path;
 use diag::{DResult, Diagnostic};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const USAGE: &str = "usage: opuromc check <src.opu> | compile <src.opu> -o <out.opuir.json> | target <ir.json> --target <name> -o <dir> | optimize <ir.json> -o <out.json> | targets | components | --version";
+const USAGE: &str = "usage: opuromc check <src.opu> | compile <src.opu> -o <out.opuir.json> [--fold-constants] | target <ir.json> --target <name> -o <dir> | optimize <ir.json> -o <out.json> [--fold-constants] | targets | components | --version";
 
 fn main() {
     if let Err(e) = run() {
@@ -83,7 +83,10 @@ fn run() -> DResult<()> {
                 )
             })?;
             let src = read_source(src_path)?;
-            let ir = lower::compile_source(&src, src_path)?;
+            let mut ir = lower::compile_source(&src, src_path)?;
+            if args.iter().any(|a| a == "--fold-constants") {
+                optimize::fold_constants(&mut ir);
+            }
             let text = serde_json::to_string_pretty(&ir).map_err(|e| {
                 Diagnostic::file(
                     src_path,
@@ -157,7 +160,11 @@ fn run() -> DResult<()> {
                     USAGE.to_string(),
                 )
             })?;
-            optimize::run(ir_path, Path::new(&out))
+            optimize::run(
+                ir_path,
+                Path::new(&out),
+                args.iter().any(|a| a == "--fold-constants"),
+            )
         }
         Some("targets") => {
             print_targets();

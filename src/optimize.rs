@@ -553,7 +553,84 @@ fn optimize(ir: &mut Json) {
     }
 }
 
-pub fn run(ir_path: &str, out: &Path) -> DResult<()> {
+/// Evaluate a whitespace-separated integer expression when it has no state
+/// operands. Uses the emitters' `+ - *` grammar and i64 checked arithmetic;
+/// anything else (a state name, overflow, malformed input) returns None so the
+/// caller leaves the IR alone.
+fn folded_integer(expr: &str) -> Option<i64> {
+    let toks: Vec<&str> = expr.split_whitespace().collect();
+    fn term(toks: &[&str], at: &mut usize) -> Option<i64> {
+        let mut value = toks.get(*at)?.parse::<i64>().ok()?;
+        *at += 1;
+        while toks.get(*at).copied() == Some("*") {
+            *at += 1;
+            let rhs = toks.get(*at)?.parse::<i64>().ok()?;
+            *at += 1;
+            value = value.checked_mul(rhs)?;
+        }
+        Some(value)
+    }
+    let mut at = 0;
+    let mut value = term(&toks, &mut at)?;
+    while at < toks.len() {
+        let op = toks[at];
+        at += 1;
+        let rhs = term(&toks, &mut at)?;
+        value = match op {
+            "+" => value.checked_add(rhs)?,
+            "-" => value.checked_sub(rhs)?,
+            _ => return None,
+        };
+    }
+    Some(value)
+}
+
+/// Fold constant-only computed expressions into their integer literal. The
+/// state `init` already holds this value from `infer_computed`; only `expr`
+/// changes, so target emitters write a literal instead of runtime arithmetic.
+/// IR shape, node bytes and every golden stay untouched.
+pub fn fold_constants(ir: &mut Json) -> usize {
+    // Only fold when the compiler's own `init` already equals the folded
+    // value, so a hand-written IR with an inconsistent init is never changed.
+    let inits: HashMap<String, i64> = ir
+        .get("state")
+        .and_then(Json::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|s| {
+                    Some((
+                        s.get("name")?.as_str()?.to_string(),
+                        s.get("init")?.as_i64()?,
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let Some(list) = ir.get_mut("computed").and_then(Json::as_array_mut) else {
+        return 0;
+    };
+    let mut folded = 0;
+    for entry in list.iter_mut() {
+        let Some(name) = entry.get("name").and_then(Json::as_str).map(str::to_string) else {
+            continue;
+        };
+        let Some(expr) = entry.get("expr").and_then(Json::as_str) else {
+            continue;
+        };
+        if let Some(value) = folded_integer(expr) {
+            if inits.get(&name) != Some(&value) {
+                continue;
+            }
+            if let Some(o) = entry.as_object_mut() {
+                o.insert("expr".to_string(), Json::String(value.to_string()));
+                folded += 1;
+            }
+        }
+    }
+    folded
+}
+
+pub fn run(ir_path: &str, out: &Path, fold: bool) -> DResult<()> {
     let bytes = fs::read(ir_path).map_err(|e| {
         Diagnostic::file(
             ir_path,
@@ -569,6 +646,9 @@ pub fn run(ir_path: &str, out: &Path) -> DResult<()> {
         )
     })?;
     validate(&ir, ir_path)?;
+    if fold {
+        fold_constants(&mut ir);
+    }
     optimize(&mut ir);
     let text = serde_json::to_string_pretty(&ir).map_err(|e| {
         Diagnostic::file(
@@ -599,4 +679,46 @@ pub fn run(ir_path: &str, out: &Path) -> DResult<()> {
         output_bytes
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folded_integer_respects_precedence_and_overflow() {
+        assert_eq!(folded_integer("2 + 3 * 4"), Some(14));
+        assert_eq!(folded_integer("-1 * 5 - 2"), Some(-7));
+        assert_eq!(folded_integer("count * 2"), None);
+        assert_eq!(folded_integer("9223372036854775807 + 1"), None);
+        assert_eq!(folded_integer("2 ** 3"), None);
+    }
+
+    #[test]
+    fn fold_constants_only_rewrites_pure_expressions() {
+        let mut ir = json!({
+            "state": [
+                {"name": "c", "type": "int", "init": 10},
+                {"name": "d", "type": "int", "init": 0}
+            ],
+            "computed": [
+                {"name": "c", "type": "int", "expr": "2 * 3 + 4"},
+                {"name": "d", "type": "int", "expr": "count * 2"}
+            ]
+        });
+        assert_eq!(fold_constants(&mut ir), 1);
+        assert_eq!(ir["computed"][0]["expr"], "10");
+        assert_eq!(ir["computed"][1]["expr"], "count * 2");
+        assert_eq!(ir["state"][0]["init"], 10, "state is not rewritten");
+    }
+
+    #[test]
+    fn fold_constants_skips_a_mismatched_init() {
+        let mut ir = json!({
+            "state": [{"name": "c", "type": "int", "init": 11}],
+            "computed": [{"name": "c", "type": "int", "expr": "2 * 3 + 4"}]
+        });
+        assert_eq!(fold_constants(&mut ir), 0);
+        assert_eq!(ir["computed"][0]["expr"], "2 * 3 + 4");
+    }
 }

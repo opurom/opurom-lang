@@ -3131,6 +3131,28 @@ fn optimize(ir: &Path, out: &Path) -> Output {
         .expect("run opuromc optimize")
 }
 
+fn compile_folded(src: &Path, out: &Path) -> Output {
+    bin()
+        .arg("compile")
+        .arg(src)
+        .arg("-o")
+        .arg(out)
+        .arg("--fold-constants")
+        .output()
+        .expect("run opuromc compile --fold-constants")
+}
+
+fn optimize_folded(ir: &Path, out: &Path) -> Output {
+    bin()
+        .arg("optimize")
+        .arg(ir)
+        .arg("-o")
+        .arg(out)
+        .arg("--fold-constants")
+        .output()
+        .expect("run opuromc optimize --fold-constants")
+}
+
 fn pretty_ir(v: &Json) -> String {
     serde_json::to_string_pretty(v).unwrap() + "\n"
 }
@@ -3485,6 +3507,117 @@ fn optimizer_is_a_no_op_on_golden_counter_ir() {
         format!("optimize: {in_bytes} bytes in, {out_bytes} bytes out"),
         "byte counts must come from the real files"
     );
+}
+
+#[test]
+fn constant_folding_keeps_golden_ir_byte_identical() {
+    // Goldens carry no computed declarations, so the explicit fold flag must be
+    // a no-op on both compile and optimize paths.
+    let dir = out_dir("fold-golden");
+    let pairs = [
+        (contract("counter.opu"), contract("counter.opuir.json")),
+        (
+            fixture("golden/gallery.opu"),
+            fixture("golden/gallery.opuir.json"),
+        ),
+        (
+            fixture("golden/profile.opu"),
+            fixture("golden/profile.opuir.json"),
+        ),
+        (
+            fixture("golden/showcase.opu"),
+            fixture("golden/showcase.opuir.json"),
+        ),
+        (
+            fixture("golden/todo.opu"),
+            fixture("golden/todo.opuir.json"),
+        ),
+    ];
+    for (i, (src, golden)) in pairs.iter().enumerate() {
+        let plain = dir.join(format!("{i}-plain.json"));
+        let folded = dir.join(format!("{i}-folded.json"));
+        assert!(compile(src, &plain).status.success());
+        let r = compile_folded(src, &folded);
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        assert_eq!(fs::read(&folded).unwrap(), fs::read(&plain).unwrap());
+        assert_eq!(fs::read(&folded).unwrap(), fs::read(golden).unwrap());
+
+        let opt_plain = dir.join(format!("{i}-opt.json"));
+        let opt_folded = dir.join(format!("{i}-opt-folded.json"));
+        assert!(optimize(&plain, &opt_plain).status.success());
+        assert!(optimize_folded(&plain, &opt_folded).status.success());
+        assert_eq!(
+            fs::read(&opt_plain).unwrap(),
+            fs::read(&opt_folded).unwrap()
+        );
+    }
+}
+
+#[test]
+fn constant_folding_emits_literal_target_code() {
+    let dir = out_dir("fold-targets");
+    let src = dir.join("fold.opu");
+    fs::write(
+        &src,
+        "app Fold {\n  computed total = 2 * 3 + 4\n  Column {\n    Text(\"{total}\")\n  }\n}\n",
+    )
+    .unwrap();
+    let plain = dir.join("plain.opuir.json");
+    let folded = dir.join("folded.opuir.json");
+    assert!(compile(&src, &plain).status.success());
+    let r = compile_folded(&src, &folded);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let a: Json = serde_json::from_slice(&fs::read(&plain).unwrap()).unwrap();
+    let b: Json = serde_json::from_slice(&fs::read(&folded).unwrap()).unwrap();
+    assert_eq!(a["computed"][0]["expr"], "2 * 3 + 4");
+    assert_eq!(b["computed"][0]["expr"], "10");
+    assert_eq!(a["state"], b["state"], "the init value is already folded");
+    let mut a_without = a.clone();
+    let mut b_without = b.clone();
+    a_without["computed"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("expr");
+    b_without["computed"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("expr");
+    assert_eq!(a_without, b_without, "only the expr text changes");
+
+    let native_plain = dir.join("native-plain");
+    let native_folded = dir.join("native-folded");
+    assert!(emit(&plain, "native", &native_plain).status.success());
+    assert!(emit(&folded, "native", &native_folded).status.success());
+    let before = fs::read_to_string(native_plain.join("src/main.rs")).unwrap();
+    let after = fs::read_to_string(native_folded.join("src/main.rs")).unwrap();
+    assert!(before.contains("saturating_mul"), "{before}");
+    assert!(after.contains("_state.total = 10i64;"), "{after}");
+    assert!(!after.contains("saturating_mul"), "{after}");
+
+    let web_plain = dir.join("web-plain");
+    let web_folded = dir.join("web-folded");
+    assert!(emit(&plain, "web", &web_plain).status.success());
+    assert!(emit(&folded, "web", &web_folded).status.success());
+    let before = fs::read_to_string(web_plain.join("app.js")).unwrap();
+    let after = fs::read_to_string(web_folded.join("app.js")).unwrap();
+    assert!(before.contains("state.total = ((2 * 3) + 4);"), "{before}");
+    assert!(after.contains("state.total = 10;"), "{after}");
+}
+
+#[test]
+fn constant_folding_leaves_state_expressions() {
+    let dir = out_dir("fold-state-expr");
+    let src = dir.join("state.opu");
+    fs::write(
+        &src,
+        "app Keep {\n  state count = 2\n  computed doubled = count * 2\n  Column {\n    Text(\"{doubled}\")\n  }\n}\n",
+    )
+    .unwrap();
+    let out = dir.join("out.opuir.json");
+    let r = compile_folded(&src, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let ir: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(ir["computed"][0]["expr"], "count * 2");
 }
 
 #[test]
