@@ -1979,6 +1979,7 @@ fn render_frame(
         "                        press = Some(opurom_render::PressPhase {\n",
         "                            node_id: id,\n",
         "                            press_start_tick: opurom_render::SETTLED_MS,\n",
+        "                            confirm_tick: None,\n",
         "                            touch: None,\n",
         "                        });\n",
         "                        press_tick = 1;\n",
