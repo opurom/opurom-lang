@@ -329,7 +329,9 @@ const ROLE_VALUES: &[&str] = &[
 pub const DESIGN_PROPS: &[(&str, &[&str])] = &[
     (
         "state",
-        &["default", "hover", "active", "focus", "disabled"],
+        &[
+            "default", "hover", "active", "focus", "disabled", "loading", "success", "error",
+        ],
     ),
     (
         "variant",

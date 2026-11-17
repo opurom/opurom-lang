@@ -7820,7 +7820,7 @@ fn unknown_design_values_are_rejected_with_help() {
             "state",
             "app Bad { Text(\"x\", state: bogus) }",
             "unknown state value 'bogus'",
-            "default, hover, active, focus, disabled",
+            "default, hover, active, focus, disabled, loading, success, error",
         ),
         (
             "variant",
@@ -7864,6 +7864,55 @@ fn unknown_design_values_are_rejected_with_help() {
             "{name}: compile must fail"
         );
         assert!(!out.exists(), "{name}: no IR may be written on error");
+    }
+}
+
+#[test]
+fn business_states_compile_and_emit_verbatim() {
+    // loading/success/error are accepted node-prop states; they must reach IR
+    // unchanged so render can parse the eight-state NodeState set.
+    let dir = out_dir("business-states");
+    let src = dir.join("states.opu");
+    fs::write(
+        &src,
+        r#"app States {
+  Column {
+    Button("load", state: loading)
+    Button("ok", state: success)
+    Button("bad", state: error)
+  }
+}
+"#,
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let states: Vec<&str> = nodes_of(&ir)
+        .into_iter()
+        .filter(|n| n["kind"] == "Button")
+        .map(|n| n["props"]["state"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        states,
+        vec!["loading", "success", "error"],
+        "business states must lower verbatim into node props"
+    );
+
+    // The same states must survive emit into every target's design carrier.
+    let ir_path = dir.join("states.opuir.json");
+    assert!(compile(&src, &ir_path).status.success());
+    for (target, file) in [
+        ("wechat", "pages/index/index.wxml"),
+        ("harmony", "src/main/ets/pages/Index.ets"),
+    ] {
+        let out = dir.join(format!("emit-{target}"));
+        assert!(emit(&ir_path, target, &out).status.success());
+        let text = fs::read_to_string(out.join(file)).unwrap();
+        for state in ["loading", "success", "error"] {
+            assert!(
+                text.contains(state),
+                "{target}: emitted {state} missing: {text}"
+            );
+        }
     }
 }
 
