@@ -202,6 +202,7 @@ const GENERIC_PROPS: &[&str] = &[
     "shadow",
     "elevation",
     "gradient",
+    "gradientDirection",
     "glass",
     "opacity",
     "border",
@@ -1511,6 +1512,29 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         }
         for stop in stops {
             check_color(ctx, arg.pos, "gradient", stop.trim())?;
+        }
+        return Ok(json!(s));
+    }
+    if key == "gradientDirection" {
+        let s = match &arg.value {
+            AstValue::Lit(Lit::Str(s)) | AstValue::Ident(s) => s.clone(),
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop 'gradientDirection' expects a keyword, found {}",
+                        value_desc(other)
+                    ),
+                    "use vertical or horizontal".to_string(),
+                ))
+            }
+        };
+        if !matches!(s.as_str(), "vertical" | "horizontal") {
+            return Err(ctx.err(
+                arg.pos,
+                format!("unknown gradientDirection '{s}'"),
+                "use vertical or horizontal".to_string(),
+            ));
         }
         return Ok(json!(s));
     }

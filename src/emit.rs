@@ -2174,8 +2174,26 @@ fn canvas_effect_fill(n: &ENode, x: &str, y: &str, w: &str, h: &str, out: &mut S
         ));
     }
     if let Some((a, b)) = grad {
+        // `gradientDirection` picks the sweep axis; absent means vertical.
+        let horizontal =
+            n.props.get("gradientDirection").and_then(Json::as_str) == Some("horizontal");
+        let (x0, y0, x1, y1) = if horizontal {
+            (
+                x.to_string(),
+                y.to_string(),
+                format!("{x} + {w}"),
+                y.to_string(),
+            )
+        } else {
+            (
+                x.to_string(),
+                y.to_string(),
+                x.to_string(),
+                format!("{y} + {h}"),
+            )
+        };
         out.push_str(&format!(
-            "  var g = ctx.createLinearGradient({x}, {y}, {x}, {y} + {h});\n  g.addColorStop(0, {});\n  g.addColorStop(1, {});\n  ctx.fillStyle = g;\n  ctx.fillRect({x}, {y}, {w}, {h});\n",
+            "  var g = ctx.createLinearGradient({x0}, {y0}, {x1}, {y1});\n  g.addColorStop(0, {});\n  g.addColorStop(1, {});\n  ctx.fillStyle = g;\n  ctx.fillRect({x}, {y}, {w}, {h});\n",
             js_lit(&Json::String(a.trim().to_string())),
             js_lit(&Json::String(b.trim().to_string()))
         ));
@@ -3229,8 +3247,14 @@ fn style_of(
         .and_then(|s| s.split_once(','));
     let glass = props.get("glass").and_then(Json::as_bool).unwrap_or(false);
     if let Some((a, b)) = grad {
+        // `gradientDirection` picks the sweep axis; absent means vertical.
+        let to = if props.get("gradientDirection").and_then(Json::as_str) == Some("horizontal") {
+            "to right"
+        } else {
+            "to bottom"
+        };
         parts.push(format!(
-            "background:linear-gradient(to bottom, {}, {})",
+            "background:linear-gradient({to}, {}, {})",
             a.trim(),
             b.trim()
         ));

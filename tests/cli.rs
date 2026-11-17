@@ -10089,3 +10089,90 @@ fn elevation_rejects_values_outside_whitelist() {
         assert!(stderr.contains("levels 0,1,2,3,4,6"), "{label}: {stderr}");
     }
 }
+
+// ---- gradientDirection (renderer already consumes this prop) ----
+
+#[test]
+fn gradient_direction_lowers_and_drives_the_sweep_axis() {
+    let dir = out_dir("gradient-direction");
+    let src = dir.join("g.opu");
+    fs::write(
+        &src,
+        "app G { Column { Container(gradient: \"#097FEB,#101828\", gradientDirection: \"horizontal\") } }\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    assert_eq!(
+        ir["tree"]["children"][0]["props"]["gradientDirection"],
+        json!("horizontal")
+    );
+
+    // The mini stylesheet and the canvas emitter both sweep along the axis.
+    let ir_path = dir.join("g.opuir.json");
+    assert!(compile(&src, &ir_path).status.success());
+    let wx = dir.join("wx");
+    assert!(emit(&ir_path, "wechat", &wx).status.success());
+    let css = fs::read_to_string(wx.join("pages/index/index.wxss")).unwrap();
+    assert!(
+        css.contains("linear-gradient(to right, #097FEB, #101828)"),
+        "horizontal gradient must sweep left to right: {css}"
+    );
+    let web = dir.join("web");
+    assert!(emit(&ir_path, "web", &web).status.success());
+    let js = fs::read_to_string(web.join("app.js")).unwrap();
+    assert!(
+        js.contains("createLinearGradient(16, 16, 16 + 1, 16)"),
+        "canvas gradient must run along the horizontal axis: {js}"
+    );
+}
+
+#[test]
+fn gradient_direction_defaults_to_vertical_and_rejects_other_values() {
+    let dir = out_dir("gradient-direction-bad");
+    let src = dir.join("v.opu");
+    fs::write(
+        &src,
+        "app G { Column { Container(gradient: \"#097FEB,#101828\") } }\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    assert!(
+        ir["tree"]["children"][0]["props"]
+            .get("gradientDirection")
+            .is_none(),
+        "an absent direction must not write a key"
+    );
+    let ir_path = dir.join("v.opuir.json");
+    assert!(compile(&src, &ir_path).status.success());
+    let wx = dir.join("wx");
+    assert!(emit(&ir_path, "wechat", &wx).status.success());
+    let css = fs::read_to_string(wx.join("pages/index/index.wxss")).unwrap();
+    assert!(
+        css.contains("linear-gradient(to bottom, #097FEB, #101828)"),
+        "the default gradient must stay vertical: {css}"
+    );
+
+    for (label, value, needle) in [
+        (
+            "unknown",
+            "\"diagonal\"",
+            "unknown gradientDirection 'diagonal'",
+        ),
+        ("number", "2", "prop 'gradientDirection' expects a keyword"),
+    ] {
+        let bad = dir.join(format!("{label}.opu"));
+        fs::write(
+            &bad,
+            format!("app B {{ Container(gradient: \"#097FEB,#101828\", gradientDirection: {value}) }}\n"),
+        )
+        .unwrap();
+        let r = compile(&bad, &dir.join(format!("{label}.json")));
+        assert!(!r.status.success(), "{label} must be rejected");
+        let stderr = String::from_utf8_lossy(&r.stderr);
+        assert!(stderr.contains(needle), "{label}: {stderr}");
+        assert!(
+            stderr.contains("vertical or horizontal"),
+            "{label}: {stderr}"
+        );
+    }
+}
