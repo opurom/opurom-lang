@@ -3732,6 +3732,32 @@ fn fold_node_visibility_renumbers_and_matches_fixture() {
 }
 
 #[test]
+fn fold_node_visibility_keeps_ancestors_of_a_removed_branch() {
+    let dir = out_dir("fold-nodes-ancestors");
+    let src = dir.join("nested.opu");
+    fs::write(
+        &src,
+        "app Nested {\n  state off = false\n  Container {\n    Column {\n      if (off) {\n        Text(\"gone\")\n      }\n      Text(\"keep\")\n    }\n  }\n}\n",
+    )
+    .unwrap();
+    let folded = dir.join("folded.opuir.json");
+    let r = compile_nodes_folded(&src, &folded);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let ir: Json = serde_json::from_slice(&fs::read(&folded).unwrap()).unwrap();
+    let ids: Vec<u64> = nodes_of(&ir)
+        .into_iter()
+        .map(|n| n["id"].as_u64().unwrap())
+        .collect();
+    assert_eq!(ids, vec![0, 1, 2], "only the hidden leaf is removed");
+    assert_eq!(ir["tree"]["kind"], "Container");
+    assert_eq!(ir["tree"]["children"][0]["kind"], "Column");
+    assert_eq!(
+        ir["tree"]["children"][0]["children"][0]["props"]["value"],
+        "keep"
+    );
+}
+
+#[test]
 fn folded_ir_renders_without_the_sidecar() {
     // The id map is a write-only migration artifact: deleting it must leave the
     // folded IR fully renderable and frame-identical.

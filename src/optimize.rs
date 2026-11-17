@@ -796,13 +796,8 @@ fn fold_visibility(
     report: &mut (usize, usize),
     is_root: bool,
 ) -> bool {
-    let mut deleted = false;
     if let Some(children) = node.get_mut("children").and_then(Json::as_array_mut) {
-        children.retain_mut(|child| {
-            let gone = fold_visibility(child, bools, report, false);
-            deleted |= gone;
-            !gone
-        });
+        children.retain_mut(|child| !fold_visibility(child, bools, report, false));
     }
     let hide = node
         .get("when")
@@ -836,7 +831,7 @@ fn fold_visibility(
         }
     }
     report.1 += usize::from(removed);
-    deleted
+    false
 }
 
 /// Renumber one tree in pre-order from its current root id and record the
@@ -937,14 +932,18 @@ pub fn fold_node_visibility(ir: &mut Json) -> Option<Json> {
     let mut report = (0usize, 0usize);
     let mut map = BTreeMap::new();
     if let Some(tree) = ir.get_mut("tree") {
-        if fold_visibility(tree, &bools, &mut report, true) {
+        let before = report.0;
+        fold_visibility(tree, &bools, &mut report, true);
+        if report.0 > before {
             renumber_tree(tree, &mut map);
         }
     }
     if let Some(routes) = ir.get_mut("routes").and_then(Json::as_object_mut) {
         for route in routes.values_mut() {
             if let Some(tree) = route.get_mut("tree") {
-                if fold_visibility(tree, &bools, &mut report, true) {
+                let before = report.0;
+                fold_visibility(tree, &bools, &mut report, true);
+                if report.0 > before {
                     renumber_tree(tree, &mut map);
                 }
             }
