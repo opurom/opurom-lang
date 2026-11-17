@@ -550,6 +550,8 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
                 "letterSpacing",
                 "fontPx",
                 "maxLines",
+                "lineHeight",
+                "baselineKind",
             ],
             required: &["value"],
             numeric: &["size", "maxLines"],
@@ -1272,6 +1274,54 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             ));
         }
         return Ok(json!(n));
+    }
+    if key == "lineHeight" {
+        // Keep integer sources (notably 0 == kTextHeightNone) as JSON integers.
+        if let AstValue::Lit(Lit::Int(n)) = &arg.value {
+            if *n == 0 {
+                return Ok(json!(0));
+            }
+        }
+        let n = match &arg.value {
+            AstValue::Lit(Lit::Int(n)) => *n as f64,
+            AstValue::Lit(Lit::Float(n)) => *n,
+            _ => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop 'lineHeight' expects a number, found {}",
+                        value_desc(&arg.value)
+                    ),
+                    "write 'lineHeight: 1.5' or 'lineHeight: 0' for kTextHeightNone".to_string(),
+                ))
+            }
+        };
+        // 0 is Flutter kTextHeightNone; otherwise 0.5..=3.0.
+        if n != 0.0 && !(0.5..=3.0).contains(&n) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("lineHeight must be 0 or between 0.5 and 3.0, found {n}"),
+                "write 'lineHeight: 1.5' or 'lineHeight: 0'".to_string(),
+            ));
+        }
+        return Ok(json!(n));
+    }
+    if key == "baselineKind" {
+        let s = match &arg.value {
+            AstValue::Lit(Lit::Str(s)) if s == "alphabetic" || s == "ideographic" => s.clone(),
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop 'baselineKind' expects 'alphabetic' or 'ideographic', found {}",
+                        value_desc(other)
+                    ),
+                    "write baselineKind: \"alphabetic\" or baselineKind: \"ideographic\""
+                        .to_string(),
+                ))
+            }
+        };
+        return Ok(json!(s));
     }
     if key == "color" || key == "border" || key == "textColor" {
         let s = match &arg.value {
@@ -3438,6 +3488,18 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             }
             if let Some(ref ff) = t.font_family {
                 theme["fontFamily"] = json!(ff);
+            }
+            if !t.vertical_metrics.is_empty() {
+                let mut metrics = JsonMap::new();
+                let mut rows: Vec<_> = t.vertical_metrics.iter().collect();
+                rows.sort_by(|a, b| a.0.cmp(&b.0));
+                for (family, (ascent, descent, leading)) in rows {
+                    metrics.insert(
+                        family.clone(),
+                        json!({"ascent": ascent, "descent": descent, "leading": leading}),
+                    );
+                }
+                theme["verticalMetrics"] = json!(metrics);
             }
             if let Some(ref fm) = t.font_metrics {
                 theme["fontMetrics"] = json!(fm);

@@ -208,6 +208,9 @@ pub struct ThemeDecl {
     pub token_imports: Vec<(String, Pos)>,
     /// Flattened `md-*` token strings produced at compile time.
     pub imported_tokens: Vec<(String, String)>,
+    /// Per-family vertical metrics: `(family, ascent, descent, leading)`,
+    /// per-em units with 1024 == 1 em.
+    pub vertical_metrics: Vec<(String, (i64, i64, i64))>,
     pub pos: Pos,
 }
 
@@ -2224,6 +2227,7 @@ impl<'a> Parser<'a> {
             tokens: Vec::new(),
             token_imports: Vec::new(),
             imported_tokens: Vec::new(),
+            vertical_metrics: Vec::new(),
             pos: start,
         };
         loop {
@@ -2238,9 +2242,9 @@ impl<'a> Parser<'a> {
                 ));
             }
             let (key, kp) = self.expect_ident("a theme key")?;
-            // `tokens` is a nested map written either as `tokens: { ... }` or
-            // the bare `tokens { ... }`; every other key needs its colon.
-            if key != "tokens" {
+            // `tokens` and `verticalMetrics` are nested maps written either
+            // with a colon or bare; every other key needs its colon.
+            if key != "tokens" && key != "verticalMetrics" {
                 self.expect_sym(":", "write 'mode: dark' with a colon")?;
             }
             match key.as_str() {
@@ -2405,6 +2409,113 @@ impl<'a> Parser<'a> {
                         ));
                     }
                     decl.font_metrics = Some(metrics);
+                }
+                "verticalMetrics" => {
+                    // `verticalMetrics { "Family": { ascent: N, descent: N,
+                    // leading: N } ... }`: per-em vertical metrics keyed by
+                    // font family. Colon is optional, like `tokens`.
+                    self.eat_sym(":");
+                    self.expect_sym("{", "a verticalMetrics block opens with '{'")?;
+                    loop {
+                        self.eat_sym(";");
+                        self.eat_sym(",");
+                        if self.eat_sym("}") {
+                            break;
+                        }
+                        if matches!(self.peek().tok, Tok::Eof) {
+                            return Err(self.err(
+                                "unexpected end of file, expected '}'",
+                                "close the verticalMetrics block with a matching '}'",
+                            ));
+                        }
+                        let family =
+                            match self.peek().tok {
+                                Tok::Str(ref name) => {
+                                    let name = name.clone();
+                                    self.bump();
+                                    name
+                                }
+                                _ => return Err(self.err(
+                                    "a verticalMetrics family expects a quoted string",
+                                    "write \"Roboto\": { ascent: 928, descent: 244, leading: 0 }",
+                                )),
+                            };
+                        self.expect_sym(
+                            ":",
+                            "write '\"Roboto\": { ascent: 928, descent: 244, leading: 0 }'",
+                        )?;
+                        self.expect_sym("{", "write '{ ascent: 928, descent: 244, leading: 0 }'")?;
+                        let mut numbers: [Option<i64>; 3] = [None, None, None];
+                        loop {
+                            self.eat_sym(";");
+                            self.eat_sym(",");
+                            if self.eat_sym("}") {
+                                break;
+                            }
+                            let (field, fp) = self.expect_ident("ascent, descent or leading")?;
+                            self.expect_sym(":", "write 'ascent: 928' with a colon")?;
+                            let (v, vp) = self.value()?;
+                            let n = match v {
+                                Value::Lit(Lit::Int(n)) => n,
+                                _ => {
+                                    return Err(Diagnostic::new(
+                                        self.path,
+                                        vp.line,
+                                        vp.col,
+                                        format!("verticalMetrics '{field}' expects an integer"),
+                                        "write an integer in per-em units, 1024 == 1 em",
+                                    ))
+                                }
+                            };
+                            let slot = match field.as_str() {
+                                "ascent" => &mut numbers[0],
+                                "descent" => &mut numbers[1],
+                                "leading" => &mut numbers[2],
+                                _ => {
+                                    return Err(Diagnostic::new(
+                                        self.path,
+                                        fp.line,
+                                        fp.col,
+                                        format!("unknown verticalMetrics field '{field}'"),
+                                        "use ascent, descent or leading",
+                                    ))
+                                }
+                            };
+                            if slot.is_some() {
+                                return Err(Diagnostic::new(
+                                    self.path,
+                                    fp.line,
+                                    fp.col,
+                                    format!("duplicate verticalMetrics field '{field}'"),
+                                    "write each field once per family",
+                                ));
+                            }
+                            *slot = Some(n);
+                        }
+                        let [Some(ascent), Some(descent), Some(leading)] = numbers else {
+                            return Err(self.err(
+                                "verticalMetrics needs ascent, descent and leading",
+                                "write all three fields for each family",
+                            ));
+                        };
+                        if !(0..=2048).contains(&ascent)
+                            || !(0..=2048).contains(&descent)
+                            || !(-1024..=1024).contains(&leading)
+                        {
+                            return Err(self.err(
+                                "verticalMetrics value out of range",
+                                "ascent and descent in 0..=2048, leading in -1024..=1024",
+                            ));
+                        }
+                        if decl.vertical_metrics.iter().any(|(f, _)| *f == family) {
+                            return Err(self.err(
+                                format!("duplicate verticalMetrics family '{family}'"),
+                                "write each family once",
+                            ));
+                        }
+                        decl.vertical_metrics
+                            .push((family, (ascent, descent, leading)));
+                    }
                 }
                 "tokens" => {
                     // A `tokens { name: "#RRGGBB" ... }` sub-block of semantic

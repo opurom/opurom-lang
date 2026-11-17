@@ -9866,3 +9866,105 @@ fn text_color_absent_keeps_golden_ir_unchanged() {
         "counter golden IR must stay byte-identical"
     );
 }
+
+// ---- text baseline fields (sign-off: baselineKind, no grid gate) ----
+
+#[test]
+fn baseline_fields_emit_to_ir() {
+    let dir = out_dir("baseline-emit");
+    let src = dir.join("b.opu");
+    fs::write(
+        &src,
+        r##"app B {
+  theme {
+    fontFamily: "Roboto"
+    verticalMetrics {
+      "Roboto": { ascent: 928, descent: 244, leading: 0 }
+      "Noto Sans": { ascent: 880, descent: 120, leading: -20 }
+    }
+  }
+  Text("hi", fontPx: 24, lineHeight: 1.5, baselineKind: "ideographic")
+}
+"##,
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let vm = &ir["theme"]["verticalMetrics"];
+    assert_eq!(vm["Roboto"]["ascent"], json!(928));
+    assert_eq!(vm["Roboto"]["descent"], json!(244));
+    assert_eq!(vm["Noto Sans"]["leading"], json!(-20));
+    // Family keys are emitted in sorted order.
+    let keys: Vec<&str> = vm.as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(keys, vec!["Noto Sans", "Roboto"]);
+    let props = &ir["tree"]["props"];
+    assert_eq!(props["lineHeight"], json!(1.5));
+    assert_eq!(props["baselineKind"], json!("ideographic"));
+
+    let none = dir.join("none.opu");
+    fs::write(&none, "app Z { Text(\"x\", lineHeight: 0) }\n").unwrap();
+    let ir = compile_ok(&none);
+    assert_eq!(ir["tree"]["props"]["lineHeight"], json!(0));
+}
+
+#[test]
+fn baseline_fields_absent_keep_golden_ir_unchanged() {
+    let golden = compile_ok(&contract("counter.opu"));
+    let expected: Json =
+        serde_json::from_slice(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap();
+    assert_eq!(
+        golden, expected,
+        "counter golden IR must stay byte-identical"
+    );
+}
+
+#[test]
+fn baseline_fields_reject_bad_values() {
+    let dir = out_dir("baseline-bad");
+    let lh = dir.join("lh.opu");
+    fs::write(&lh, "app A { Text(\"x\", lineHeight: 4.0) }\n").unwrap();
+    let r = compile(&lh, &dir.join("lh.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("lineHeight must be 0 or between 0.5 and 3.0"),
+        "{stderr}"
+    );
+
+    let bk = dir.join("bk.opu");
+    fs::write(&bk, "app A { Text(\"x\", baselineKind: \"hanging\") }\n").unwrap();
+    let r = compile(&bk, &dir.join("bk.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("expects 'alphabetic' or 'ideographic'"),
+        "{stderr}"
+    );
+
+    let vm = dir.join("vm.opu");
+    fs::write(
+        &vm,
+        "app A { theme { verticalMetrics { \"F\": { ascent: 3000, descent: 200, leading: 0 } } } Text(\"x\") }\n",
+    )
+    .unwrap();
+    let r = compile(&vm, &dir.join("vm.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("verticalMetrics value out of range"),
+        "{stderr}"
+    );
+
+    let wrong = dir.join("wrong.opu");
+    fs::write(
+        &wrong,
+        "app A { Column(lineHeight: 1.2) { Text(\"x\") } }\n",
+    )
+    .unwrap();
+    let r = compile(&wrong, &dir.join("wrong.json"));
+    assert!(!r.status.success());
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("unknown prop 'lineHeight' on Column"),
+        "{stderr}"
+    );
+}
