@@ -10017,3 +10017,75 @@ fn baseline_fields_reject_bad_values() {
         "{stderr}"
     );
 }
+
+// ---- per-node elevation (M3 six-level whitelist) ----
+
+#[test]
+fn elevation_emits_all_six_legal_levels() {
+    let dir = out_dir("elevation-levels");
+    let src = dir.join("e.opu");
+    fs::write(
+        &src,
+        "app E {\n  Column(elevation: 0) {\n    Text(\"a\", elevation: 1)\n    Text(\"b\", elevation: 2)\n    Text(\"c\", elevation: 3)\n    Text(\"d\", elevation: 4)\n    Text(\"e\", elevation: 6)\n  }\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    let children = ir["tree"]["children"].as_array().unwrap();
+    let got: Vec<i64> = children
+        .iter()
+        .map(|n| n["props"]["elevation"].as_i64().unwrap())
+        .collect();
+    assert_eq!(got, vec![1, 2, 3, 4, 6]);
+    assert_eq!(ir["tree"]["props"]["elevation"], json!(0));
+}
+
+#[test]
+fn elevation_absent_keeps_golden_ir_unchanged() {
+    let golden = compile_ok(&contract("counter.opu"));
+    let expected: Json =
+        serde_json::from_slice(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap();
+    assert_eq!(
+        golden, expected,
+        "counter golden IR must stay byte-identical"
+    );
+}
+
+#[test]
+fn elevation_rejects_values_outside_whitelist() {
+    let dir = out_dir("elevation-bad");
+    for (label, value, needle) in [
+        (
+            "five",
+            "5",
+            "elevation must be one of levels 0,1,2,3,4,6, found 5",
+        ),
+        (
+            "seven",
+            "7",
+            "elevation must be one of levels 0,1,2,3,4,6, found 7",
+        ),
+        (
+            "eight",
+            "8",
+            "elevation must be one of levels 0,1,2,3,4,6, found 8",
+        ),
+        (
+            "negative",
+            "-1",
+            "elevation must be one of levels 0,1,2,3,4,6, found -1",
+        ),
+        ("string", "\"4\"", "prop 'elevation' expects an integer"),
+    ] {
+        let src = dir.join(format!("{label}.opu"));
+        fs::write(
+            &src,
+            format!("app B {{ Text(\"x\", elevation: {value}) }}\n"),
+        )
+        .unwrap();
+        let r = compile(&src, &dir.join(format!("{label}.json")));
+        assert!(!r.status.success(), "{label} should be rejected");
+        let stderr = String::from_utf8_lossy(&r.stderr);
+        assert!(stderr.contains(needle), "{label}: {stderr}");
+        assert!(stderr.contains("levels 0,1,2,3,4,6"), "{label}: {stderr}");
+    }
+}

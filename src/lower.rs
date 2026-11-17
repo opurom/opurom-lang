@@ -200,6 +200,7 @@ const GENERIC_PROPS: &[&str] = &[
     "radius",
     "cornerRadii",
     "shadow",
+    "elevation",
     "gradient",
     "glass",
     "opacity",
@@ -1324,6 +1325,29 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             }
         };
         return Ok(json!(s));
+    }
+    if key == "elevation" {
+        let n = match &arg.value {
+            AstValue::Lit(Lit::Int(n)) => *n,
+            other => {
+                return Err(ctx.err(
+                    arg.pos,
+                    format!(
+                        "prop 'elevation' expects an integer, found {}",
+                        value_desc(other)
+                    ),
+                    "use levels 0,1,2,3,4,6".to_string(),
+                ))
+            }
+        };
+        if !matches!(n, 0 | 1 | 2 | 3 | 4 | 6) {
+            return Err(ctx.err(
+                arg.pos,
+                format!("elevation must be one of levels 0,1,2,3,4,6, found {n}"),
+                "use levels 0,1,2,3,4,6".to_string(),
+            ));
+        }
+        return Ok(json!(n));
     }
     if key == "color" || key == "border" || key == "textColor" {
         let s = match &arg.value {
