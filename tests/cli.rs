@@ -9346,6 +9346,76 @@ fn corner_radii_are_named_and_additive() {
 }
 
 #[test]
+fn corner_radii_emit_css_in_w3c_order() {
+    // W3C `border-radius` order is top-left, top-right, bottom-right,
+    // bottom-left; an elliptical pair is horizontal / vertical radii.
+    let dir = out_dir("corner-radii-css");
+    let src = fixture("golden/corner_radii.opu");
+    let ir = dir.join("corner_radii.opuir.json");
+    assert!(compile(&src, &ir).status.success());
+    let out = dir.join("wechat");
+    assert!(emit(&ir, "wechat", &out).status.success());
+    let css = fs::read_to_string(out.join("pages/index/index.wxss")).unwrap();
+
+    // Node 1: TL=16, TR=[16,8], BR=0, BL=12. A swapped order or a shared
+    // flat value would not produce this exact string.
+    assert!(
+        css.contains("border-radius:16px 16px 0px 12px / 16px 8px 0px 12px"),
+        "four named corners must map to W3C four-value + elliptical slash: {css}"
+    );
+    // Node 2 declares only topRight; the other corners keep the app radius
+    // (theme radius 12), which is what the renderer draws for them.
+    assert!(
+        css.contains("border-radius:12px 28px 12px 12px"),
+        "partial corners fall back to the theme radius: {css}"
+    );
+    // No JSON object text may leak into CSS.
+    assert!(
+        !css.contains("topLeft"),
+        "named keys must not reach CSS: {css}"
+    );
+
+    // A program without cornerRadii emits byte-identical CSS to the scalar path.
+    let plain = dir.join("plain.opu");
+    fs::write(
+        &plain,
+        "app R { Column { Container(radius: 8, padding: 0) { Text(\"x\") } } }\n",
+    )
+    .unwrap();
+    let plain_ir = dir.join("plain.opuir.json");
+    assert!(compile(&plain, &plain_ir).status.success());
+    let plain_out = dir.join("plain-out");
+    assert!(emit(&plain_ir, "wechat", &plain_out).status.success());
+    let plain_css = fs::read_to_string(plain_out.join("pages/index/index.wxss")).unwrap();
+    assert!(
+        plain_css.contains(".n1 { padding:0px;border-radius:8px; }"),
+        "scalar-only output must stay byte-identical: {plain_css}"
+    );
+    assert!(
+        !plain_css.contains(" / "),
+        "scalar output must not use the elliptical slash: {plain_css}"
+    );
+
+    // A node-level radius overrides the theme radius for omitted corners, and
+    // the named corners still win over both.
+    let mixed = dir.join("mixed.opu");
+    fs::write(
+        &mixed,
+        "app M { Column { Container(radius: 6, cornerRadii: { topLeft: 4 }) { Text(\"x\") } } }\n",
+    )
+    .unwrap();
+    let mixed_ir = dir.join("mixed.opuir.json");
+    assert!(compile(&mixed, &mixed_ir).status.success());
+    let mixed_out = dir.join("mixed-out");
+    assert!(emit(&mixed_ir, "wechat", &mixed_out).status.success());
+    let mixed_css = fs::read_to_string(mixed_out.join("pages/index/index.wxss")).unwrap();
+    assert!(
+        mixed_css.contains("border-radius:4px 6px 6px 6px"),
+        "named corners win and omitted ones keep the node radius: {mixed_css}"
+    );
+}
+
+#[test]
 fn corner_radii_reject_arrays_and_bad_corners() {
     let dir = out_dir("corner-radii-errors");
     for (body, needle) in [

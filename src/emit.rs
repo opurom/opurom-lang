@@ -3110,15 +3110,80 @@ fn is_text_kind(kind: &str) -> bool {
     )
 }
 
+/// The app-wide scalar radius an omitted `cornerRadii` corner inherits,
+/// mirroring `pal.radius` in the renderer (layout.rs:354,1076).
+fn theme_radius(ir: &Json) -> String {
+    ir.get("theme")
+        .and_then(|t| t.get("radius"))
+        .map(|v| match v {
+            Json::String(s) => s.clone(),
+            _ => v.to_string(),
+        })
+        .unwrap_or_else(|| "12".to_string())
+}
+
+/// CSS `border-radius` lists corners clockwise from the top-left:
+/// `topLeft topRight bottomRight bottomLeft`. An elliptical pair uses the
+/// two-level form, horizontal radii then `/` then vertical radii in the same
+/// order. Named corners: painting/border_radius.dart:375-380; pair:
+/// sky_engine/lib/ui/geometry.dart:948.
+fn corner_radii_css(props: &JsonMap<String, Json>, theme_radius: &str) -> Option<String> {
+    let corners = props.get("cornerRadii")?.as_object()?;
+    // An omitted corner keeps the node's scalar radius, which is what the
+    // renderer draws for it (opurom-render/src/layout.rs:1076,1309).
+    let scalar = props
+        .get("radius")
+        .map(|v| match v {
+            Json::String(s) => s.clone(),
+            _ => v.to_string(),
+        })
+        .unwrap_or_else(|| theme_radius.to_string());
+    let mut horizontal = Vec::with_capacity(4);
+    let mut vertical = Vec::with_capacity(4);
+    let mut elliptical = false;
+    for key in ["topLeft", "topRight", "bottomRight", "bottomLeft"] {
+        match corners.get(key) {
+            Some(Json::Number(n)) => {
+                let s = n.to_string();
+                horizontal.push(format!("{s}px"));
+                vertical.push(format!("{s}px"));
+            }
+            Some(Json::Array(pair)) if pair.len() == 2 => {
+                horizontal.push(format!("{}px", pair[0]));
+                vertical.push(format!("{}px", pair[1]));
+                elliptical = true;
+            }
+            _ => {
+                horizontal.push(format!("{scalar}px"));
+                vertical.push(format!("{scalar}px"));
+            }
+        }
+    }
+    let h = horizontal.join(" ");
+    if elliptical {
+        Some(format!("border-radius:{h} / {}", vertical.join(" ")))
+    } else {
+        Some(format!("border-radius:{h}"))
+    }
+}
+
 fn style_of(
     props: &JsonMap<String, Json>,
     background: bool,
     justified: bool,
     dark: bool,
     elevated: bool,
+    theme_radius: &str,
 ) -> String {
     let mut parts = Vec::new();
+    let named_radii = corner_radii_css(props, theme_radius);
     for k in ["gap", "padding", "width", "height", "radius", "size"] {
+        if k == "radius" {
+            if let Some(css) = &named_radii {
+                parts.push(css.clone());
+                continue;
+            }
+        }
         if let Some(v) = props.get(k) {
             let s = match v {
                 Json::String(s) => s.clone(),
@@ -3305,6 +3370,7 @@ fn markup_node(
     ir_path: &str,
     dark: bool,
     icons: &[Json],
+    theme_radius: &str,
 ) -> DResult<()> {
     let pad = "  ".repeat(depth);
     let id = n.id;
@@ -3314,6 +3380,7 @@ fn markup_node(
         is_text_kind(&n.kind),
         dark,
         is_elevated_glass_kind(&n.kind),
+        theme_radius,
     );
     let anim = anim_class(&n.props);
     let style_attr = if style.is_empty() {
@@ -3445,6 +3512,7 @@ fn markup_node(
                         is_text_kind(&n.kind),
                         dark,
                         is_elevated_glass_kind(&n.kind),
+                        theme_radius,
                     );
                     if !style.contains("width:") {
                         style = if style.is_empty() {
@@ -3516,7 +3584,7 @@ fn markup_node(
                     "{pad}<view class=\"opu-x opu-x-{slug} n{id}{anim}\"{data}{style_attr}{cond_attr}{a11y_attr}>\n"
                 ));
                 for child in &n.children {
-                    markup_node(child, p, depth + 1, out, ir_path, dark, icons)?;
+                    markup_node(child, p, depth + 1, out, ir_path, dark, icons, theme_radius)?;
                 }
                 out.push_str(&format!("{pad}</view>\n"));
             }
@@ -3544,7 +3612,7 @@ fn markup_node(
 "
             ));
             for child in &n.children {
-                markup_node(child, p, depth + 1, out, ir_path, dark, icons)?;
+                markup_node(child, p, depth + 1, out, ir_path, dark, icons, theme_radius)?;
             }
             out.push_str(&format!(
                 "{pad}</view>
@@ -3574,7 +3642,7 @@ fn markup_node(
                 }
             }
             for child in &n.children {
-                markup_node(child, p, depth + 1, out, ir_path, dark, icons)?;
+                markup_node(child, p, depth + 1, out, ir_path, dark, icons, theme_radius)?;
             }
             out.push_str(&format!("{pad}</view>\n"));
         }
@@ -3845,12 +3913,13 @@ fn emit_mini(
         .and_then(|t| t.get("mode"))
         .and_then(Json::as_str)
         == Some("dark");
+    let radius = theme_radius(ir);
     let icons = ir
         .get("icons")
         .and_then(Json::as_array)
         .map(|a| a.as_slice())
         .unwrap_or(&[]);
-    markup_node(tree, p, 0, &mut markup, ir_path, dark, icons)?;
+    markup_node(tree, p, 0, &mut markup, ir_path, dark, icons, &radius)?;
     write(
         out,
         &format!("pages/index/index.{}", p.markup_ext),
@@ -3888,6 +3957,7 @@ fn emit_mini(
             is_text_kind(&n.kind),
             dark,
             is_elevated_glass_kind(&n.kind),
+            &radius,
         );
         if !s.is_empty() {
             style.push_str(&format!(".n{} {{ {}; }}\n", n.id, s));
@@ -4177,6 +4247,7 @@ fn emit_mini_multipage(
         .and_then(|t| t.get("mode"))
         .and_then(Json::as_str)
         == Some("dark");
+    let radius = theme_radius(ir);
     let tokens = ir.get("theme").and_then(|t| t.get("tokens"));
     let stage = tokens
         .and_then(|t| t.get("stage"))
@@ -4208,7 +4279,16 @@ fn emit_mini_multipage(
             p.key, page.name
         );
         markup.push_str("<view class=\"route\">\n");
-        markup_node(&page.tree, p, 1, &mut markup, ir_path, dark, mp_icons)?;
+        markup_node(
+            &page.tree,
+            p,
+            1,
+            &mut markup,
+            ir_path,
+            dark,
+            mp_icons,
+            &radius,
+        )?;
         markup.push_str("</view>\n");
 
         // Style: base rules plus this route's node classes.
@@ -4222,6 +4302,7 @@ fn emit_mini_multipage(
                 is_text_kind(&n.kind),
                 dark,
                 is_elevated_glass_kind(&n.kind),
+                &radius,
             );
             if !s.is_empty() {
                 style.push_str(&format!(".n{} {{ {}; }}\n", n.id, s));
