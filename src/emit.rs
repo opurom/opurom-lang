@@ -3110,34 +3110,46 @@ fn is_text_kind(kind: &str) -> bool {
     )
 }
 
-/// The app-wide scalar radius an omitted `cornerRadii` corner inherits,
-/// mirroring `pal.radius` in the renderer (layout.rs:354,1076).
-fn theme_radius(ir: &Json) -> String {
+/// The app-wide scalar radius an omitted `cornerRadii` corner inherits. The
+/// compiler always writes `theme.radius`, so this reads the IR and never
+/// assumes a default of its own.
+fn theme_radius(ir: &Json) -> Option<String> {
     ir.get("theme")
         .and_then(|t| t.get("radius"))
         .map(|v| match v {
             Json::String(s) => s.clone(),
             _ => v.to_string(),
         })
-        .unwrap_or_else(|| "12".to_string())
 }
 
 /// CSS `border-radius` lists corners clockwise from the top-left:
 /// `topLeft topRight bottomRight bottomLeft`. An elliptical pair uses the
 /// two-level form, horizontal radii then `/` then vertical radii in the same
-/// order. Named corners: painting/border_radius.dart:375-380; pair:
-/// sky_engine/lib/ui/geometry.dart:948.
-fn corner_radii_css(props: &JsonMap<String, Json>, theme_radius: &str) -> Option<String> {
-    let corners = props.get("cornerRadii")?.as_object()?;
+/// order. The same corner order names the four radii of an engine rounded
+/// rectangle: engine/src/flutter/lib/ui/geometry.dart:1639.
+fn corner_radii_css(
+    props: &JsonMap<String, Json>,
+    theme_radius: Option<&str>,
+    ir_path: &str,
+) -> DResult<Option<String>> {
+    let Some(corners) = props.get("cornerRadii").and_then(Json::as_object) else {
+        return Ok(None);
+    };
     // An omitted corner keeps the node's scalar radius, which is what the
     // renderer draws for it (opurom-render/src/layout.rs:1076,1309).
-    let scalar = props
-        .get("radius")
-        .map(|v| match v {
+    let scalar = match props.get("radius") {
+        Some(v) => Some(match v {
             Json::String(s) => s.clone(),
             _ => v.to_string(),
-        })
-        .unwrap_or_else(|| theme_radius.to_string());
+        }),
+        None => theme_radius.map(str::to_string),
+    };
+    let Some(scalar) = scalar else {
+        return Err(bad_ir(
+            ir_path,
+            "a node with cornerRadii needs a radius for its omitted corners",
+        ));
+    };
     let mut horizontal = Vec::with_capacity(4);
     let mut vertical = Vec::with_capacity(4);
     let mut elliptical = false;
@@ -3161,9 +3173,9 @@ fn corner_radii_css(props: &JsonMap<String, Json>, theme_radius: &str) -> Option
     }
     let h = horizontal.join(" ");
     if elliptical {
-        Some(format!("border-radius:{h} / {}", vertical.join(" ")))
+        Ok(Some(format!("border-radius:{h} / {}", vertical.join(" "))))
     } else {
-        Some(format!("border-radius:{h}"))
+        Ok(Some(format!("border-radius:{h}")))
     }
 }
 
@@ -3173,10 +3185,11 @@ fn style_of(
     justified: bool,
     dark: bool,
     elevated: bool,
-    theme_radius: &str,
-) -> String {
+    theme_radius: Option<&str>,
+    ir_path: &str,
+) -> DResult<String> {
     let mut parts = Vec::new();
-    let named_radii = corner_radii_css(props, theme_radius);
+    let named_radii = corner_radii_css(props, theme_radius, ir_path)?;
     for k in ["gap", "padding", "width", "height", "radius", "size"] {
         if k == "radius" {
             if let Some(css) = &named_radii {
@@ -3285,7 +3298,7 @@ fn style_of(
             parts.push(format!("color:{}", contrast_colour(surface)));
         }
     }
-    parts.join(";")
+    Ok(parts.join(";"))
 }
 
 /// The entry-animation CSS class for a node's `animate` prop, mirroring the
@@ -3370,7 +3383,7 @@ fn markup_node(
     ir_path: &str,
     dark: bool,
     icons: &[Json],
-    theme_radius: &str,
+    theme_radius: Option<&str>,
 ) -> DResult<()> {
     let pad = "  ".repeat(depth);
     let id = n.id;
@@ -3381,7 +3394,8 @@ fn markup_node(
         dark,
         is_elevated_glass_kind(&n.kind),
         theme_radius,
-    );
+        ir_path,
+    )?;
     let anim = anim_class(&n.props);
     let style_attr = if style.is_empty() {
         String::new()
@@ -3513,7 +3527,8 @@ fn markup_node(
                         dark,
                         is_elevated_glass_kind(&n.kind),
                         theme_radius,
-                    );
+                        ir_path,
+                    )?;
                     if !style.contains("width:") {
                         style = if style.is_empty() {
                             "width:16px;height:16px".to_string()
@@ -3919,7 +3934,16 @@ fn emit_mini(
         .and_then(Json::as_array)
         .map(|a| a.as_slice())
         .unwrap_or(&[]);
-    markup_node(tree, p, 0, &mut markup, ir_path, dark, icons, &radius)?;
+    markup_node(
+        tree,
+        p,
+        0,
+        &mut markup,
+        ir_path,
+        dark,
+        icons,
+        radius.as_deref(),
+    )?;
     write(
         out,
         &format!("pages/index/index.{}", p.markup_ext),
@@ -3957,8 +3981,9 @@ fn emit_mini(
             is_text_kind(&n.kind),
             dark,
             is_elevated_glass_kind(&n.kind),
-            &radius,
-        );
+            radius.as_deref(),
+            ir_path,
+        )?;
         if !s.is_empty() {
             style.push_str(&format!(".n{} {{ {}; }}\n", n.id, s));
         }
@@ -4287,7 +4312,7 @@ fn emit_mini_multipage(
             ir_path,
             dark,
             mp_icons,
-            &radius,
+            radius.as_deref(),
         )?;
         markup.push_str("</view>\n");
 
@@ -4302,8 +4327,9 @@ fn emit_mini_multipage(
                 is_text_kind(&n.kind),
                 dark,
                 is_elevated_glass_kind(&n.kind),
-                &radius,
-            );
+                radius.as_deref(),
+                ir_path,
+            )?;
             if !s.is_empty() {
                 style.push_str(&format!(".n{} {{ {}; }}\n", n.id, s));
             }

@@ -9363,10 +9363,16 @@ fn corner_radii_emit_css_in_w3c_order() {
         css.contains("border-radius:16px 16px 0px 12px / 16px 8px 0px 12px"),
         "four named corners must map to W3C four-value + elliptical slash: {css}"
     );
-    // Node 2 declares only topRight; the other corners keep the app radius
-    // (theme radius 12), which is what the renderer draws for them.
+    // Node 2 declares only topRight; the other corners keep the app radius,
+    // which is what the renderer draws for them. The expected value is read
+    // back from the compiled IR so the test never assumes the default.
+    let theme_radius = serde_json::from_slice::<Json>(&fs::read(&ir).unwrap()).unwrap()["theme"]
+        ["radius"]
+        .to_string();
     assert!(
-        css.contains("border-radius:12px 28px 12px 12px"),
+        css.contains(&format!(
+            "border-radius:{theme_radius}px 28px {theme_radius}px {theme_radius}px"
+        )),
         "partial corners fall back to the theme radius: {css}"
     );
     // No JSON object text may leak into CSS.
@@ -9412,6 +9418,25 @@ fn corner_radii_emit_css_in_w3c_order() {
     assert!(
         mixed_css.contains("border-radius:4px 6px 6px 6px"),
         "named corners win and omitted ones keep the node radius: {mixed_css}"
+    );
+
+    // A hand-written IR without a theme radius cannot fill an omitted corner,
+    // so the emitter reports it instead of inventing a radius of its own.
+    let bare = dir.join("bare.opuir.json");
+    fs::write(
+        &bare,
+        r#"{"app":"X","ir":"0.1.0","state":[],"tree":{"id":0,"kind":"Column","props":{},"events":{},"children":[{"id":1,"kind":"Container","props":{"cornerRadii":{"topLeft":4}},"events":{},"children":[]}]}}"#,
+    )
+    .unwrap();
+    let r = emit(&bare, "wechat", &dir.join("bare-out"));
+    assert!(
+        !r.status.success(),
+        "a cornerRadii node without a radius must fail"
+    );
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    assert!(
+        stderr.contains("a node with cornerRadii needs a radius for its omitted corners"),
+        "{stderr}"
     );
 }
 
