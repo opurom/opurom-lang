@@ -9939,17 +9939,11 @@ fn design_token_color_emits_semantic_role() {
 fn full_m3_token_bundle_imports_as_compile_time_constants() {
     let dir = out_dir("full-m3-token-import");
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../opurom-ui/theme/material-tokens.json");
+        .join("tests/fixtures/m3_color_tokens.json");
     let tokens: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&fixture).unwrap()).unwrap();
     let doc = tokens.clone();
-    let light = tokens["tokens"]["color"]["light"].clone();
-    let flat: serde_json::Map<String, serde_json::Value> = light
-        .as_object()
-        .unwrap()
-        .iter()
-        .map(|(key, entry)| (key.clone(), entry["value"].clone()))
-        .collect();
+    let flat = tokens.clone();
     fs::write(
         dir.join("tokens.json"),
         serde_json::to_string(&flat).unwrap(),
@@ -9962,10 +9956,10 @@ fn full_m3_token_bundle_imports_as_compile_time_constants() {
     .unwrap();
     let ir = compile_ok(&dir.join("main.opu"));
     let tok = &ir["theme"]["tokens"];
-    let light = &doc["tokens"]["color"]["light"];
+    let light = &doc;
     assert_eq!(light.as_object().unwrap().len(), 49);
-    for (key, entry) in light.as_object().unwrap() {
-        assert_eq!(tok[key], entry["value"], "{key}");
+    for (key, value) in light.as_object().unwrap() {
+        assert_eq!(tok[key], value.clone(), "{key}");
     }
 }
 
