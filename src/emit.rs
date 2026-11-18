@@ -810,7 +810,8 @@ where
 ///   literal such as `"a b"` must stay one token.
 /// - A negation binds to its operand without a space. The IR text of `!` is
 ///   `parser.rs:58` (`!` plus the operand text), so `!flag` is one whitespace
-///   token in the IR and must be split into `!` and `flag`.
+///   token in the IR and must be split into `!` and `flag`. The same applies to
+///   every prefix in a nested chain such as `!!flag`.
 fn tokenize_expr(expr: &str) -> Vec<&str> {
     let bytes = expr.as_bytes();
     let mut out: Vec<&str> = Vec::new();
@@ -820,20 +821,22 @@ fn tokenize_expr(expr: &str) -> Vec<&str> {
             i += 1;
             continue;
         }
-        let begin = i;
-        let mut prefix_bang = false;
-        if bytes[i] == b'!' {
-            // `!=` is a comparison operator and always stands alone in the IR
-            // text; a leading `!` on a longer token is a negation prefix.
+        // Emit each leading `!` as its own token, but keep `!=` as one
+        // comparison operator. `!!flag` becomes `!`, `!`, `flag`.
+        while i < bytes.len() && bytes[i] == b'!' {
             if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                let begin = i;
                 while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
                     i += 1;
                 }
                 out.push(&expr[begin..i]);
-                continue;
+                break;
             }
-            prefix_bang = true;
+            out.push("!");
             i += 1;
+        }
+        if i >= bytes.len() || bytes[i].is_ascii_whitespace() {
+            continue;
         }
         // Read the rest of the token: a quoted literal keeps its spaces, any
         // other run stops at whitespace.
@@ -859,9 +862,6 @@ fn tokenize_expr(expr: &str) -> Vec<&str> {
                 break;
             }
             i += 1;
-        }
-        if prefix_bang {
-            out.push("!");
         }
         out.push(&expr[rest_begin..i]);
     }

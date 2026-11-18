@@ -111,3 +111,15 @@ fn nested_logic_precedence_emits_on_every_target() {
         "{web}"
     );
 }
+
+#[test]
+fn nested_negation_emits_on_every_target() {
+    let (dir, ir) = compile(
+        "app Probe {\n  state flag = true\n  computed result = !!flag\n  Column {\n    Text(\"{result}\")\n  }\n}\n",
+    );
+    for target in ["web", "native", "wechat", "harmony"] {
+        emit(&ir, target, &dir.join(target));
+    }
+    let web = fs::read_to_string(dir.join("web/app.js")).expect("read web app");
+    assert!(web.contains("state.result = !!state.flag;"), "{web}");
+}
