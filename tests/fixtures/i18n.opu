@@ -3,7 +3,7 @@ app I18nDemo {
   directionality: rtl
   catalog en { greet: "Hello", bye: "Goodbye" }
   catalog fr { greet: "Bonjour" }
-  catalog zh-CN { greet: "你好" }
+  catalog zh-CN { greet: "Ni hao" }
   state name = "Ada"
   Column {
     Text("{@greet}, {name}")

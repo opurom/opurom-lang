@@ -1765,7 +1765,7 @@ fn i18n_v1_lowers_root_fields_catalogs_and_locale_patch() {
         ir["messages"],
         json!({
             "bye": {"en": "Goodbye"},
-            "greet": {"en": "Hello", "fr": "Bonjour", "zh-CN": "你好"}
+            "greet": {"en": "Hello", "fr": "Bonjour", "zh-CN": "Ni hao"}
         })
     );
     let values: Vec<&str> = nodes_of(&ir)
