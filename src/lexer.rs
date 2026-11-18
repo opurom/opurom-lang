@@ -246,7 +246,7 @@ pub fn lex(src: &str, path: &str) -> DResult<Vec<Token>> {
             let two = pair.iter().collect::<String>();
             if matches!(
                 two.as_str(),
-                "+=" | "-=" | "==" | "!=" | "<=" | ">=" | "&&" | "||"
+                "+=" | "-=" | "*=" | "/=" | "==" | "!=" | "<=" | ">=" | "&&" | "||"
             ) {
                 bump(&cs, &mut i, &mut line, &mut col);
                 bump(&cs, &mut i, &mut line, &mut col);

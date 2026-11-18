@@ -625,7 +625,10 @@ impl<'a> Checker<'a> {
         }
         match &stmt.kind {
             StmtKind::SetLocale(..) => {} // handled before state resolution
-            StmtKind::Add(value, pos) | StmtKind::Sub(value, pos) => {
+            StmtKind::Add(value, pos)
+            | StmtKind::Sub(value, pos)
+            | StmtKind::Mul(value, pos)
+            | StmtKind::Div(value, pos) => {
                 if target != ValueTy::Int {
                     return Err(self.err(
                         stmt.pos,
@@ -715,6 +718,21 @@ impl<'a> Checker<'a> {
                         stmt.target, stmt.target
                     ),
                 ));
+            }
+            StmtKind::Backspace => {
+                if !matches!(target, ValueTy::Int | ValueTy::Str) {
+                    return Err(self.err(
+                        stmt.pos,
+                        format!(
+                            "'backspace()' requires an int or string state, found {} state '{}'",
+                            target.name(),
+                            stmt.target
+                        ),
+                        "int or string",
+                        target.name(),
+                        "declare the state as int or string",
+                    ));
+                }
             }
             StmtKind::Toggle => {
                 if target != ValueTy::Bool {
