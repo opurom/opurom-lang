@@ -1109,10 +1109,23 @@ pub fn run(ir_path: &str, out: &Path, fold: bool, full_fold: bool) -> DResult<()
             "report this compiler bug",
         )
     })? + "\n";
-    fs::write(out, &text).map_err(|e| {
+    // Keep a failed in-place optimize from truncating the last good IR. The
+    // temporary file takes the exact output name with a `.tmp` extension and is
+    // replaced atomically only after every serialization step succeeds.
+    let mut tmp = out.as_os_str().to_os_string();
+    tmp.push(".tmp");
+    let tmp = Path::new(&tmp);
+    fs::write(tmp, &text).map_err(|e| {
         Diagnostic::file(
             ir_path,
-            format!("cannot write {}: {e}", out.display()),
+            format!("cannot write {}: {e}", tmp.display()),
+            "check the -o path and permissions",
+        )
+    })?;
+    fs::rename(tmp, out).map_err(|e| {
+        Diagnostic::file(
+            ir_path,
+            format!("cannot replace {}: {e}", out.display()),
             "check the -o path and permissions",
         )
     })?;
