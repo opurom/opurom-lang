@@ -562,7 +562,7 @@ where
         bad_ir(
             self.ir_path,
             format!(
-                "computed expression supports only +, -, *, integer literals and declared state names, found '{found}'"
+                "computed expression supports +, -, *, comparisons, boolean operators, literals and declared state names, found '{found}'"
             ),
         )
     }
@@ -613,10 +613,51 @@ where
             };
             return Ok((ExprTy::Int, code));
         }
+        if token.starts_with('"') && token.ends_with('"') && token.len() >= 2 {
+            return Ok((ExprTy::Str, token.to_string()));
+        }
+        if token == "!" {
+            let inner = self.factor()?;
+            if inner.0 != ExprTy::Bool {
+                return Err(self.invalid("!"));
+            }
+            let code = format!("!{}", inner.1);
+            return Ok((ExprTy::Bool, code));
+        }
         if !simple_ident(token) {
             return Err(self.invalid(token));
         }
         self.state(token)
+    }
+
+    /// Arithmetic keeps its int-only contract; comparison yields bool and
+    /// accepts two ints or two strings. Ordering is int-only.
+    fn compare(
+        &self,
+        op: &str,
+        lhs: (ExprTy, String),
+        rhs: (ExprTy, String),
+    ) -> DResult<(ExprTy, String)> {
+        let ordering = matches!(op, "<" | "<=" | ">" | ">=");
+        if ordering {
+            if lhs.0 != ExprTy::Int || rhs.0 != ExprTy::Int {
+                return Err(bad_ir(
+                    self.ir_path,
+                    format!("computed expression '{op}' requires int operands"),
+                ));
+            }
+        } else if lhs.0 != rhs.0 {
+            return Err(bad_ir(
+                self.ir_path,
+                format!("computed expression '{op}' requires operands of the same type"),
+            ));
+        } else if lhs.0 != ExprTy::Int && lhs.0 != ExprTy::Str {
+            return Err(bad_ir(
+                self.ir_path,
+                format!("computed expression '{op}' requires int or string operands"),
+            ));
+        }
+        Ok((ExprTy::Bool, format!("({} {} {})", lhs.1, op, rhs.1)))
     }
 
     fn combine(
@@ -644,6 +685,21 @@ where
         Ok((ExprTy::Int, code))
     }
 
+    fn logic(
+        &self,
+        op: &str,
+        lhs: (ExprTy, String),
+        rhs: (ExprTy, String),
+    ) -> DResult<(ExprTy, String)> {
+        if lhs.0 != ExprTy::Bool || rhs.0 != ExprTy::Bool {
+            return Err(bad_ir(
+                self.ir_path,
+                format!("computed expression '{op}' requires bool operands"),
+            ));
+        }
+        Ok((ExprTy::Bool, format!("({} {} {})", lhs.1, op, rhs.1)))
+    }
+
     fn term(&mut self) -> DResult<(ExprTy, String)> {
         let mut lhs = self.factor()?;
         while self.peek() == Some("*") {
@@ -666,10 +722,54 @@ where
             let rhs = self.term()?;
             lhs = self.combine(op, lhs, rhs)?;
         }
+        Ok(lhs)
+    }
+
+    fn cmp(&mut self) -> DResult<(ExprTy, String)> {
+        let mut lhs = self.sum()?;
+        loop {
+            let op = match self.peek() {
+                Some("==") => "==",
+                Some("!=") => "!=",
+                Some("<=") => "<=",
+                Some(">=") => ">=",
+                Some("<") => "<",
+                Some(">") => ">",
+                _ => break,
+            };
+            self.i += 1;
+            let rhs = self.sum()?;
+            lhs = self.compare(op, lhs, rhs)?;
+        }
+        Ok(lhs)
+    }
+
+    fn and(&mut self) -> DResult<(ExprTy, String)> {
+        let mut lhs = self.cmp()?;
+        while self.peek() == Some("&&") {
+            self.i += 1;
+            let rhs = self.cmp()?;
+            lhs = self.logic("&&", lhs, rhs)?;
+        }
+        Ok(lhs)
+    }
+
+    fn or(&mut self) -> DResult<(ExprTy, String)> {
+        let mut lhs = self.and()?;
+        while self.peek() == Some("||") {
+            self.i += 1;
+            let rhs = self.and()?;
+            lhs = self.logic("||", lhs, rhs)?;
+        }
+        Ok(lhs)
+    }
+
+    fn parse(&mut self) -> DResult<(ExprTy, String)> {
+        let result = self.or()?;
         if self.i != self.toks.len() {
             return Err(self.invalid(self.peek().unwrap_or("unexpected token")));
         }
-        Ok(lhs)
+        Ok(result)
     }
 }
 
@@ -697,7 +797,7 @@ where
         rust,
         var: &mut var,
     };
-    let (ty, code) = parser.sum()?;
+    let (ty, code) = parser.parse()?;
     Ok((ty.name(), code))
 }
 

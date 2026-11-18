@@ -10353,3 +10353,93 @@ fn expression_operator_type_errors_are_reported() {
         assert_diag(&stderr, &src);
     }
 }
+
+/// The shared evaluator generates the same comparison, logic and string
+/// equality expression on every emitter target, from the canonical IR token
+/// text. Bool-typed computed values survive IR load-time type validation.
+#[test]
+fn computed_expression_operators_emit_across_targets() {
+    let dir = out_dir("expr-emit");
+    let src = dir.join("probe.opu");
+    fs::write(
+        &src,
+        "app Probe {\n  state a = 1\n  state b = 2\n  state flag = true\n  state s = \"x\"\n  \
+         computed lt = a < b\n  computed and = flag && flag\n  computed eq = s == \"x\"\n  \
+         Column { Text(\"{lt}\") Text(\"{and}\") Text(\"{eq}\") }\n}\n",
+    )
+    .unwrap();
+    let ir = dir.join("probe.opuir.json");
+    assert!(compile(&src, &ir).status.success());
+
+    // IR keeps canonical token text and bool result type; emit validates it.
+    let parsed: Json = serde_json::from_slice(&fs::read(&ir).unwrap()).expect("parse compiled IR");
+    assert_eq!(parsed["computed"][0]["expr"], "a < b");
+    assert_eq!(parsed["computed"][0]["type"], "bool");
+    assert_eq!(parsed["computed"][1]["expr"], "flag && flag");
+    assert_eq!(parsed["computed"][2]["expr"], "s == \"x\"");
+
+    let cases: Vec<(&str, &str, &str)> = vec![
+        ("web", "app.js", "state.lt = (state.a < state.b);"),
+        (
+            "native",
+            "src/main.rs",
+            "_state.lt = (_state.a < _state.b);",
+        ),
+        (
+            "wechat",
+            "pages/index/index.js",
+            "\"lt\": (this.data.a < this.data.b)",
+        ),
+        (
+            "harmony",
+            "src/main/ets/pages/Index.ets",
+            "this.s4 = (this.s0 < this.s1);",
+        ),
+    ];
+    for (target, artifact, marker) in cases {
+        let out = dir.join(format!("out-{target}"));
+        let r = emit(&ir, target, &out);
+        assert!(
+            r.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&r.stderr)
+        );
+        let file = fs::read_to_string(out.join(artifact))
+            .unwrap_or_else(|_| panic!("{target}: missing {artifact}"));
+        assert!(
+            file.contains(marker),
+            "{target}: generated code missing '{marker}'"
+        );
+        assert!(file.contains("&&"), "{target}: boolean connective missing");
+        assert!(
+            file.contains("== \"x\""),
+            "{target}: string equality missing"
+        );
+    }
+}
+
+/// An IR computed entry whose declared type disagrees with the inferred type
+/// of its new-operator expression is rejected at load time, on every emitter.
+#[test]
+fn computed_expression_operator_type_mismatch_is_rejected() {
+    let dir = out_dir("expr-ir-mismatch");
+    let base: Json =
+        serde_json::from_slice(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap();
+    let mut bad = base.clone();
+    let mut states = bad["state"].as_array().unwrap().clone();
+    states.push(json!({"name": "flag", "type": "int", "init": 0}));
+    bad["state"] = json!(states);
+    bad["computed"] = json!([{"name": "flag", "type": "int", "expr": "1 < 2"}]);
+    let ir = dir.join("mismatch.opuir.json");
+    fs::write(&ir, serde_json::to_vec(&bad).unwrap()).unwrap();
+    for target in ["web", "native", "wechat", "wasm"] {
+        let out = dir.join(format!("out-{target}"));
+        let r = emit(&ir, target, &out);
+        assert!(!r.status.success(), "{target} must reject type mismatch");
+        let stderr = String::from_utf8_lossy(&r.stderr).to_string();
+        assert!(
+            stderr.contains("has type 'int' but its expression is bool"),
+            "{target}: unexpected diagnostic: {stderr}"
+        );
+    }
+}
