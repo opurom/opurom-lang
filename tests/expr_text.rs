@@ -94,3 +94,20 @@ fn negation_without_space_emits_on_every_target() {
     let web = fs::read_to_string(dir.join("web/app.js")).expect("read web app");
     assert!(web.contains("state.inverse = !state.flag;"), "{web}");
 }
+
+#[test]
+fn nested_logic_precedence_emits_on_every_target() {
+    let (dir, ir) = compile(
+        "app Probe {\n  state a = 1\n  state b = 2\n  state flag = true\n  computed result = a < b && flag || a == b\n  Column {\n    Text(\"{result}\")\n  }\n}\n",
+    );
+    for target in ["web", "native", "wechat", "harmony"] {
+        emit(&ir, target, &dir.join(target));
+    }
+    let web = fs::read_to_string(dir.join("web/app.js")).expect("read web app");
+    assert!(
+        web.contains(
+            "state.result = (((state.a < state.b) && state.flag) || (state.a == state.b));"
+        ),
+        "{web}"
+    );
+}
