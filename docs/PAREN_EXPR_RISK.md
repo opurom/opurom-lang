@@ -50,3 +50,17 @@ Long computations can be split across multiple declared computed values without
 changing emitted runtime code. Raising the ceiling would require an explicit
 stacker or an iterative AST/inference implementation and must be reviewed as a
 compiler-core change.
+
+## Computed split evaluation
+
+`tests/expr_split.rs` evaluates the natural relief for a long chain: moving
+subexpressions into several `computed` declarations. That path is closed by the
+current compiler protocol: a later computed expression cannot read an earlier
+computed value (`src/typecheck.rs:288-296` and `src/emit.rs:570-576`). The test
+also confirms that parenthesized grouping is unavailable, so a single
+declaration bounded at 512 operands is the only supported long-chain shape.
+
+No IR or emitter rule was changed. Supporting computed-to-computed references
+would require dependency ordering, cycle detection, emitter evaluation order,
+and a decision about whether IR `computed.expr` may name another computed
+value. That is a cross-backend protocol change and is deferred here.
