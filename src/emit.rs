@@ -963,17 +963,20 @@ fn ensure_mutable(
     states: &[EState],
     computed: &[Computed],
     ir_path: &str,
+    context: &str,
 ) -> DResult<()> {
     if computed.iter().any(|c| c.name == name) {
         return Err(bad_ir(
             ir_path,
-            format!("computed value '{name}' is read-only"),
+            format!("computed value '{name}' is read-only in {context}"),
         ));
     }
-    let st = states
-        .iter()
-        .find(|s| s.name == name)
-        .ok_or_else(|| bad_ir(ir_path, format!("state '{name}' is not declared")))?;
+    let st = states.iter().find(|s| s.name == name).ok_or_else(|| {
+        bad_ir(
+            ir_path,
+            format!("state '{name}' is not declared in {context}"),
+        )
+    })?;
     if st.ty == "list" {
         return Err(bad_ir(
             ir_path,
@@ -1012,7 +1015,7 @@ fn validate_actions(
     collect(tree, &mut nodes);
     for node in nodes {
         if let Some(Json::String(name)) = node.props.get("bind") {
-            ensure_mutable(name, states, computed, ir_path)?;
+            ensure_mutable(name, states, computed, ir_path, "an input binding")?;
         }
         if let Some(name) = &node.when {
             ensure_condition(name, states, ir_path)?;
@@ -1023,7 +1026,7 @@ fn validate_actions(
         for event in node.events.values() {
             for effect in event_effects(event, ir_path)? {
                 if let Effect::Fetch { into, .. } = effect {
-                    ensure_mutable(&into, states, computed, ir_path)?;
+                    ensure_mutable(&into, states, computed, ir_path, "a fetch destination")?;
                 }
             }
             for action in event_actions(event) {
@@ -1037,7 +1040,12 @@ fn validate_actions(
                     continue;
                 }
                 if let Some(target) = action.get("target").and_then(Json::as_str) {
-                    ensure_mutable(target, states, computed, ir_path)?;
+                    let op = action
+                        .get("op")
+                        .and_then(Json::as_str)
+                        .unwrap_or("<missing op>");
+                    let context = format!("{op} action on node {}", node.id);
+                    ensure_mutable(target, states, computed, ir_path, &context)?;
                 }
             }
         }

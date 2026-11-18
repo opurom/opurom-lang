@@ -48,3 +48,17 @@ Verification:
 ```sh
 cargo test --offline --test action_chain
 ```
+
+## Contextual action diagnostics
+
+An invalid hand-authored IR action now reports the operation and node id, for
+example `state 'bogus' is not declared in set action on node 0`. Input bindings
+and fetch destinations carry their own context. `tests/action_diagnostic.rs`
+checks the diagnostic on web, native, wechat and harmony and requires a help
+line.
+
+Verification:
+
+```sh
+cargo test --offline --test action_diagnostic
+```
