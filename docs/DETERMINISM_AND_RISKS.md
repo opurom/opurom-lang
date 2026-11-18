@@ -57,3 +57,18 @@ edits a public protocol.
 cargo fmt --all -- --check
 cargo test --offline --test compile_env_determinism --test risk_samples
 ```
+
+## Large declaration-order replay
+
+`tests/map_order_stress.rs` compiles 250 states and 250 text bindings three
+times and requires byte-identical IR. The case exercises hash-map-backed
+validation and dependency paths with many independent keys. Dart's ordered-map
+contract rejects unordered iteration as a stable ordering source
+(`collection/linked_hash_map.dart:109-115`,
+`collection/splay_tree.dart:407-411`, SDK 3.14.0, Flutter 3.50.0).
+
+Verification:
+
+```sh
+cargo test --offline --test map_order_stress
+```
