@@ -784,7 +784,7 @@ pub fn computed_expr<F>(
 where
     F: FnMut(&EState) -> DResult<String>,
 {
-    let toks: Vec<&str> = expr.split_whitespace().collect();
+    let toks = tokenize_expr(expr);
     if toks.is_empty() {
         return Err(bad_ir(ir_path, "IR computed expression is empty"));
     }
@@ -799,6 +799,73 @@ where
     };
     let (ty, code) = parser.parse()?;
     Ok((ty.name(), code))
+}
+
+/// Split a computed expression into tokens.
+///
+/// Whitespace separates tokens, but two source shapes need more care:
+///
+/// - A double quoted string literal keeps its spaces. The IR text of a string
+///   literal is `parser.rs:51` (`"..."` with `\\` and `\"` escaped), so a
+///   literal such as `"a b"` must stay one token.
+/// - A negation binds to its operand without a space. The IR text of `!` is
+///   `parser.rs:58` (`!` plus the operand text), so `!flag` is one whitespace
+///   token in the IR and must be split into `!` and `flag`.
+fn tokenize_expr(expr: &str) -> Vec<&str> {
+    let bytes = expr.as_bytes();
+    let mut out: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        let begin = i;
+        let mut prefix_bang = false;
+        if bytes[i] == b'!' {
+            // `!=` is a comparison operator and always stands alone in the IR
+            // text; a leading `!` on a longer token is a negation prefix.
+            if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                out.push(&expr[begin..i]);
+                continue;
+            }
+            prefix_bang = true;
+            i += 1;
+        }
+        // Read the rest of the token: a quoted literal keeps its spaces, any
+        // other run stops at whitespace.
+        let rest_begin = i;
+        while i < bytes.len() {
+            let c = bytes[i];
+            if c == b'"' {
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == b'"' {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            if c.is_ascii_whitespace() {
+                break;
+            }
+            i += 1;
+        }
+        if prefix_bang {
+            out.push("!");
+        }
+        out.push(&expr[rest_begin..i]);
+    }
+    out
 }
 
 fn read_computed(ir: &Json, states: &[EState], ir_path: &str) -> DResult<Vec<Computed>> {
