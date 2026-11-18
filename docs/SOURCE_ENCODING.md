@@ -8,11 +8,15 @@ IR, emitter protocol or source grammar.
 - A leading UTF-8 BOM is discarded. Dart's UTF-8 decoder treats `U+FEFF` as
   BOM metadata and removes it when it appears at the start of input
   (`convert/utf.dart:10-11`, `:48-49`, SDK 3.14.0, Flutter 3.50.0).
-- Malformed UTF-8 is rejected with `:1:1: error: source is not valid UTF-8`
-  and a help line. Dart's UTF-8 decoder throws a `FormatException` for invalid
-  or unterminated sequences unless malformed input is explicitly allowed
-  (`convert/utf.dart:33-39`, SDK 3.14.0, Flutter 3.50.0). Opurom does not
-  silently replace malformed input with `U+FFFD`.
+- Only one leading BOM is decoder metadata. A second BOM at the start, a BOM
+  after source text or a BOM-only file remains a lexical or grammar error.
+- Malformed UTF-8 is rejected with the first bad byte offset and a 1-based
+  line/column derived from the valid prefix. Dart's `FormatException.offset`
+  is a zero-based failure offset and its rendered line/character positions are
+  1-based (`core/exceptions.dart:55-87`, SDK 3.14.0, Flutter 3.50.0). Dart's
+  UTF-8 decoder throws that exception for invalid or unterminated sequences
+  unless malformed input is explicitly allowed (`convert/utf.dart:33-39`).
+  Opurom does not silently replace malformed input with `U+FFFD`.
 - Mixed LF, CRLF and CR line endings produce IR byte-identical to the same
   source written with LF only. Dart strings are sequences of UTF-16 code units
   and treat line breaks as ordinary string content (`core/string.dart:9-19`,

@@ -37,11 +37,31 @@ fn read_source(path: &str) -> DResult<String> {
     })?;
     // Dart's UTF-8 decoder discards a leading BOM (`convert/utf.dart:48-49`,
     // SDK 3.14.0, Flutter 3.50.0); malformed bytes are rejected rather than
-    // replaced (`convert/utf.dart:33-39`).
-    let text = String::from_utf8(bytes).map_err(|_| {
-        Diagnostic::file(
+    // replaced (`convert/utf.dart:33-39`). `Utf8Error::valid_up_to` gives the
+    // same zero-based failure offset that `FormatException.offset` records
+    // (`core/exceptions.dart:55-66`); convert it to the compiler's 1-based
+    // character position so a bad byte late in the file is located precisely.
+    let text = String::from_utf8(bytes).map_err(|e| {
+        let prefix =
+            String::from_utf8_lossy(&e.as_bytes()[..e.utf8_error().valid_up_to()]).into_owned();
+        let line = prefix.matches('\n').count()
+            + prefix
+                .matches('\r')
+                .count()
+                .saturating_sub(prefix.matches("\r\n").count())
+            + 1;
+        let col = prefix
+            .rsplit(['\n', '\r'])
+            .next()
+            .map_or(1, |tail| tail.chars().count() + 1);
+        Diagnostic::new(
             path,
-            "source is not valid UTF-8",
+            line,
+            col,
+            format!(
+                "source is not valid UTF-8 at byte {}",
+                e.utf8_error().valid_up_to()
+            ),
             "save the source as UTF-8 (malformed bytes are not decoded)",
         )
     })?;

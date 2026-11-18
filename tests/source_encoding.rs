@@ -101,7 +101,8 @@ fn invalid_utf8_fails_with_positioned_diagnostic_and_keeps_ir() {
     assert_eq!(bad.status.code(), Some(1), "malformed UTF-8 must fail");
     let stderr = String::from_utf8_lossy(&bad.stderr);
     assert!(
-        stderr.contains(":1:1: error: source is not valid UTF-8") && stderr.contains("  help: "),
+        stderr.contains(":1:5: error: source is not valid UTF-8 at byte 4")
+            && stderr.contains("  help: "),
         "malformed source needs a positioned diagnostic: {stderr}"
     );
     assert_eq!(
@@ -138,5 +139,83 @@ fn mixed_line_endings_match_normalized_lf_ir() {
         fs::read(&mixed_ir).expect("read mixed IR"),
         fs::read(&lf_ir).expect("read LF IR"),
         "line ending style must not change IR bytes"
+    );
+}
+
+#[test]
+fn only_one_leading_bom_is_decoder_metadata() {
+    let dir = out_dir("source-encoding-bom-boundaries");
+    let double_bom = dir.join("double-bom.opu");
+    let trailing_bom = dir.join("trailing-bom.opu");
+    let bom_only = dir.join("bom-only.opu");
+    fs::write(
+        &double_bom,
+        b"\xef\xbb\xbf\xef\xbb\xbfapp S { Text(\"x\") }\n",
+    )
+    .expect("write double BOM source");
+    fs::write(&trailing_bom, b"app S { Text(\"x\") }\n\xef\xbb\xbf")
+        .expect("write trailing BOM source");
+    fs::write(&bom_only, b"\xef\xbb\xbf").expect("write BOM-only source");
+
+    for src in [&double_bom, &trailing_bom] {
+        let result = bin()
+            .arg("check")
+            .arg(src)
+            .output()
+            .expect("run opuromc check");
+        assert_eq!(result.status.code(), Some(1), "extra BOM must be rejected");
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains("unexpected character"),
+            "extra BOM diagnostic: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    let result = bin()
+        .arg("check")
+        .arg(&bom_only)
+        .output()
+        .expect("run opuromc check");
+    assert_eq!(result.status.code(), Some(1), "BOM alone is not a program");
+    assert!(
+        String::from_utf8_lossy(&result.stderr).contains("expected the 'app' keyword"),
+        "BOM-only diagnostic: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+fn invalid_utf8_reports_character_column_after_crlf() {
+    let dir = out_dir("source-encoding-invalid-crlf");
+    let src = dir.join("invalid-crlf.opu");
+    let mut bytes = b"app S {\r\n  Text(\"x\")\r\n}\r\n".to_vec();
+    bytes.insert(12, 0xFF);
+    fs::write(&src, bytes).expect("write malformed CRLF source");
+    let result = bin()
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("run opuromc check");
+    assert_eq!(result.status.code(), Some(1), "malformed UTF-8 must fail");
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains(":2:4: error: source is not valid UTF-8 at byte 12"),
+        "malformed CRLF diagnostic: {stderr}"
+    );
+}
+
+#[test]
+fn truncated_multibyte_sequence_is_rejected() {
+    let dir = out_dir("source-encoding-truncated");
+    let src = dir.join("truncated.opu");
+    let out = dir.join("truncated.opuir.json");
+    let mut bytes = b"app S { Text(\"x\") }\n".to_vec();
+    bytes.push(0xC3);
+    fs::write(&src, bytes).expect("write truncated UTF-8 source");
+    let result = compile(&src, &out);
+    assert_eq!(result.status.code(), Some(1), "truncated UTF-8 must fail");
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("error: source is not valid UTF-8 at byte 20") && !out.exists(),
+        "truncated UTF-8 diagnostic: {stderr}"
     );
 }
