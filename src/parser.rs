@@ -431,12 +431,22 @@ fn is_decl_start(t: &Token) -> bool {
     }
 }
 
+// Dart represents a binary operation as an AST node with two operand slots
+// (`.pub-cache/hosted/pub.dev/analyzer-14.3.0/lib/src/dart/ast/ast.dart:3978-4000`,
+// SDK 3.14.0, Flutter 3.50.0). Opurom's recursive descent builds the same
+// left-deep shape, so a linear chain of 1050 binary operators overflows the
+// native stack. A 512-node ceiling keeps realistic expressions available while
+// turning pathological input into a positioned diagnostic.
+const MAX_EXPR_DEPTH: usize = 512;
+
 struct Parser<'a> {
     toks: Vec<Token>,
     i: usize,
     path: &'a str,
     allow_nodes: bool,
     allow_imports_in_body: bool,
+    expr_depth: usize,
+    expr_nodes: usize,
 }
 
 /// Parse a BCP-47-style tag: a lowercase primary subtag followed by zero or
@@ -861,7 +871,38 @@ impl<'a> Parser<'a> {
         )
     }
 
+    fn enter_expr(&self, pos: &Pos) -> DResult<()> {
+        if self.expr_depth >= MAX_EXPR_DEPTH {
+            return Err(Diagnostic::new(
+                self.path,
+                pos.line,
+                pos.col,
+                format!("computed expression nesting exceeds {MAX_EXPR_DEPTH} operators"),
+                "split the expression into declared computed values or shorten the chain",
+            ));
+        }
+        Ok(())
+    }
+
     fn expr_factor(&mut self) -> DResult<Expr> {
+        self.enter_expr(&self.pos())?;
+        if self.expr_nodes >= MAX_EXPR_DEPTH {
+            return Err(Diagnostic::new(
+                self.path,
+                self.pos().line,
+                self.pos().col,
+                format!("computed expression exceeds {MAX_EXPR_DEPTH} operands"),
+                "split the expression into declared computed values or shorten the chain",
+            ));
+        }
+        self.expr_nodes += 1;
+        self.expr_depth += 1;
+        let result = self.expr_factor_inner();
+        self.expr_depth -= 1;
+        result
+    }
+
+    fn expr_factor_inner(&mut self) -> DResult<Expr> {
         let start = self.pos();
         let negative = self.eat_sym("-");
         let t = self.peek().clone();
@@ -900,6 +941,14 @@ impl<'a> Parser<'a> {
     }
 
     fn expr_term(&mut self) -> DResult<Expr> {
+        self.enter_expr(&self.pos())?;
+        self.expr_depth += 1;
+        let result = self.expr_term_inner();
+        self.expr_depth -= 1;
+        result
+    }
+
+    fn expr_term_inner(&mut self) -> DResult<Expr> {
         let start = self.pos();
         let mut lhs = self.expr_factor()?;
         while self.eat_sym("*") {
@@ -913,6 +962,14 @@ impl<'a> Parser<'a> {
     }
 
     fn expr_sum(&mut self) -> DResult<Expr> {
+        self.enter_expr(&self.pos())?;
+        self.expr_depth += 1;
+        let result = self.expr_sum_inner();
+        self.expr_depth -= 1;
+        result
+    }
+
+    fn expr_sum_inner(&mut self) -> DResult<Expr> {
         let start = self.pos();
         let mut lhs = self.expr_term()?;
         loop {
@@ -982,6 +1039,7 @@ impl<'a> Parser<'a> {
     }
 
     fn expr_or(&mut self) -> DResult<Expr> {
+        self.expr_nodes = 0;
         let start = self.pos();
         let mut lhs = self.expr_and()?;
         while self.eat_sym("||") {
@@ -2885,6 +2943,8 @@ fn parse_with_options(
         path,
         allow_nodes,
         allow_imports_in_body,
+        expr_depth: 0,
+        expr_nodes: 0,
     };
     let mut imports = Vec::new();
     let mut components = Vec::new();

@@ -32,3 +32,21 @@ levels compile but fail at emit with `recursion limit exceeded`. A bounded parse
 `serde_json` 1.0.154; lifting it safely requires the `unbounded_depth` feature
 plus an explicit stacker, which is a crate/dependency change. Until then the
 supported depth is <= 60 and the regression test pins that boundary.
+
+## Computed expression recursion boundary
+
+The source parser builds a left-deep expression AST from the precedence chain
+(`or -> and -> cmp -> sum -> term -> factor`). Dart's binary-expression nodes
+also hold two operand slots (`.pub-cache/hosted/pub.dev/analyzer-14.3.0/lib/src/dart/ast/ast.dart:3978-4000`,
+SDK 3.14.0, Flutter 3.50.0), but the analyzer's incremental parser is not reused
+by Opurom. Before this round a 1050-term `+` chain aborted with a native stack
+overflow; now one computed declaration accepts at most 512 operands and 512
+recursive operator levels. The parser reports the offending position with a
+positioned diagnostic, the compiler exits with code 1, and no IR is written.
+`tests/expr_depth.rs` pins `+`, `*`, nested `!` and a 1600-term chain.
+
+This limit is a compiler robustness boundary, not a new IR or emitter protocol.
+Long computations can be split across multiple declared computed values without
+changing emitted runtime code. Raising the ceiling would require an explicit
+stacker or an iterative AST/inference implementation and must be reviewed as a
+compiler-core change.
