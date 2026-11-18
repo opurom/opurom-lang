@@ -103,3 +103,54 @@ fn fold_and_dce_shrink_ir_by_at_least_15_percent() {
         .collect();
     assert_eq!(values, vec!["always: true", "constant: 14"]);
 }
+
+#[test]
+fn optimize_full_fold_matches_compile_default() {
+    let dir = out_dir("optimize-full-fold");
+    let src = dir.join("dead.opu");
+    let ir = dir.join("dead.opuir.json");
+    let optimized = dir.join("dead.full.json");
+    fs::write(&src, SOURCE).expect("write source");
+
+    let compiled = bin()
+        .arg("compile")
+        .arg(&src)
+        .arg("-o")
+        .arg(&ir)
+        .arg("--no-fold")
+        .output()
+        .expect("run opuromc compile --no-fold");
+    assert!(
+        compiled.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    let result = bin()
+        .arg("optimize")
+        .arg(&ir)
+        .arg("-o")
+        .arg(&optimized)
+        .arg("--full-fold")
+        .output()
+        .expect("run opuromc optimize --full-fold");
+    assert!(
+        result.status.success(),
+        "optimize failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&optimized).expect("read optimized IR"))
+            .expect("parse optimized IR");
+    let children = json["tree"]["children"]
+        .as_array()
+        .expect("tree children array");
+    assert_eq!(children.len(), 2, "constant-hidden branch must be deleted");
+    let values: Vec<&str> = children
+        .iter()
+        .map(|node| node["props"]["value"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(values, vec!["always: true", "constant: 14"]);
+    assert!(json.get("computed").is_none());
+}

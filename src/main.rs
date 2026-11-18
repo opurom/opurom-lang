@@ -18,7 +18,7 @@ use std::path::Path;
 use diag::{DResult, Diagnostic};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const USAGE: &str = "usage: opuromc check <src.opu> | compile <src.opu> -o <out.opuir.json> [--fold-constants] [--fold-nodes] [--no-fold] | target <ir.json> --target <name> -o <dir> | optimize <ir.json> -o <out.json> [--fold-constants] | targets | components | --version";
+const USAGE: &str = "usage: opuromc check <src.opu> | compile <src.opu> -o <out.opuir.json> [--fold-constants] [--fold-nodes] [--no-fold] | target <ir.json> --target <name> -o <dir> | optimize <ir.json> -o <out.json> [--fold-constants] [--full-fold] | targets | components | --version";
 
 fn main() {
     if let Err(e) = run() {
@@ -189,6 +189,7 @@ fn run() -> DResult<()> {
                 ir_path,
                 Path::new(&out),
                 args.iter().any(|a| a == "--fold-constants"),
+                args.iter().any(|a| a == "--full-fold"),
             )
         }
         Some("targets") => {

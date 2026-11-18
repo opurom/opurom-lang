@@ -1068,7 +1068,14 @@ pub fn fold_constants(ir: &mut Json) -> usize {
     folded
 }
 
-pub fn run(ir_path: &str, out: &Path, fold: bool) -> DResult<()> {
+/// Run the release optimizer on an IR file.
+///
+/// `fold` keeps the documented `--fold-constants` behavior: fold pure integer
+/// computed expressions only. `full_fold` adds the same default compile passes
+/// (`fold_default`): string interpolation inlining and constant-condition node
+/// folding. The extra pass is opt-in so existing `optimize` output stays
+/// byte-stable; release builds can request the full pipeline.
+pub fn run(ir_path: &str, out: &Path, fold: bool, full_fold: bool) -> DResult<()> {
     let bytes = fs::read(ir_path).map_err(|e| {
         Diagnostic::file(
             ir_path,
@@ -1084,7 +1091,14 @@ pub fn run(ir_path: &str, out: &Path, fold: bool) -> DResult<()> {
         )
     })?;
     validate(&ir, ir_path)?;
-    if fold {
+    if full_fold {
+        // Full release folding matches the default compile pipeline: fold
+        // integer expressions, inline constant text, and delete nodes whose
+        // visibility is statically false. Node ids are densified after a
+        // deletion, exactly as in `compile`; the optimized IR is the artifact
+        // emitted by this command, so no separate sidecar is needed.
+        fold_default(&mut ir);
+    } else if fold {
         fold_constants(&mut ir);
     }
     optimize(&mut ir);
