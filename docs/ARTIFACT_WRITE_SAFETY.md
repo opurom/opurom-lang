@@ -62,3 +62,12 @@ Verification:
 ```sh
 cargo test --offline --test action_diagnostic
 ```
+
+An unknown event op now names its target as well. `tests/action_diagnostic.rs`
+pins `unknown event op 'bogus' on target 'a'` on the same four targets.
+
+Verification:
+
+```sh
+cargo test --offline --test action_diagnostic
+```

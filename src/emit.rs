@@ -1053,6 +1053,16 @@ fn validate_actions(
     Ok(())
 }
 
+fn unknown_op_error(ir_path: &str, op: &str, target: Option<&str>) -> Diagnostic {
+    match target {
+        Some(target) => bad_ir(
+            ir_path,
+            format!("unknown event op '{op}' on target '{target}'"),
+        ),
+        None => bad_ir(ir_path, format!("unknown event op '{op}'")),
+    }
+}
+
 fn rust_str(s: &str) -> String {
     format!("{s:?}")
 }
@@ -1663,7 +1673,7 @@ fn native_action(action: &Json, states: &[EState], ir_path: &str) -> DResult<(St
                 },
             },
         },
-        _ => return Err(bad_ir(ir_path, format!("unknown event op '{op}'"))),
+        _ => return Err(unknown_op_error(ir_path, op, Some(target))),
     };
     Ok((mutation, patch))
 }
@@ -2684,7 +2694,7 @@ fn js_action(action: &Json, ir_path: &str) -> DResult<String> {
                 format!("state.{target} = {};", js_lit(&v))
             }
         },
-        _ => return Err(bad_ir(ir_path, format!("unknown event op '{op}'"))),
+        _ => return Err(unknown_op_error(ir_path, op, Some(target))),
     })
 }
 
@@ -3928,7 +3938,7 @@ fn mini_action(action: &Json, p: &Platform, ir_path: &str) -> DResult<String> {
             };
             format!("this.{set}({{\"{target}\": this.data.{target}.slice(0, {idx}).concat(this.data.{target}.slice({idx} + 1))}});")
         }
-        _ => return Err(bad_ir(ir_path, format!("unknown event op '{op}'"))),
+        _ => return Err(unknown_op_error(ir_path, op, Some(target))),
     })
 }
 
@@ -5170,7 +5180,7 @@ fn harmony_action(action: &Json, states: &[EState], ir_path: &str) -> DResult<St
             let index = harmony_state_index(states, target, ir_path)?;
             format!("this.s{index} = !this.s{index}; ")
         }
-        other => return Err(bad_ir(ir_path, format!("unknown event op '{other}'"))),
+        other => return Err(unknown_op_error(ir_path, other, Some(target))),
     })
 }
 

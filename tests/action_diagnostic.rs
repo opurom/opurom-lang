@@ -31,6 +31,64 @@ fn out_dir(label: &str) -> PathBuf {
     dir
 }
 
+fn compile_single_action_ir(dir: &PathBuf, action: serde_json::Value) -> PathBuf {
+    let src = dir.join("source.opu");
+    let ir = dir.join("source.opuir.json");
+    fs::write(
+        &src,
+        "app ActionDiag {\n  state a = 0\n  Button(\"x\") { a += 1 }\n}\n",
+    )
+    .expect("write source");
+    let compiled = bin()
+        .arg("compile")
+        .arg(&src)
+        .arg("-o")
+        .arg(&ir)
+        .output()
+        .expect("run opuromc compile");
+    assert!(
+        compiled.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let mut doc: serde_json::Value =
+        serde_json::from_slice(&fs::read(&ir).expect("read IR")).expect("parse IR");
+    doc["tree"]["events"]["tap"] = action;
+    fs::write(&ir, serde_json::to_vec(&doc).expect("serialize IR")).expect("write IR");
+    ir
+}
+
+#[test]
+fn unknown_action_op_names_the_target() {
+    let dir = out_dir("unknown-action-op");
+    let ir = compile_single_action_ir(
+        &dir,
+        serde_json::json!({"op": "bogus", "target": "a", "value": 1}),
+    );
+    for target in ["web", "native", "wechat", "harmony"] {
+        let result = bin()
+            .arg("target")
+            .arg(&ir)
+            .arg("--target")
+            .arg(target)
+            .arg("-o")
+            .arg(dir.join(format!("{target}-unknown-out")))
+            .output()
+            .expect("run opuromc target");
+        assert_eq!(
+            result.status.code(),
+            Some(1),
+            "{target} accepted unknown op"
+        );
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("unknown event op 'bogus' on target 'a'")
+                && stderr.contains("  help: "),
+            "{target} diagnostic: {stderr}"
+        );
+    }
+}
+
 #[test]
 fn undeclared_action_target_names_the_operation_and_node() {
     let dir = out_dir("action-diagnostic");
