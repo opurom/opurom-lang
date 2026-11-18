@@ -9909,12 +9909,10 @@ fn design_token_color_emits_semantic_role() {
         "app D { Button(\"Go\", color: \"{@md-sys-color-secondary}\") }\n",
     )
     .unwrap();
-    let r = compile(&bad, &dir.join("bad.json"));
-    assert!(!r.status.success());
-    let stderr = String::from_utf8_lossy(&r.stderr);
-    assert!(
-        stderr.contains("unsupported design token role 'md-sys-color-secondary'"),
-        "{stderr}"
+    let ir = compile_ok(&bad);
+    assert_eq!(
+        ir["tree"]["props"]["color"],
+        json!("@md-sys-color-secondary")
     );
 }
 

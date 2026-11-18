@@ -703,7 +703,7 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             tap: false,
         },
         "Grid" => KindInfo {
-            props: &["columns", "compactColumns", "fillHeight"],
+            props: &["columns", "compactColumns", "fillHeight", "gap"],
             required: &["columns"],
             numeric: &["columns", "compactColumns"],
             positional: None,
@@ -864,6 +864,8 @@ struct Ctx<'a> {
     locale_active: Option<String>,
     locale_supported: Vec<String>,
     messages: HashMap<String, HashMap<String, String>>,
+    /// Imported metric tokens: role -> literal value, e.g. `md-space-8` -> "8".
+    metric_tokens: HashMap<String, String>,
 }
 
 impl<'a> Ctx<'a> {
@@ -1167,6 +1169,17 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         };
     }
     if key == "fontPx" {
+        if let AstValue::Lit(Lit::Str(s)) = &arg.value {
+            let role = s
+                .strip_prefix("{@md-")
+                .and_then(|r| r.strip_suffix('}'))
+                .unwrap_or(s);
+            if let Some(value) = ctx.metric_tokens.get(role) {
+                if let Ok(n) = value.parse::<i64>() {
+                    return Ok(json!(n));
+                }
+            }
+        }
         return match &arg.value {
             AstValue::Lit(Lit::Int(n)) if *n > 0 => Ok(json!(n)),
             AstValue::Lit(Lit::Int(n)) => Err(ctx.err(
@@ -1364,21 +1377,24 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
                 ))
             }
         };
-        // Design-token colour reference. Only the minimal primary role is
-        // enabled; the IR carries the semantic name and the renderer resolves
-        // it against the active light/dark palette.
+        // Design-token colour reference. Imported roles resolve through the
+        // theme token map; a core M3 role is emitted as a semantic reference.
         if let Some(role) = s
             .strip_prefix("{@md-sys-color-")
             .and_then(|r| r.strip_suffix('}'))
         {
-            if role != "primary" {
-                return Err(ctx.err(
-                    arg.pos,
-                    format!("unsupported design token role 'md-sys-color-{role}'"),
-                    "only '{@md-sys-color-primary}' is enabled".to_string(),
-                ));
+            if let Some(value) = ctx.metric_tokens.get(&format!("md-sys-color-{role}")) {
+                if is_color(value) {
+                    return Ok(json!(value));
+                }
             }
-            return Ok(json!("@md-sys-color-primary"));
+            return Ok(json!(format!("@md-sys-color-{role}")));
+            return Err(ctx.err(
+                arg.pos,
+                format!("unsupported design token role 'md-sys-color-{role}'"),
+                "declare the role in a theme token import or use primary, secondary or error"
+                    .to_string(),
+            ));
         }
         check_color(ctx, arg.pos, key, &s)?;
         return Ok(json!(s));
@@ -1702,6 +1718,23 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         return particles_value(ctx, arg);
     }
     if info.numeric.contains(&key) || GENERIC_NUMERIC.contains(&key) {
+        if let AstValue::Lit(Lit::Str(s)) = &arg.value {
+            let role = s
+                .strip_prefix("{@md-")
+                .and_then(|r| r.strip_suffix('}'))
+                .unwrap_or(s);
+            if let Some(value) = ctx.metric_tokens.get(role) {
+                let first = value
+                    .trim_start_matches('[')
+                    .split(|c: char| c == ',' || c == ']')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                if let Ok(n) = first.parse::<i64>() {
+                    return Ok(json!(n));
+                }
+            }
+        }
         return match &arg.value {
             AstValue::Lit(Lit::Int(n)) => Ok(json!(*n)),
             _ => Err(ctx.err(
@@ -3464,7 +3497,15 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         locale_active,
         locale_supported,
         messages,
+        metric_tokens: HashMap::new(),
     };
+    if let Some(theme) = &program.theme {
+        for (name, value) in &theme.imported_tokens {
+            if let Some(role) = name.strip_prefix("md-") {
+                ctx.metric_tokens.insert(role.to_string(), value.clone());
+            }
+        }
+    }
     let mut state_json = Vec::new();
     let (state_types, state_inits) = typecheck::infer_states(program, path)?;
     for s in &program.states {
