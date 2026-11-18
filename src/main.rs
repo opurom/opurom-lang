@@ -28,13 +28,24 @@ fn main() {
 }
 
 fn read_source(path: &str) -> DResult<String> {
-    fs::read_to_string(path).map_err(|e| {
+    let bytes = fs::read(path).map_err(|e| {
         Diagnostic::file(
             path,
             format!("cannot read source file: {e}"),
             "check the path, the file encoding (UTF-8) and permissions",
         )
-    })
+    })?;
+    // Dart's UTF-8 decoder discards a leading BOM (`convert/utf.dart:48-49`,
+    // SDK 3.14.0, Flutter 3.50.0); malformed bytes are rejected rather than
+    // replaced (`convert/utf.dart:33-39`).
+    let text = String::from_utf8(bytes).map_err(|_| {
+        Diagnostic::file(
+            path,
+            "source is not valid UTF-8",
+            "save the source as UTF-8 (malformed bytes are not decoded)",
+        )
+    })?;
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_string())
 }
 
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
