@@ -223,6 +223,7 @@ const GENERIC_PROPS: &[&str] = &[
     "duration",
     "delay",
     "columnSpan",
+    "flex",
     "animClock",
     "animInterval",
     "repaintBoundary",
@@ -248,7 +249,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
 ];
 
 /// Numeric props every kind accepts (canonical visual props).
-const GENERIC_NUMERIC: &[&str] = &["padding", "margin", "radius"];
+const GENERIC_NUMERIC: &[&str] = &["padding", "margin", "radius", "flex"];
 
 const HANDLER_VERBS: &[&str] = &["list", "get", "create", "update", "delete"];
 
@@ -261,6 +262,8 @@ const ANIMATE_VALUES: &[&str] = &[
     "medium",
     "large",
     "color",
+    "m3-short1",
+    "m3-medium1",
     "none",
 ];
 
@@ -571,9 +574,9 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             tap: false,
         },
         "Button" => KindInfo {
-            props: &["label", "width"],
+            props: &["label", "width", "fontPx"],
             required: &["label"],
-            numeric: &["width"],
+            numeric: &["width", "fontPx"],
             positional: Some("label"),
             children: false,
             tap: true,
@@ -710,9 +713,9 @@ fn kind_info(kind: &str) -> Option<KindInfo> {
             tap: false,
         },
         "Grid" => KindInfo {
-            props: &["columns", "compactColumns", "fillHeight"],
+            props: &["columns", "compactColumns", "fillHeight", "gap"],
             required: &["columns"],
-            numeric: &["columns", "compactColumns"],
+            numeric: &["columns", "compactColumns", "gap"],
             positional: None,
             children: true,
             tap: false,
@@ -857,6 +860,8 @@ struct Ctx<'a> {
     loops: Vec<(String, LoopValue)>,
     /// Whether the node being lowered is inside a Grid, for `columnSpan`.
     in_grid: bool,
+    /// Compile-time Material 3 metric tokens imported by the app theme.
+    metric_tokens: HashMap<String, String>,
     /// Declared duration per shared clock id, for the stagger diagnostic.
     clock_durations: HashMap<String, i64>,
     /// Page names declared by `page Name;`, used to validate `push:` targets.
@@ -1174,6 +1179,15 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         };
     }
     if key == "fontPx" {
+        if let AstValue::Lit(Lit::Str(s)) = &arg.value {
+            if let Some(role) = s.strip_prefix("{@md-").and_then(|r| r.strip_suffix('}')) {
+                if let Some(value) = ctx.metric_tokens.get(role) {
+                    if let Ok(n) = value.parse::<i64>() {
+                        return Ok(json!(n));
+                    }
+                }
+            }
+        }
         return match &arg.value {
             AstValue::Lit(Lit::Int(n)) if *n > 0 => Ok(json!(n)),
             AstValue::Lit(Lit::Int(n)) => Err(ctx.err(
@@ -1371,21 +1385,24 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
                 ))
             }
         };
-        // Design-token colour reference. Only the minimal primary role is
-        // enabled; the IR carries the semantic name and the renderer resolves
-        // it against the active light/dark palette.
+        // Design-token colour reference. The IR carries the semantic role
+        // name and the renderer resolves it against the active light/dark
+        // palette, compiled into `opurom-render/src/ir.rs::m3_color`.
         if let Some(role) = s
             .strip_prefix("{@md-sys-color-")
             .and_then(|r| r.strip_suffix('}'))
         {
-            if role != "primary" {
+            if !crate::md_token_roles::is_color_role(role) {
                 return Err(ctx.err(
                     arg.pos,
                     format!("unsupported design token role 'md-sys-color-{role}'"),
-                    "only '{@md-sys-color-primary}' is enabled".to_string(),
+                    format!(
+                        "expected one of the {} md-sys-color roles in theme/material-tokens.json",
+                        crate::md_token_roles::COLOR_ROLE_COUNT
+                    ),
                 ));
             }
-            return Ok(json!("@md-sys-color-primary"));
+            return Ok(json!(format!("@md-sys-color-{role}")));
         }
         check_color(ctx, arg.pos, key, &s)?;
         return Ok(json!(s));
@@ -1572,7 +1589,7 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
                         "prop 'animate' expects a keyword, found {}",
                         value_desc(other)
                     ),
-                    "write animate: spring, ease, inertia, collision, fast, medium, large, color or none"
+                    "write animate: spring, ease, inertia, collision, fast, medium, large, color, m3-short1, m3-medium1 or none"
                         .to_string(),
                 ))
             }
@@ -1581,7 +1598,7 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             return Err(ctx.err(
                 arg.pos,
                 format!("unknown animate value '{s}'"),
-                "use one of: spring, ease, inertia, collision, fast, medium, large, color, none"
+                "use one of: spring, ease, inertia, collision, fast, medium, large, color, m3-short1, m3-medium1, none"
                     .to_string(),
             ));
         }
@@ -1709,6 +1726,21 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
         return particles_value(ctx, arg);
     }
     if info.numeric.contains(&key) || GENERIC_NUMERIC.contains(&key) {
+        if let AstValue::Lit(Lit::Str(s)) = &arg.value {
+            if let Some(role) = s.strip_prefix("{@md-").and_then(|r| r.strip_suffix('}')) {
+                if let Some(value) = ctx.metric_tokens.get(role) {
+                    let first = value
+                        .trim_start_matches('[')
+                        .split(|c: char| c == ',' || c == ']')
+                        .next()
+                        .unwrap_or("")
+                        .trim();
+                    if let Ok(n) = first.parse::<i64>() {
+                        return Ok(json!(n));
+                    }
+                }
+            }
+        }
         return match &arg.value {
             AstValue::Lit(Lit::Int(n)) => Ok(json!(*n)),
             _ => Err(ctx.err(
@@ -3474,6 +3506,7 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         lists: HashMap::new(),
         loops: Vec::new(),
         in_grid: false,
+        metric_tokens: HashMap::new(),
         clock_durations: HashMap::new(),
         pages: program.pages.iter().map(|p| p.name.clone()).collect(),
         route_names: program.routes.iter().map(|r| r.name.clone()).collect(),
@@ -3482,6 +3515,13 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
         locale_supported,
         messages,
     };
+    if let Some(theme) = &program.theme {
+        for (name, value) in &theme.imported_tokens {
+            if let Some(role) = name.strip_prefix("md-") {
+                ctx.metric_tokens.insert(role.to_string(), value.clone());
+            }
+        }
+    }
     let mut state_json = Vec::new();
     let (state_types, state_inits) = typecheck::infer_states(program, path)?;
     for s in &program.states {

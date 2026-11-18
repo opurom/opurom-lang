@@ -9900,22 +9900,88 @@ fn design_token_color_emits_semantic_role() {
         "app D { Button(\"Go\", color: \"{@md-sys-color-primary}\") }\n",
     )
     .unwrap();
-    let ir = compile_ok(&src);
-    assert_eq!(ir["tree"]["props"]["color"], json!("@md-sys-color-primary"));
+    let roles = [
+        "primary",
+        "on-primary",
+        "surface-container-highest",
+        "inverse-primary",
+        "background",
+    ];
+    for role in roles {
+        fs::write(
+            &src,
+            format!("app D {{ Button(\"Go\", color: \"{{@md-sys-color-{role}}}\") }}\n"),
+        )
+        .unwrap();
+        let ir = compile_ok(&src);
+        assert_eq!(
+            ir["tree"]["props"]["color"],
+            json!(format!("@md-sys-color-{role}"))
+        );
+    }
 
     let bad = dir.join("bad.opu");
     fs::write(
         &bad,
-        "app D { Button(\"Go\", color: \"{@md-sys-color-secondary}\") }\n",
+        "app D { Button(\"Go\", color: \"{@md-sys-color-primaryx}\") }\n",
     )
     .unwrap();
     let r = compile(&bad, &dir.join("bad.json"));
     assert!(!r.status.success());
     let stderr = String::from_utf8_lossy(&r.stderr);
     assert!(
-        stderr.contains("unsupported design token role 'md-sys-color-secondary'"),
+        stderr.contains("unsupported design token role 'md-sys-color-primaryx'"),
         "{stderr}"
     );
+}
+
+#[test]
+fn full_m3_token_bundle_imports_as_compile_time_constants() {
+    let dir = out_dir("full-m3-token-import");
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../opurom-ui/theme/material-tokens.json");
+    let tokens: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&fixture).unwrap()).unwrap();
+    let doc = tokens.clone();
+    let light = tokens["tokens"]["color"]["light"].clone();
+    let flat: serde_json::Map<String, serde_json::Value> = light
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(key, entry)| (key.clone(), entry["value"].clone()))
+        .collect();
+    fs::write(
+        dir.join("tokens.json"),
+        serde_json::to_string(&flat).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("main.opu"),
+        "app M {\n  theme { tokens { import \"tokens.json\" } }\n  Text(\"hi\")\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&dir.join("main.opu"));
+    let tok = &ir["theme"]["tokens"];
+    let light = &doc["tokens"]["color"]["light"];
+    assert_eq!(light.as_object().unwrap().len(), 49);
+    for (key, entry) in light.as_object().unwrap() {
+        assert_eq!(tok[key], entry["value"], "{key}");
+    }
+}
+
+#[test]
+fn m3_motion_tokens_compile_to_named_curves() {
+    let dir = out_dir("m3-motion-tokens");
+    let src = dir.join("motion.opu");
+    for name in ["m3-short1", "m3-medium1"] {
+        fs::write(
+            &src,
+            format!("app M {{ Text(\"hi\", animate: \"{name}\") }}\n"),
+        )
+        .unwrap();
+        let ir = compile_ok(&src);
+        assert_eq!(ir["tree"]["props"]["animate"], json!(name));
+    }
 }
 
 #[test]

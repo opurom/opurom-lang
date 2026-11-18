@@ -4,6 +4,9 @@ mod emit;
 mod icons;
 mod lexer;
 mod lower;
+mod md_token_roles;
+#[cfg(test)]
+mod md_token_roles_tests;
 mod modules;
 mod optimize;
 mod parser;
