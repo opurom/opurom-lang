@@ -20,3 +20,12 @@ No parser or emitter change was made. The existing precedence chain
 (`or -> and -> cmp -> sum -> term -> factor`) already gives deterministic
 grouping for expressions that avoid parentheses; the missing syntax is
 recorded for a coordinated language round.
+
+## IR recursion boundary (observed)
+
+`opuromc compile` lowers a 200-level container chain, but every emitter reads
+IR through `serde_json::Value` with its default 128-level recursion limit, so
+the artifact cannot be consumed. A bounded parser limit is not exposed by
+`serde_json` 1.0.154; lifting it safely requires the `unbounded_depth` feature
+plus an explicit stacker, which is a crate/dependency change. Until then the
+supported depth is <= 60 and the regression test pins that boundary.
