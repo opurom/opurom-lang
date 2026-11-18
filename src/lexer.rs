@@ -43,13 +43,32 @@ fn bump(cs: &[char], i: &mut usize, line: &mut usize, col: &mut usize) {
     if *i >= cs.len() {
         return;
     }
-    if cs[*i] == '\n' {
+    let c = cs[*i];
+    if c == '\r' {
+        // Dart treats `\r`, `\n` and `\r\n` as line endings and registers a
+        // single line start for `\r\n` (analyzer `source/line_info.dart:45-69`,
+        // SDK 3.14.0, Flutter 3.50.0).
+        if *i + 1 < cs.len() && cs[*i + 1] == '\n' {
+            *i += 1;
+        }
+        *line += 1;
+        *col = 1;
+    } else if c == '\n' {
         *line += 1;
         *col = 1;
     } else {
         *col += 1;
     }
     *i += 1;
+}
+
+fn advance_to_line_end(cs: &[char], i: &mut usize, line: &mut usize, col: &mut usize) {
+    while *i < cs.len() && cs[*i] != '\n' && cs[*i] != '\r' {
+        bump(cs, i, line, col);
+    }
+    if *i < cs.len() && cs[*i] == '\r' && *i + 1 < cs.len() && cs[*i + 1] == '\n' {
+        bump(cs, i, line, col);
+    }
 }
 
 pub fn lex(src: &str, path: &str) -> DResult<Vec<Token>> {
@@ -62,9 +81,7 @@ pub fn lex(src: &str, path: &str) -> DResult<Vec<Token>> {
     while i < cs.len() {
         let c = cs[i];
         if c == '/' && i + 1 < cs.len() && cs[i + 1] == '/' {
-            while i < cs.len() && cs[i] != '\n' {
-                bump(&cs, &mut i, &mut line, &mut col);
-            }
+            advance_to_line_end(&cs, &mut i, &mut line, &mut col);
             continue;
         }
         if c.is_whitespace() {
@@ -85,7 +102,7 @@ pub fn lex(src: &str, path: &str) -> DResult<Vec<Token>> {
                     closed = true;
                     break;
                 }
-                if d == '\n' {
+                if d == '\n' || d == '\r' {
                     return Err(Diagnostic::new(
                         path,
                         start_line,
