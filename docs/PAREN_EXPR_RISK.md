@@ -1,7 +1,8 @@
 # Parenthesized computed expressions
 
 Dart models parentheses explicitly with `ParenthesizedExpression`
-(`pkg/analyzer/lib/src/dart/ast/ast.dart:40397-40410`, SDK 3.14.0, Flutter 3.50.0).
+(`.pub-cache/hosted/pub.dev/analyzer-14.3.0/lib/src/dart/ast/ast.dart:37880-37895`,
+SDK 3.14.0, Flutter 3.50.0).
 Opurom's `computed.expr` is a canonical token string re-parsed by
 `emit::computed_expr` in every emitter. It currently supports `+ - *`,
 comparisons, `&& || !`, literals and state names, but rejects `(`.
@@ -24,8 +25,10 @@ recorded for a coordinated language round.
 ## IR recursion boundary (observed)
 
 `opuromc compile` lowers a 200-level container chain, but every emitter reads
-IR through `serde_json::Value` with its default 128-level recursion limit, so
-the artifact cannot be consumed. A bounded parser limit is not exposed by
+IR through `serde_json::Value` with its default 128-level recursion limit
+(`serde_json-1.0.154/src/de.rs:63`, `src/error.rs:384`), so the artifact cannot
+be consumed. `tests/risk_samples.rs` replays both sides: 60 levels emit, 200
+levels compile but fail at emit with `recursion limit exceeded`. A bounded parser limit is not exposed by
 `serde_json` 1.0.154; lifting it safely requires the `unbounded_depth` feature
 plus an explicit stacker, which is a crate/dependency change. Until then the
 supported depth is <= 60 and the regression test pins that boundary.
