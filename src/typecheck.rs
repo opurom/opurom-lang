@@ -358,6 +358,97 @@ pub fn infer_computed(
             })?;
             Ok((Ty::Int, json!(value)))
         }
+        ExprKind::Str(s) => Ok((Ty::Str, json!(s))),
+        ExprKind::Cmp(op, lhs, rhs) => {
+            let (lhs_ty, lhs_value) = infer_computed(lhs, env, computed_names, path)?;
+            let (rhs_ty, rhs_value) = infer_computed(rhs, env, computed_names, path)?;
+            let ordering = matches!(op.as_str(), "<" | "<=" | ">" | ">=");
+            if ordering {
+                if lhs_ty != Ty::Int || rhs_ty != Ty::Int {
+                    let found = if lhs_ty != Ty::Int { lhs_ty } else { rhs_ty };
+                    return Err(type_error(
+                        path,
+                        expr.pos,
+                        format!("computed expression '{op}' requires int operands"),
+                        "int",
+                        found.name(),
+                        "use only int states and integer literals with <, <=, > and >=",
+                    ));
+                }
+            } else if lhs_ty != rhs_ty {
+                return Err(type_error(
+                    path,
+                    expr.pos,
+                    format!("computed expression '{op}' requires operands of the same type"),
+                    lhs_ty.name(),
+                    rhs_ty.name(),
+                    "compare two int states or two string states",
+                ));
+            } else if lhs_ty != Ty::Int && lhs_ty != Ty::Str {
+                return Err(type_error(
+                    path,
+                    expr.pos,
+                    format!("computed expression '{op}' requires int or string operands"),
+                    "int or string",
+                    lhs_ty.name(),
+                    "compare two int states or two string states",
+                ));
+            }
+            let value = match (lhs_value.as_i64(), rhs_value.as_i64()) {
+                (Some(a), Some(b)) => json!(match op.as_str() {
+                    "==" => a == b,
+                    "!=" => a != b,
+                    "<" => a < b,
+                    "<=" => a <= b,
+                    ">" => a > b,
+                    _ => a >= b,
+                }),
+                _ => {
+                    let a = lhs_value.as_str().unwrap_or_default();
+                    let b = rhs_value.as_str().unwrap_or_default();
+                    json!(match op.as_str() {
+                        "==" => a == b,
+                        _ => a != b,
+                    })
+                }
+            };
+            Ok((Ty::Bool, value))
+        }
+        ExprKind::And(lhs, rhs) | ExprKind::Or(lhs, rhs) => {
+            let is_and = matches!(&expr.kind, ExprKind::And(..));
+            let op = if is_and { "&&" } else { "||" };
+            let (lhs_ty, lhs_value) = infer_computed(lhs, env, computed_names, path)?;
+            let (rhs_ty, rhs_value) = infer_computed(rhs, env, computed_names, path)?;
+            for ty in [lhs_ty, rhs_ty] {
+                if ty != Ty::Bool {
+                    return Err(type_error(
+                        path,
+                        expr.pos,
+                        format!("computed expression '{op}' requires bool operands"),
+                        "bool",
+                        ty.name(),
+                        "use bool states with && and ||",
+                    ));
+                }
+            }
+            let a = lhs_value.as_bool().unwrap_or(false);
+            let b = rhs_value.as_bool().unwrap_or(false);
+            Ok((Ty::Bool, json!(if is_and { a && b } else { a || b })))
+        }
+        ExprKind::Not(inner) => {
+            let (inner_ty, inner_value) = infer_computed(inner, env, computed_names, path)?;
+            if inner_ty != Ty::Bool {
+                return Err(type_error(
+                    path,
+                    expr.pos,
+                    "computed expression '!' requires a bool operand",
+                    "bool",
+                    inner_ty.name(),
+                    "use a bool state with !",
+                ));
+            }
+            Ok((Ty::Bool, json!(!inner_value.as_bool().unwrap_or(false))))
+        }
     }
 }
 

@@ -10259,3 +10259,97 @@ fn default_folding_keeps_golden_counter_byte_identical() {
     );
     assert!(!out.with_extension("idmap.json").exists());
 }
+
+/// The Batch 2 expression operators keep the canonical IR token form: one
+/// space between tokens, operators as standalone tokens and a string literal
+/// as a single quoted token. Every emitter tokenizes the same text.
+#[test]
+fn expression_operators_lower_to_canonical_token_text() {
+    let dir = out_dir("expr-ops");
+    let cases: Vec<(&str, &str)> = vec![
+        ("cmp-lt", "a < b"),
+        ("cmp-eq", "a == b"),
+        ("cmp-ne", "a != b"),
+        ("cmp-le", "a <= b"),
+        ("cmp-ge", "a >= b"),
+        ("cmp-gt", "a > b"),
+        ("logic-and", "x && y"),
+        ("logic-or", "x || y"),
+        ("logic-not", "!flag"),
+        ("str-eq", "\"a\" == s"),
+    ];
+    for (label, expr) in cases {
+        let src = dir.join(format!("{label}.opu"));
+        fs::write(
+            &src,
+            format!(
+                "app Probe {{\n  state a = 1\n  state b = 2\n  state s = \"\"\n  state x = true\n  state y = false\n  state flag = true\n  computed c = {expr}\n  Column {{\n    Text(\"{{c}}\")\n  }}\n}}\n"
+            ),
+        )
+        .unwrap();
+        let ir = compile_ok(&src);
+        assert_eq!(ir["computed"][0]["expr"], expr, "{label}: token form");
+        assert_eq!(ir["computed"][0]["type"], "bool", "{label}: type");
+    }
+}
+
+/// Comparison binds looser than arithmetic and tighter than the boolean
+/// connectives, so the emitted token text keeps the source grouping.
+#[test]
+fn expression_operator_precedence_keeps_source_grouping() {
+    let dir = out_dir("expr-ops-precedence");
+    let src = dir.join("precedence.opu");
+    fs::write(
+        &src,
+        "app Probe {\n  state a = 1\n  state b = 2\n  state x = true\n  state y = false\n  \
+         computed c = a < b + 1\n  computed d = x && y || a > b\n  Column {\n    Text(\"{c}\")\n  }\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&src);
+    assert_eq!(ir["computed"][0]["expr"], "a < b + 1");
+    assert_eq!(ir["computed"][1]["expr"], "x && y || a > b");
+    assert_eq!(ir["computed"][0]["type"], "bool");
+    assert_eq!(ir["computed"][1]["type"], "bool");
+}
+
+/// Mixed operand types, string ordering and non-bool logical operands are
+/// rejected at the source position instead of being coerced.
+#[test]
+fn expression_operator_type_errors_are_reported() {
+    let dir = out_dir("expr-ops-errors");
+    let cases: Vec<(&str, &str, &str)> = vec![
+        (
+            "mixed.opu",
+            "app P { state a = 1 state s = \"\" computed c = a == s Column { Text(\"{c}\") } }",
+            "requires operands of the same type",
+        ),
+        (
+            "str-order.opu",
+            "app P { state s = \"\" state t = \"\" computed c = s < t Column { Text(\"{c}\") } }",
+            "requires int operands",
+        ),
+        (
+            "logic-int.opu",
+            "app P { state a = 1 computed c = a && a Column { Text(\"{c}\") } }",
+            "requires bool operands",
+        ),
+        (
+            "not-int.opu",
+            "app P { state a = 1 computed c = !a Column { Text(\"{c}\") } }",
+            "requires a bool operand",
+        ),
+    ];
+    for (name, body, message) in cases {
+        let src = dir.join(name);
+        fs::write(&src, format!("{body}\n")).unwrap();
+        let out = dir.join(format!("{name}.out.json"));
+        let r = compile(&src, &out);
+        assert!(!r.status.success(), "{name} must fail");
+        let stderr = String::from_utf8_lossy(&r.stderr).to_string();
+        assert!(
+            stderr.contains(message),
+            "{name}: unexpected diagnostic: {stderr}"
+        );
+        assert_diag(&stderr, &src);
+    }
+}

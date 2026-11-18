@@ -226,19 +226,22 @@ pub fn lex(src: &str, path: &str) -> DResult<Vec<Token>> {
 
         if i + 1 < cs.len() {
             let pair = [c, cs[i + 1]];
-            if (pair == ['+', '=']) || (pair == ['-', '=']) {
-                let sym: String = pair.iter().collect();
+            let two = pair.iter().collect::<String>();
+            if matches!(
+                two.as_str(),
+                "+=" | "-=" | "==" | "!=" | "<=" | ">=" | "&&" | "||"
+            ) {
                 bump(&cs, &mut i, &mut line, &mut col);
                 bump(&cs, &mut i, &mut line, &mut col);
                 out.push(Token {
-                    tok: Tok::Sym(sym),
+                    tok: Tok::Sym(two),
                     line: start_line,
                     col: start_col,
                 });
                 continue;
             }
         }
-        if "{}():,=.;+-[]*".contains(c) {
+        if "{}():,=.;+-[]*<>!".contains(c) {
             bump(&cs, &mut i, &mut line, &mut col);
             out.push(Token {
                 tok: Tok::Sym(c.to_string()),

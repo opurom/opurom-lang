@@ -26,9 +26,15 @@ pub enum Value {
 pub enum ExprKind {
     Int(i64),
     State(String),
+    Str(String),
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
+    /// A comparison: `==`, `!=`, `<`, `<=`, `>` or `>=`.
+    Cmp(String, Box<Expr>, Box<Expr>),
+    And(Box<Expr>, Box<Expr>),
+    Or(Box<Expr>, Box<Expr>),
+    Not(Box<Expr>),
 }
 
 #[derive(Clone, Debug)]
@@ -42,9 +48,14 @@ impl Expr {
         match &self.kind {
             ExprKind::Int(n) => n.to_string(),
             ExprKind::State(name) => name.clone(),
+            ExprKind::Str(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
             ExprKind::Add(lhs, rhs) => format!("{} + {}", lhs.text(), rhs.text()),
             ExprKind::Sub(lhs, rhs) => format!("{} - {}", lhs.text(), rhs.text()),
             ExprKind::Mul(lhs, rhs) => format!("{} * {}", lhs.text(), rhs.text()),
+            ExprKind::Cmp(op, lhs, rhs) => format!("{} {} {}", lhs.text(), op, rhs.text()),
+            ExprKind::And(lhs, rhs) => format!("{} && {}", lhs.text(), rhs.text()),
+            ExprKind::Or(lhs, rhs) => format!("{} || {}", lhs.text(), rhs.text()),
+            ExprKind::Not(inner) => format!("!{}", inner.text()),
         }
     }
 }
@@ -869,6 +880,21 @@ impl<'a> Parser<'a> {
                     pos: start,
                 })
             }
+            Tok::Str(s) if !negative => {
+                self.bump();
+                Ok(Expr {
+                    kind: ExprKind::Str(s),
+                    pos: start,
+                })
+            }
+            Tok::Sym(sym) if sym == "!" && !negative => {
+                self.bump();
+                let inner = self.expr_factor()?;
+                Ok(Expr {
+                    kind: ExprKind::Not(Box::new(inner)),
+                    pos: start,
+                })
+            }
             _ => Err(self.computed_expr_error(&t)),
         }
     }
@@ -911,12 +937,69 @@ impl<'a> Parser<'a> {
         Ok(lhs)
     }
 
+    /// Comparison binds tighter than the boolean connectives and looser than
+    /// arithmetic: `a < b + 1` compares after the sum.
+    fn expr_cmp(&mut self) -> DResult<Expr> {
+        let start = self.pos();
+        let mut lhs = self.expr_sum()?;
+        loop {
+            let op = if self.eat_sym("==") {
+                Some("==")
+            } else if self.eat_sym("!=") {
+                Some("!=")
+            } else if self.eat_sym("<=") {
+                Some("<=")
+            } else if self.eat_sym(">=") {
+                Some(">=")
+            } else if self.eat_sym("<") {
+                Some("<")
+            } else if self.eat_sym(">") {
+                Some(">")
+            } else {
+                None
+            };
+            let Some(op) = op else { break };
+            let rhs = self.expr_sum()?;
+            lhs = Expr {
+                kind: ExprKind::Cmp(op.to_string(), Box::new(lhs), Box::new(rhs)),
+                pos: start,
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn expr_and(&mut self) -> DResult<Expr> {
+        let start = self.pos();
+        let mut lhs = self.expr_cmp()?;
+        while self.eat_sym("&&") {
+            let rhs = self.expr_cmp()?;
+            lhs = Expr {
+                kind: ExprKind::And(Box::new(lhs), Box::new(rhs)),
+                pos: start,
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn expr_or(&mut self) -> DResult<Expr> {
+        let start = self.pos();
+        let mut lhs = self.expr_and()?;
+        while self.eat_sym("||") {
+            let rhs = self.expr_and()?;
+            lhs = Expr {
+                kind: ExprKind::Or(Box::new(lhs), Box::new(rhs)),
+                pos: start,
+            };
+        }
+        Ok(lhs)
+    }
+
     fn computed_decl(&mut self) -> DResult<ComputedDecl> {
         let pos = self.pos();
         self.bump();
         let (name, _) = self.expect_ident("a computed value name")?;
         self.expect_sym("=", "a computed declaration needs '=' and an expression")?;
-        let expr = self.expr_sum()?;
+        let expr = self.expr_or()?;
         self.eat_sym(";");
         if !is_decl_start(self.peek()) {
             let t = self.peek().clone();
