@@ -1389,12 +1389,6 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
                 }
             }
             return Ok(json!(format!("@md-sys-color-{role}")));
-            return Err(ctx.err(
-                arg.pos,
-                format!("unsupported design token role 'md-sys-color-{role}'"),
-                "declare the role in a theme token import or use primary, secondary or error"
-                    .to_string(),
-            ));
         }
         check_color(ctx, arg.pos, key, &s)?;
         return Ok(json!(s));
