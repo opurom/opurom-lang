@@ -123,3 +123,18 @@ fn nested_negation_emits_on_every_target() {
     let web = fs::read_to_string(dir.join("web/app.js")).expect("read web app");
     assert!(web.contains("state.result = !!state.flag;"), "{web}");
 }
+
+#[test]
+fn escaped_quote_inside_string_literal_emits_on_every_target() {
+    let (dir, ir) = compile(
+        "app Probe {\n  state s = \"a\\\" b\"\n  computed result = s == \"a\\\" b\"\n  Column {\n    Text(\"{result}\")\n  }\n}\n",
+    );
+    for target in ["web", "native", "wechat", "harmony"] {
+        emit(&ir, target, &dir.join(target));
+    }
+    let web = fs::read_to_string(dir.join("web/app.js")).expect("read web app");
+    assert!(
+        web.contains("state.result = (state.s == \"a\\\" b\");"),
+        "{web}"
+    );
+}
