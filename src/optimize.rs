@@ -408,10 +408,35 @@ fn simple_ident(s: &str) -> bool {
 }
 
 /// Identifiers a computed expression can read. Operators are separators too, so an expression
-/// written without spaces around `*` still keeps its source state.
-fn expr_idents(expr: &str) -> impl Iterator<Item = &str> + '_ {
-    expr.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+/// written without spaces around `*` still keeps its source state. Characters inside a double
+/// quoted string literal are not identifiers: a literal's contents must never keep a state alive.
+fn expr_idents(expr: &str) -> Vec<String> {
+    // Blank quoted spans so a string literal's contents are never read as state.
+    let mut masked = String::with_capacity(expr.len());
+    let mut in_quote = false;
+    let mut escaped = false;
+    for c in expr.chars() {
+        if in_quote {
+            masked.push(' ');
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_quote = false;
+            }
+        } else if c == '"' {
+            masked.push(' ');
+            in_quote = true;
+        } else {
+            masked.push(c);
+        }
+    }
+    masked
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .filter(|token| simple_ident(token))
+        .map(str::to_string)
+        .collect::<Vec<_>>()
 }
 
 /// Keep computed declarations whose names the tree or another surviving declaration reads.
@@ -424,10 +449,7 @@ fn prune_dead_computed(ir: &mut Json, refs: &mut HashSet<String>) {
             .filter_map(|entry| {
                 let name = entry.get("name").and_then(Json::as_str)?;
                 let expr = entry.get("expr").and_then(Json::as_str).unwrap_or("");
-                Some((
-                    name.to_string(),
-                    expr_idents(expr).map(str::to_string).collect(),
-                ))
+                Some((name.to_string(), expr_idents(expr)))
             })
             .collect(),
         None => return,
@@ -522,10 +544,7 @@ fn optimize(ir: &mut Json) {
                 .filter_map(|entry| {
                     let name = entry.get("name")?.as_str()?;
                     let expr = entry.get("expr")?.as_str()?;
-                    Some((
-                        name.to_string(),
-                        expr_idents(expr).map(str::to_string).collect(),
-                    ))
+                    Some((name.to_string(), expr_idents(expr)))
                 })
                 .collect()
         })
@@ -617,9 +636,7 @@ fn constant_scalars(ir: &Json) -> HashMap<String, Json> {
                 .filter_map(|c| {
                     Some((
                         c.get("name")?.as_str()?.to_string(),
-                        expr_idents(c.get("expr")?.as_str()?)
-                            .map(str::to_string)
-                            .collect(),
+                        expr_idents(c.get("expr")?.as_str()?),
                     ))
                 })
                 .collect()
@@ -881,10 +898,7 @@ fn rebuild_id_maps(ir: &mut Json) {
                 .filter_map(|entry| {
                     let name = entry.get("name")?.as_str()?;
                     let expr = entry.get("expr")?.as_str()?;
-                    Some((
-                        name.to_string(),
-                        expr_idents(expr).map(str::to_string).collect(),
-                    ))
+                    Some((name.to_string(), expr_idents(expr)))
                 })
                 .collect()
         })
@@ -1138,6 +1152,43 @@ mod tests {
         assert_eq!(folded_integer("count * 2"), None);
         assert_eq!(folded_integer("9223372036854775807 + 1"), None);
         assert_eq!(folded_integer("2 ** 3"), None);
+        // New comparison, boolean and string tokens are never folded: a
+        // non-integer token makes the grammar fail and returns None.
+        for expr in [
+            "1 < 2",
+            "1 == 2",
+            "1 >= 2",
+            "1 && 0",
+            "1 || 0",
+            "!1",
+            "\"x\" == \"y\"",
+            "1 + 2 < 4",
+        ] {
+            assert_eq!(folded_integer(expr), None, "must not fold '{expr}'");
+        }
+    }
+
+    #[test]
+    fn expr_idents_ignore_string_literal_contents() {
+        assert_eq!(
+            expr_idents("a + b * 2"),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert_eq!(expr_idents("s == \"alpha beta\""), vec!["s".to_string()]);
+        // Literal text that looks like a state name must not be kept alive.
+        assert!(
+            !expr_idents("\"count flag\" == s").contains(&"count".to_string()),
+            "literal contents counted as state"
+        );
+        assert!(
+            expr_idents("\"count flag\" == s").contains(&"s".to_string()),
+            "real state outside the literal must still be read"
+        );
+        // An escaped quote does not prematurely end the literal.
+        assert!(
+            !expr_idents("s == \"a\\\"count\"").contains(&"count".to_string()),
+            "text after an escaped quote counted as state"
+        );
     }
 
     #[test]
