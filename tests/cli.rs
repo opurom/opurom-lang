@@ -147,6 +147,19 @@ fn compile(src: &Path, out: &Path) -> Output {
         .expect("run opuromc compile")
 }
 
+/// Raw lowering with default compile passes disabled; for tests that assert
+/// the pre-fold IR shape.
+fn compile_raw(src: &Path, out: &Path) -> Output {
+    bin()
+        .arg("compile")
+        .arg(src)
+        .arg("-o")
+        .arg(out)
+        .arg("--no-fold")
+        .output()
+        .expect("run opuromc compile --no-fold")
+}
+
 fn emit(ir: &Path, target: &str, out: &Path) -> Output {
     bin()
         .arg("target")
@@ -213,7 +226,14 @@ fn assert_shape(node: &Json) {
 
 fn compile_ok(src: &Path) -> Json {
     let out = out_dir("ui").join("out.opuir.json");
-    let r = compile(src, &out);
+    let r = bin()
+        .arg("compile")
+        .arg(src)
+        .arg("-o")
+        .arg(&out)
+        .arg("--no-fold")
+        .output()
+        .expect("run opuromc compile --no-fold");
     assert!(
         r.status.success(),
         "compile failed: {}",
@@ -3575,7 +3595,7 @@ fn constant_folding_emits_literal_target_code() {
     .unwrap();
     let plain = dir.join("plain.opuir.json");
     let folded = dir.join("folded.opuir.json");
-    assert!(compile(&src, &plain).status.success());
+    assert!(compile_raw(&src, &plain).status.success());
     let r = compile_folded(&src, &folded);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let a: Json = serde_json::from_slice(&fs::read(&plain).unwrap()).unwrap();
@@ -3583,6 +3603,12 @@ fn constant_folding_emits_literal_target_code() {
     assert_eq!(a["computed"][0]["expr"], "2 * 3 + 4");
     assert_eq!(b["computed"][0]["expr"], "10");
     assert_eq!(a["state"], b["state"], "the init value is already folded");
+    // The default path also inlines the constant interpolation, so the tree's
+    // text changes with the computed expr; everything else stays equal.
+    assert_eq!(
+        b["tree"]["children"][0]["props"]["value"], "10",
+        "constant text is inlined on the default path"
+    );
     let mut a_without = a.clone();
     let mut b_without = b.clone();
     a_without["computed"][0]
@@ -3593,7 +3619,15 @@ fn constant_folding_emits_literal_target_code() {
         .as_object_mut()
         .unwrap()
         .remove("expr");
-    assert_eq!(a_without, b_without, "only the expr text changes");
+    a_without["tree"]["children"][0]["props"]
+        .as_object_mut()
+        .unwrap()
+        .remove("value");
+    b_without["tree"]["children"][0]["props"]
+        .as_object_mut()
+        .unwrap()
+        .remove("value");
+    assert_eq!(a_without, b_without, "only folded text and expr change");
 
     let native_plain = dir.join("native-plain");
     let native_folded = dir.join("native-folded");
@@ -3637,7 +3671,7 @@ fn inline_constant_text_keeps_ids_and_matches_folded_fixture() {
     let src = fixture("folded/text.opu");
     let plain = dir.join("plain.opuir.json");
     let folded = dir.join("folded.opuir.json");
-    assert!(compile(&src, &plain).status.success());
+    assert!(compile_raw(&src, &plain).status.success());
     let r = compile_nodes_folded(&src, &folded);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let a: Json = serde_json::from_slice(&fs::read(&plain).unwrap()).unwrap();
@@ -3684,7 +3718,7 @@ fn fold_node_visibility_renumbers_and_matches_fixture() {
     let src = fixture("folded/visibility.opu");
     let plain = dir.join("plain.opuir.json");
     let folded = dir.join("folded.opuir.json");
-    assert!(compile(&src, &plain).status.success());
+    assert!(compile_raw(&src, &plain).status.success());
     let r = compile_nodes_folded(&src, &folded);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let a: Json = serde_json::from_slice(&fs::read(&plain).unwrap()).unwrap();
@@ -3793,7 +3827,7 @@ fn fold_node_visibility_keeps_native_patches_equal_via_id_map() {
     let src = fixture("folded/visibility.opu");
     let plain_ir = dir.join("plain.opuir.json");
     let folded_ir = dir.join("folded.opuir.json");
-    assert!(compile(&src, &plain_ir).status.success());
+    assert!(compile_raw(&src, &plain_ir).status.success());
     let r = compile_nodes_folded(&src, &folded_ir);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let map: Json =
@@ -3889,7 +3923,7 @@ fn fold_node_visibility_never_renumbers_across_routes() {
     .unwrap();
     let plain = dir.join("plain.opuir.json");
     let folded = dir.join("folded.opuir.json");
-    assert!(compile(&src, &plain).status.success());
+    assert!(compile_raw(&src, &plain).status.success());
     let r = compile_nodes_folded(&src, &folded);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let a: Json = serde_json::from_slice(&fs::read(&plain).unwrap()).unwrap();
@@ -3951,7 +3985,7 @@ fn fold_nodes_is_a_no_op_without_a_foldable_pattern() {
 fn optimizer_exports_state_refs_and_nearest_boundaries() {
     let dir = out_dir("opt-maps");
     let raw = dir.join("raw.opuir.json");
-    let r = compile(&fixture("incremental_maps.opu"), &raw);
+    let r = compile_raw(&fixture("incremental_maps.opu"), &raw);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let out = dir.join("optimized.opuir.json");
     let r = optimize(&raw, &out);
@@ -5089,7 +5123,7 @@ fn optimizer_preserves_computed_conditions_and_list_state() {
     let dir = out_dir("lang-opt");
     let ir_path = dir.join("features.opuir.json");
     let out = dir.join("optimized.opuir.json");
-    let r = compile(&fixture("effects_features.opu"), &ir_path);
+    let r = compile_raw(&fixture("effects_features.opu"), &ir_path);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let original: Json = serde_json::from_slice(&fs::read(&ir_path).unwrap()).unwrap();
     let r = optimize(&ir_path, &out);
@@ -5266,7 +5300,7 @@ fn optimizer_keeps_computed_chains_and_conditions() {
 #[test]
 fn emitters_apply_computed_values_and_honor_unless() {
     let ir = out_dir("emit-ir").join("features.opuir.json");
-    let r = compile(&fixture("effects_features.opu"), &ir);
+    let r = compile_raw(&fixture("effects_features.opu"), &ir);
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
 
     let native = out_dir("emit-native");
@@ -8903,7 +8937,7 @@ fn optimizer_keeps_multi_page_ir_intact() {
     )
     .unwrap();
     let compiled = dir.join("out.opuir.json");
-    let r = compile(&src, &compiled);
+    let r = compile_raw(&src, &compiled);
     assert!(r.status.success(), "compile failed for optimize input");
     let out = dir.join("optimized.opuir.json");
     let r = optimize(&compiled, &out);
@@ -10175,4 +10209,53 @@ fn gradient_direction_defaults_to_vertical_and_rejects_other_values() {
             "{label}: {stderr}"
         );
     }
+}
+
+// ---- default-path folding (P0 compile-time folding and DCE) ----
+
+#[test]
+fn default_compile_folds_constants_text_and_unreachable_nodes() {
+    let dir = out_dir("default-fold");
+    let src = dir.join("f.opu");
+    fs::write(
+        &src,
+        "app Fold {\n  state off = false\n  computed total = 2 * 3 + 4\n  Column {\n    Text(\"{total}\")\n    if (off) { Text(\"gone\") }\n    Text(\"keep\")\n  }\n}\n",
+    )
+    .unwrap();
+    let raw = dir.join("raw.opuir.json");
+    let default = dir.join("default.opuir.json");
+    assert!(compile_raw(&src, &raw).status.success());
+    assert!(compile(&src, &default).status.success());
+    let a: Json = serde_json::from_slice(&fs::read(&raw).unwrap()).unwrap();
+    let b: Json = serde_json::from_slice(&fs::read(&default).unwrap()).unwrap();
+
+    // numeric constant expression folds to a literal
+    assert_eq!(a["computed"][0]["expr"], "2 * 3 + 4");
+    assert_eq!(b["computed"][0]["expr"], "10");
+    // string interpolation of a constant computed folds inline
+    assert_eq!(b["tree"]["children"][0]["props"]["value"], "10");
+    // unreachable branch removed; surviving children renumber densely
+    assert_eq!(a["tree"]["children"].as_array().unwrap().len(), 3);
+    assert_eq!(b["tree"]["children"].as_array().unwrap().len(), 2);
+    let ids: Vec<u64> = nodes_of(&b)
+        .into_iter()
+        .map(|n| n["id"].as_u64().unwrap())
+        .collect();
+    assert_eq!(ids, vec![0, 1, 2]);
+    for node in nodes_of(&b) {
+        assert!(node.get("when").is_none(), "constant when must be resolved");
+    }
+}
+
+#[test]
+fn default_folding_keeps_golden_counter_byte_identical() {
+    let dir = out_dir("default-fold-golden");
+    let out = dir.join("counter.opuir.json");
+    assert!(compile(&contract("counter.opu"), &out).status.success());
+    assert_eq!(
+        fs::read(&out).unwrap(),
+        fs::read(contract("counter.opuir.json")).unwrap(),
+        "default folds must not drift the golden IR"
+    );
+    assert!(!out.with_extension("idmap.json").exists());
 }

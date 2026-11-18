@@ -918,6 +918,17 @@ fn rebuild_id_maps(ir: &mut Json) {
     }
 }
 
+/// Default-path compile passes: fold constant numeric/string/boolean
+/// expressions, prune dead states and computed entries, then remove
+/// statically-unreachable nodes. Every pass is a byte no-op on programs
+/// without foldable patterns, so goldens stay identical. Returns the old→new
+/// id map when node ids changed, for the write-only build sidecar.
+pub fn fold_default(ir: &mut Json) -> Option<Json> {
+    fold_constants(ir);
+    inline_constant_text(ir);
+    fold_node_visibility(ir)
+}
+
 /// Stage 2a step 2: fold visibility of constant bool states, renumber every
 /// affected tree and rebuild the id-keyed export maps. Returns the old→new id
 /// map when node ids changed; callers write it as a build sidecar, never into
