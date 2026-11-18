@@ -33,9 +33,29 @@ assessment and alternative plan must precede implementation.
 Choice after review: option 2 is required for full parity; option 1 is the
 staged path. Task is parked in the risk note until the change is reviewed.
 
-## Follow-up (this round)
+## Overflow audit (this round)
 
-No implementation was landed: the risk still stands. A failing red test was
-removed from the workspace after the risk was recorded, so the tree stays
-green. The next independent deep-round item is deterministic expression
-parity for nested logic without adding parentheses to the grammar.
+`tests/integer_overflow_audit.rs` pins the current boundaries without changing
+runtime representation:
+
+- compile-time computed expressions reject `+`, `-` and `*` overflow with the
+  exact `i64` range in the help line and write no IR;
+- integer literals outside `i64` are rejected;
+- list indexes and delays are bounded before `usize` conversion or scheduling;
+- an `i64::MAX` state plus an action chain emits on all ten targets, with the
+  native emitter keeping the `i64` state and its `saturating_add` path.
+
+Dart specifies 64-bit two's-complement wrap-around for the default `int`
+(`core/int.dart:9-10`, SDK 3.14.0, Flutter 3.50.0). Opurom therefore does **not**
+yet have full parity: compile-time overflow is rejected rather than wrapped,
+and native runtime actions saturate rather than wrap. JS-like targets still
+emit the literal into host `Number`, which rounds values above 2^53
+(`core/int.dart:12-16`). Changing these behaviors atomically would touch
+computed-expression evaluation, every emitter's action code and the BigInt
+representation decision, so this round records the divergence and adds tests
+only.
+
+The open choices remain the three alternatives listed above. Full parity still
+requires option 2 (uniform BigInt with explicit display conversion) plus a
+matching decision for runtime action overflow; the staged helper remains the
+lower-risk path.
