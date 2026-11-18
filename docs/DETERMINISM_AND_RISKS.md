@@ -91,3 +91,26 @@ Verification:
 ```sh
 cargo test --offline --test list_action_boundary
 ```
+
+## Import-fold pipeline replay
+
+`tests/import_fold_stability.rs` builds a program with two imported states and
+three computed values. It pins the byte relationship between raw lowering,
+default compile folding, `--full-fold` optimize and a second optimize pass:
+
+- raw IR differs from default IR because constant expressions are folded;
+- default compile IR is byte-identical to `optimize --full-fold` of raw IR;
+- a second `--full-fold` pass is a byte no-op;
+- imported states keep merge order and folded values remain stable.
+
+Flutter's build system treats hashing data as reproducible and noise-free
+(`packages/flutter_tools/lib/src/build_system/hash.dart:7-9`, Flutter 3.50.0,
+commit `ab2912035e160d9cad6306df307576da6128ebdb`). This test applies the same
+expectation to the compiler pipeline after module merge. It adds no IR field or
+emitter rule.
+
+Verification:
+
+```sh
+cargo test --offline --test import_fold_stability
+```
