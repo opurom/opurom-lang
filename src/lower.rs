@@ -1846,7 +1846,14 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
         StmtKind::SetLocale(tag, _) => Ok(json!({
             "op": "set", "target": "@locale", "value": tag
         })),
-        StmtKind::Add(v, p) | StmtKind::Sub(v, p) => {
+        StmtKind::Add(v, p) | StmtKind::Sub(v, p) | StmtKind::Mul(v, p) | StmtKind::Div(v, p) => {
+            let op = match &stmt.kind {
+                StmtKind::Add(..) => "add",
+                StmtKind::Sub(..) => "sub",
+                StmtKind::Mul(..) => "mul",
+                StmtKind::Div(..) => "div",
+                _ => unreachable!(),
+            };
             let value = match v {
                 AstValue::Lit(Lit::Int(n)) => {
                     if matches!(stmt.kind, StmtKind::Sub(..)) {
@@ -1862,26 +1869,25 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
                     }
                 }
                 AstValue::Ident(name) => {
-                    // A state reference cannot be negated, so '-=' needs its own op.
-                    let op = if matches!(stmt.kind, StmtKind::Sub(..)) {
-                        "sub"
-                    } else {
-                        "add"
-                    };
                     return Ok(json!({"op": op, "target": stmt.target, "valueFrom": name}));
                 }
                 other => {
                     return Err(ctx.err(
                         *p,
                         format!(
-                            "'+=' / '-=' requires an int literal, found {}",
+                            "compound assignment requires an int literal, found {}",
                             value_desc(other)
                         ),
                         "write an integer such as 'x += 1'".to_string(),
                     ));
                 }
             };
-            Ok(json!({"op": "add", "target": stmt.target, "value": value}))
+            let op = if matches!(stmt.kind, StmtKind::Sub(..)) {
+                "add"
+            } else {
+                op
+            };
+            Ok(json!({"op": op, "target": stmt.target, "value": value}))
         }
         StmtKind::Set(v, _p) => {
             // A list state gets the `assign` op; scalars keep `set`.
@@ -1944,6 +1950,7 @@ fn lower_action(ctx: &Ctx, stmt: &Stmt) -> DResult<Json> {
         }
         StmtKind::Pop => Ok(json!({"op": "pop"})),
         StmtKind::Validate => Ok(json!({"op": "validate", "target": stmt.target})),
+        StmtKind::Backspace => Ok(json!({"op": "backspace", "target": stmt.target})),
         StmtKind::Toggle => Ok(json!({"op": "toggle", "target": stmt.target})),
     }
 }
@@ -2786,9 +2793,12 @@ fn substitute_stmt(path: &str, stmt: &Stmt, bindings: &HashMap<String, Lit>) -> 
     let kind = match &stmt.kind {
         StmtKind::Add(v, p) => StmtKind::Add(substitute_value(v, bindings), *p),
         StmtKind::Sub(v, p) => StmtKind::Sub(substitute_value(v, bindings), *p),
+        StmtKind::Mul(v, p) => StmtKind::Mul(substitute_value(v, bindings), *p),
+        StmtKind::Div(v, p) => StmtKind::Div(substitute_value(v, bindings), *p),
         StmtKind::Set(v, p) => StmtKind::Set(substitute_value(v, bindings), *p),
         StmtKind::Append(v, p) => StmtKind::Append(substitute_value(v, bindings), *p),
         StmtKind::RemoveAt(v, p) => StmtKind::RemoveAt(substitute_value(v, bindings), *p),
+        StmtKind::Backspace => StmtKind::Backspace,
         StmtKind::Toggle => StmtKind::Toggle,
         StmtKind::Push => StmtKind::Push,
         StmtKind::Pop => StmtKind::Pop,

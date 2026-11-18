@@ -71,6 +71,9 @@ pub struct Arg {
 pub enum StmtKind {
     Add(Value, Pos),
     Sub(Value, Pos),
+    Mul(Value, Pos),
+    Div(Value, Pos),
+    Backspace,
     Set(Value, Pos),
     Toggle,
     /// `push: PageName` navigates to a declared page. The page name is the
@@ -1262,6 +1265,12 @@ impl<'a> Parser<'a> {
         } else if self.eat_sym("-=") {
             let (v, p) = self.value()?;
             StmtKind::Sub(v, p)
+        } else if self.eat_sym("*=") {
+            let (v, p) = self.value()?;
+            StmtKind::Mul(v, p)
+        } else if self.eat_sym("/=") {
+            let (v, p) = self.value()?;
+            StmtKind::Div(v, p)
         } else if self.eat_sym("=") {
             // A list state may be replaced wholesale with a string-array
             // literal; scalars keep the plain value form.
@@ -1273,12 +1282,18 @@ impl<'a> Parser<'a> {
             };
             StmtKind::Set(v, p)
         } else if self.eat_sym(".") {
-            let (method, mp) = self.expect_ident("'toggle', 'validate', 'append' or 'removeAt'")?;
+            let (method, mp) =
+                self.expect_ident("'toggle', 'backspace', 'validate', 'append' or 'removeAt'")?;
             match method.as_str() {
                 "toggle" => {
                     self.expect_sym("(", "toggle() needs an opening '('")?;
                     self.expect_sym(")", "toggle() needs a closing ')'")?;
                     StmtKind::Toggle
+                }
+                "backspace" => {
+                    self.expect_sym("(", "backspace() needs an opening '('")?;
+                    self.expect_sym(")", "backspace() needs a closing ')'")?;
+                    StmtKind::Backspace
                 }
                 "append" => {
                     self.expect_sym("(", "append() needs an opening '('")?;
