@@ -2,6 +2,13 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Map as JsonMap, Value as Json};
 
+// Compile-time component expansion is recursive in both graph validation and
+// body substitution. Flutter mounts elements recursively (`widgets/framework.dart:4346-4354`,
+// SDK 3.14.0, Flutter 3.50.0); Opurom uses a bounded expansion budget so a
+// pathological declaration chain becomes a diagnostic instead of exhausting
+// the native stack. This is a compiler robustness limit, not an IR protocol.
+const MAX_COMPONENT_DEPTH: usize = 256;
+
 use crate::catalog;
 use crate::diag::{DResult, Diagnostic};
 use crate::icons::{icon_help, is_icon};
@@ -2826,6 +2833,12 @@ fn find_cycle(
     stack: &mut Vec<String>,
     done: &mut HashSet<String>,
 ) -> Option<String> {
+    if stack.len() >= MAX_COMPONENT_DEPTH {
+        return Some(format!(
+            "component expansion depth exceeds {MAX_COMPONENT_DEPTH}: {}",
+            stack.join(" -> ")
+        ));
+    }
     if done.contains(name) {
         return None;
     }
@@ -2875,11 +2888,16 @@ fn check_components(path: &str, components: &[ComponentDecl]) -> DResult<()> {
     for decl in components {
         let mut stack = Vec::new();
         if let Some(chain) = find_cycle(&decl.name, &graph, &mut stack, &mut done) {
+            let message = if chain.contains("expansion depth exceeds") {
+                chain
+            } else {
+                format!("component cycle detected: {chain}")
+            };
             return Err(Diagnostic::new(
                 path,
                 decl.pos.line,
                 decl.pos.col,
-                format!("component cycle detected: {chain}"),
+                message,
                 "remove the component use that closes the cycle; components expand at compile time",
             ));
         }
@@ -2951,6 +2969,15 @@ fn expand_nodes(
                         )?;
                         inner.insert(param.name.clone(), lit);
                     }
+                }
+                if stack.len() >= MAX_COMPONENT_DEPTH {
+                    return Err(Diagnostic::new(
+                        path,
+                        node.pos.line,
+                        node.pos.col,
+                        format!("component expansion depth exceeds {MAX_COMPONENT_DEPTH}"),
+                        "split the component chain; components expand at compile time",
+                    ));
                 }
                 if let Some(start) = stack.iter().position(|s| s == name) {
                     let mut chain: Vec<&str> = stack[start..].iter().map(String::as_str).collect();
