@@ -854,7 +854,7 @@ impl<'a> Parser<'a> {
             token.line,
             token.col,
             format!(
-                "computed expression supports only +, -, *, integer literals and declared state names, found {}",
+                "computed expression supports +, -, *, comparisons, boolean operators, integer literals, string literals and declared state names, found {}",
                 token.describe()
             ),
             "write an expression such as 'count * 2 + step' with declared state names",

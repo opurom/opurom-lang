@@ -4888,7 +4888,7 @@ fn language_diagnostics_are_friendly() {
         ),
         (
             "computed_bad_expr.opu",
-            "computed expression supports only +, -, *, integer literals and declared state names",
+            "computed expression '+' requires int operands",
         ),
         (
             "computed_unknown_state.opu",
@@ -4982,7 +4982,7 @@ fn language_diagnostics_are_friendly() {
 }
 "#
             .to_string(),
-            "computed expression supports only +, -, *, integer literals and declared state names",
+            "computed expression supports +, -, *, comparisons, boolean operators, integer literals, string literals and declared state names",
         ),
         (
             "computed_float".to_string(),
@@ -4992,7 +4992,7 @@ fn language_diagnostics_are_friendly() {
 }
 "#
             .to_string(),
-            "computed expression supports only +, -, *, integer literals and declared state names",
+            "computed expression supports +, -, *, comparisons, boolean operators, integer literals, string literals and declared state names",
         ),
         (
             "computed_bool".to_string(),
@@ -5002,7 +5002,7 @@ fn language_diagnostics_are_friendly() {
 }
 "#
             .to_string(),
-            "computed expression supports only +, -, *, integer literals and declared state names",
+            "computed expression supports +, -, *, comparisons, boolean operators, integer literals, string literals and declared state names",
         ),
         (
             "computed_trailing_token".to_string(),
@@ -5013,7 +5013,7 @@ fn language_diagnostics_are_friendly() {
 }
 "#
             .to_string(),
-            "computed expression supports only +, -, *, integer literals and declared state names",
+            "computed expression supports +, -, *, comparisons, boolean operators, integer literals, string literals and declared state names",
         ),
         (
             "computed_self_reference".to_string(),
@@ -5071,7 +5071,7 @@ fn language_diagnostics_are_friendly() {
 }
 "#
             .to_string(),
-            "computed expression supports only +, -, *, integer literals and declared state names",
+            "computed expression supports +, -, *, comparisons, boolean operators, integer literals, string literals and declared state names",
         ),
         (
             "list_too_long".to_string(),
