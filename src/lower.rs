@@ -8,8 +8,8 @@ use crate::icons::{icon_help, is_icon};
 use crate::lexer::lex;
 use crate::modules;
 use crate::parser::{
-    self, Arg, ComponentDecl, Effect, ForIter, Lit, Node, NodeKind, Pos, Program, Stmt, StmtKind,
-    Value as AstValue,
+    self, Arg, Block, ComponentDecl, Effect, ForIter, Lit, Node, NodeKind, Pos, Program, Stmt,
+    StmtKind, Value as AstValue,
 };
 use crate::pattern;
 use crate::typecheck;
@@ -2966,7 +2966,36 @@ fn expand_nodes(
                 stack.push(name.clone());
                 let expanded = expand_nodes(path, &decl.body, comps, types, stack, &inner);
                 stack.pop();
-                out.extend(expanded?);
+                let mut expanded = expanded?;
+                // A use-site block on a component was previously dropped with
+                // no diagnostic. Adopt its statements into every handler the
+                // component declares, appended after the component's own
+                // actions in source order. Without a block nothing changes.
+                if let Some(block) = &node.block {
+                    if !block.stmts.is_empty() || !block.effects.is_empty() {
+                        let adopted = block.clone();
+                        for target in &mut expanded {
+                            let kind = match &target.kind {
+                                NodeKind::Widget(k) => k.as_str(),
+                                _ => continue,
+                            };
+                            if !kind_info(kind).is_some_and(|info| info.tap) {
+                                continue;
+                            }
+                            let target_block = target.block.get_or_insert_with(|| Block {
+                                pos: adopted.pos,
+                                is_async: false,
+                                nodes: Vec::new(),
+                                stmts: Vec::new(),
+                                effects: Vec::new(),
+                            });
+                            target_block.stmts.extend(adopted.stmts.iter().cloned());
+                            target_block.effects.extend(adopted.effects.iter().cloned());
+                            target_block.is_async |= adopted.is_async;
+                        }
+                    }
+                }
+                out.extend(expanded);
                 continue;
             }
             if !comps.is_empty()

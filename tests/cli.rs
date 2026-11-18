@@ -10443,3 +10443,82 @@ fn computed_expression_operator_type_mismatch_is_rejected() {
         );
     }
 }
+
+/// A component use-site block used to be dropped with no diagnostic. It is
+/// now adopted into every handler the component declares, appended after the
+/// component's own actions in source order. A use site without a block is
+/// byte-identical to the same component expanded alone.
+#[test]
+fn component_use_site_block_is_adopted_into_handlers() {
+    let dir = out_dir("component-use-block");
+
+    let adopted = dir.join("adopted.opu");
+    fs::write(
+        &adopted,
+        "component TapButton(label: string) {\n  Button(\"{label}\") { }\n}\n\
+         app T {\n  state count = 0\n  TapButton(\"Go\") { count += 1 }\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&adopted);
+    let buttons = nodes_of(&ir);
+    let btn = buttons
+        .iter()
+        .find(|n| n["kind"] == "Button")
+        .copied()
+        .expect("expanded Button");
+    assert_eq!(
+        btn["events"]["tap"],
+        json!({"op": "add", "target": "count", "value": 1}),
+        "use-site statement must reach the handler"
+    );
+
+    // Two handlers both receive the block; the component's own actions come
+    // first, the caller's statements are appended after in source order.
+    let multi = dir.join("multi.opu");
+    fs::write(
+        &multi,
+        "component Pair(label: string) {\n  Button(\"{label}\") { count += 10 }\n  Button(\"Second\") { }\n}\n\
+         app T {\n  state count = 0\n  Pair(\"First\") { count += 1 }\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&multi);
+    let taps: Vec<Json> = nodes_of(&ir)
+        .into_iter()
+        .filter(|n| n["kind"] == "Button")
+        .map(|n| n["events"]["tap"].clone())
+        .collect();
+    assert_eq!(taps.len(), 2, "both handlers expanded");
+    assert_eq!(
+        taps[0],
+        json!({"actions": [
+            {"op": "add", "target": "count", "value": 10},
+            {"op": "add", "target": "count", "value": 1}
+        ]}),
+        "caller statements appended after the component's own, in order"
+    );
+    assert_eq!(taps[1], json!({"op": "add", "target": "count", "value": 1}));
+
+    // No block: the expanded handler stays empty, so the default path is
+    // unchanged and the counter golden still compiles deep-equal.
+    let plain = dir.join("plain.opu");
+    fs::write(
+        &plain,
+        "component TapButton(label: string) {\n  Button(\"{label}\") { }\n}\n\
+         app T {\n  state count = 0\n  TapButton(\"Go\")\n}\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&plain);
+    let btn = nodes_of(&ir)
+        .into_iter()
+        .find(|n| n["kind"] == "Button")
+        .expect("expanded Button");
+    assert_eq!(btn["events"], json!({}), "no block means no handler");
+
+    let out = out_dir("component-use-block-golden").join("counter.opuir.json");
+    assert!(compile(&contract("counter.opu"), &out).status.success());
+    assert_eq!(
+        serde_json::from_slice::<Json>(&fs::read(&out).unwrap()).unwrap(),
+        serde_json::from_slice::<Json>(&fs::read(contract("counter.opuir.json")).unwrap()).unwrap(),
+        "counter golden unchanged by use-site block adoption"
+    );
+}
