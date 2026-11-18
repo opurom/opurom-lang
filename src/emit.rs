@@ -977,7 +977,7 @@ fn ensure_mutable(
     if st.ty == "list" {
         return Err(bad_ir(
             ir_path,
-            format!("list state '{name}' is compile-time only"),
+            format!("list state '{name}' is compile-time only; do not mutate it at runtime"),
         ));
     }
     Ok(())

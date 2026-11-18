@@ -72,3 +72,22 @@ Verification:
 ```sh
 cargo test --offline --test map_order_stress
 ```
+
+## List-state mutation boundary
+
+List states are compile-time expansion inputs, not runtime containers. Dart's
+unmodifiable list contract rejects length and element changes
+(`core/list.dart:239-245`, SDK 3.14.0, Flutter 3.50.0). `opuromc compile` still
+records `append`/`removeAt` in IR for source fidelity, but every emitter now
+rejects those handlers with an explicit diagnostic. This avoids a silent
+mismatch between web, native and mini-program state models without changing
+IR fields.
+
+`tests/list_action_boundary.rs` compiles one list mutation and checks the same
+failure text on all ten targets.
+
+Verification:
+
+```sh
+cargo test --offline --test list_action_boundary
+```
