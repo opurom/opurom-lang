@@ -1393,7 +1393,11 @@ fn prop_value(ctx: &Ctx, kind: &str, key: &str, arg: &Arg, info: &KindInfo) -> D
             .strip_prefix("{@md-sys-color-")
             .and_then(|r| r.strip_suffix('}'))
         {
-            if let Some(value) = ctx.metric_tokens.get(&format!("md-sys-color-{role}")) {
+            // `metric_tokens` stores imported names without the `md-`
+            // prefix, so the lookup key is the bare role, not the full
+            // `md-sys-color-` name. The earlier full-name lookup never hit
+            // and every imported colour silently stayed a semantic reference.
+            if let Some(value) = ctx.metric_tokens.get(&format!("sys-color-{role}")) {
                 if is_color(value) {
                     return Ok(json!(value));
                 }

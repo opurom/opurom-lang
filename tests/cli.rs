@@ -9933,6 +9933,20 @@ fn design_token_color_emits_semantic_role() {
         stderr.contains("unsupported design token role 'md-sys-color-primaryx'"),
         "{stderr}"
     );
+
+    // An imported colour token resolves to its literal value: the role name
+    // is looked up in the imported token table, not left as a semantic
+    // reference the renderer cannot resolve.
+    let tokens = dir.join("tokens.json");
+    fs::write(&tokens, r##"{"md-sys-color-secondary": "#123456"}"##).unwrap();
+    let imported = dir.join("imported.opu");
+    fs::write(
+        &imported,
+        "app I { theme { tokens { import \"tokens.json\" } } Button(\"Go\", color: \"{@md-sys-color-secondary}\") { } }\n",
+    )
+    .unwrap();
+    let ir = compile_ok(&imported);
+    assert_eq!(ir["tree"]["props"]["color"], json!("#123456"));
 }
 
 #[test]
