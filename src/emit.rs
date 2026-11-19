@@ -2050,6 +2050,9 @@ fn render_frame(
             return;
         }
     };
+    // A PPM preview has no system-font host to overlay glyphs. Keep software
+    // text rasterization on so state-driven text reaches the frame buffer.
+    renderer.set_suppress_text(false);
     // Without a press the clock stays at the settled value this preview always
     // used, so every no-press frame stays byte-identical to the old path.
     let elapsed_ms = match press {
