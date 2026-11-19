@@ -3484,6 +3484,35 @@ fn validate_locale_switches(program: &Program, path: &str, supported: &[String])
     Ok(())
 }
 
+/// Rewrites a node id tree in place using a dense pre-order counter.
+pub fn compact_tree_ids(node: &mut Json, next: &mut i64) {
+    if let Some(obj) = node.as_object_mut() {
+        obj.insert("id".to_string(), json!(*next));
+        *next += 1;
+        if let Some(children) = obj.get_mut("children").and_then(Json::as_array_mut) {
+            for child in children {
+                compact_tree_ids(child, next);
+            }
+        }
+    }
+}
+
+/// Compacts node ids across all routes after optimization has removed nodes.
+pub fn compact_route_ids(ir: &mut Json) {
+    let Some(routes) = ir.get_mut("routes").and_then(Json::as_object_mut) else {
+        return;
+    };
+    let mut next = 0i64;
+    // Use a stable route-name order so ids are deterministic.
+    let mut names: Vec<String> = routes.keys().cloned().collect();
+    names.sort();
+    for name in names {
+        if let Some(tree) = routes.get_mut(&name).and_then(|r| r.get_mut("tree")) {
+            compact_tree_ids(tree, &mut next);
+        }
+    }
+}
+
 fn lower(program: &Program, path: &str) -> DResult<Json> {
     // i18n v1 (IR_ADDITIONS 15): build the message table and validate every
     // set-locale target against the supported list before any IR is emitted.
@@ -3633,6 +3662,13 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
             )?;
             route_trees.push((decl.name.clone(), t));
         }
+        // Component expansion can consume ids that never reach the route tree.
+        // Compact every route into one dense pre-order namespace so DOM hosts
+        // can depend on a 0..N range; fold renumbering preserves this density.
+        let mut next = 0i64;
+        for (_, t) in &mut route_trees {
+            compact_tree_ids(t, &mut next);
+        }
         tree = None;
     }
     let theme = match &program.theme {
@@ -3766,6 +3802,9 @@ fn lower(program: &Program, path: &str) -> DResult<Json> {
                 json!(program.routes[0].name.clone()),
             );
             let mut routes = JsonMap::new();
+            // Routes share one flat node-id namespace in DOM hosts. Component
+            // expansion can leave holes in the compiler's counter, so compact
+            // ids across all routes before emitting the multi-page IR.
             for (name, route_tree) in &route_trees {
                 routes.insert(
                     name.clone(),

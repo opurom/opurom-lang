@@ -865,16 +865,18 @@ fn fold_visibility(
 /// Renumber one tree in pre-order from its current root id and record the
 /// old→new id map. Route trees keep their own root id, so no id crosses a
 /// route boundary.
-fn renumber_tree(root: &mut Json, map: &mut BTreeMap<String, String>) {
+
+/// Renumber a route tree from an explicit starting id so the caller can keep
+/// one dense counter across several trees.
+fn renumber_tree_from(root: &mut Json, next: &mut u64, map: &mut BTreeMap<String, String>) {
     fn walk(node: &mut Json, next: &mut u64, map: &mut BTreeMap<String, String>) {
         let Some(o) = node.as_object_mut() else {
             return;
         };
         if let Some(old) = o.get("id").and_then(Json::as_u64) {
-            let new = *next;
+            o.insert("id".to_string(), Json::Number((*next).into()));
+            map.insert(old.to_string(), next.to_string());
             *next += 1;
-            o.insert("id".to_string(), Json::Number(new.into()));
-            map.insert(old.to_string(), new.to_string());
         }
         if let Some(children) = o.get_mut("children").and_then(Json::as_array_mut) {
             for child in children {
@@ -882,9 +884,14 @@ fn renumber_tree(root: &mut Json, map: &mut BTreeMap<String, String>) {
             }
         }
     }
+    walk(root, next, map);
+}
+fn renumber_tree(root: &mut Json, map: &mut BTreeMap<String, String>) {
+    // The tree keeps its root id and stays dense from there: folded nodes
+    // leave no holes, and hosts that cache per-route layout see one stable
+    // starting id.
     let start = root.get("id").and_then(Json::as_u64).unwrap_or(0);
-    let mut next = start;
-    walk(root, &mut next, map);
+    renumber_tree_from(root, &mut start.clone(), map);
 }
 
 /// Recompute the id-keyed export maps from the current tree without pruning
