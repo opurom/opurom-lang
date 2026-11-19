@@ -4540,6 +4540,25 @@ fn optimizer_preserves_async_effect_state_and_imports() {
 }
 
 #[test]
+fn optimizer_preserves_imported_state_after_text_fold() {
+    let mut ir = compile_ok(&fixture("add_state.opu"));
+    ir["imports"] = json!(["parts.opu"]);
+    ir["state"] = json!([{"name": "moduleLabel", "type": "string", "init": "MARKER"}]);
+    if let Some(props) = ir["tree"]["children"][0]["props"].as_object_mut() {
+        props.insert("value".to_string(), json!("MARKER"));
+    }
+    let dir = out_dir("opt-imported-state");
+    let ir_path = dir.join("source.opuir.json");
+    let out = dir.join("optimized.opuir.json");
+    fs::write(&ir_path, pretty_ir(&ir)).unwrap();
+    let r = optimize(&ir_path, &out);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let got: Json = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(state_names(&got), vec!["moduleLabel"]);
+    assert_eq!(got["imports"], json!(["parts.opu"]));
+}
+
+#[test]
 fn every_target_emits_effect_code() {
     let ir = out_dir("effect-ir").join("async.opuir.json");
     let r = compile(&fixture("async.opu"), &ir);

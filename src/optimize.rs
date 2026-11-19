@@ -508,13 +508,23 @@ fn optimize(ir: &mut Json) {
         }
     }
     prune_dead_computed(ir, &mut refs);
+    // Imported modules are a public state contract: the CLI build runs the
+    // optimizer after a default compile that may have inlined a constant
+    // interpolation, so the tree no longer names that state. Dropping it here
+    // changes an imported module's exported state map and breaks its emitted
+    // page. Keep imported state alive exactly like list state; purely local
+    // dead state is still pruned.
+    let has_imports = ir
+        .get("imports")
+        .and_then(Json::as_array)
+        .is_some_and(|list| !list.is_empty());
     if let Some(list) = ir.get_mut("state").and_then(Json::as_array_mut) {
         list.retain(|s| {
             let Some(name) = s.get("name").and_then(Json::as_str) else {
                 return false;
             };
             let is_list = s.get("type").and_then(Json::as_str) == Some("list");
-            is_list || refs.contains(name)
+            is_list || has_imports || refs.contains(name)
         });
     }
     if let Some(tree) = ir.get_mut("tree") {
